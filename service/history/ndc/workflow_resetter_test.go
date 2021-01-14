@@ -27,15 +27,16 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/pborman/uuid"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/definition"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
@@ -101,9 +102,9 @@ func (s *workflowResetterSuite) SetupTest() {
 	s.baseRunID = uuid.New()
 	s.newContext = execution.NewContext(
 		s.domainID,
-		shared.WorkflowExecution{
-			WorkflowId: common.StringPtr(s.workflowID),
-			RunId:      common.StringPtr(s.newRunID),
+		types.WorkflowExecution{
+			WorkflowID: common.StringPtr(s.workflowID),
+			RunID:      common.StringPtr(s.newRunID),
 		},
 		s.mockShard,
 		nil,
@@ -144,6 +145,7 @@ func (s *workflowResetterSuite) TestResetWorkflow_NoError() {
 	newBranchToken := []byte("other random branch token")
 
 	s.mockBaseMutableState.EXPECT().GetVersionHistories().Return(versionHistories).AnyTimes()
+	s.mockBaseMutableState.EXPECT().GetCurrentBranchToken().Return(branchToken, nil).AnyTimes()
 
 	mockBaseWorkflowReleaseFnCalled := false
 	mockBaseWorkflowReleaseFn := func(err error) {
@@ -180,7 +182,7 @@ func (s *workflowResetterSuite) TestResetWorkflow_NoError() {
 		gomock.Any(),
 	).Return(s.mockRebuiltMutableState, rebuiltHistorySize, nil).Times(1)
 
-	s.mockHistoryV2Mgr.On("ForkHistoryBranch", &persistence.ForkHistoryBranchRequest{
+	s.mockHistoryV2Mgr.On("ForkHistoryBranch", mock.Anything, &persistence.ForkHistoryBranchRequest{
 		ForkBranchToken: branchToken,
 		ForkNodeID:      baseEventID + 1,
 		Info:            persistence.BuildHistoryGarbageCleanupInfo(s.domainID, s.workflowID, s.newRunID),
@@ -219,6 +221,7 @@ func (s *workflowResetterSuite) TestResetWorkflow_Error() {
 	incomingFirstEventVersion := baseVersion + 3
 
 	s.mockBaseMutableState.EXPECT().GetVersionHistories().Return(versionHistories).AnyTimes()
+	s.mockBaseMutableState.EXPECT().GetCurrentBranchToken().Return(branchToken, nil).AnyTimes()
 
 	mockBaseWorkflowReleaseFn := func(err error) {
 	}
@@ -242,17 +245,17 @@ func (s *workflowResetterSuite) TestResetWorkflow_Error() {
 		incomingFirstEventVersion,
 	)
 	s.Error(err)
-	s.IsType(&shared.RetryTaskV2Error{}, err)
+	s.IsType(&types.RetryTaskV2Error{}, err)
 	s.Nil(rebuiltMutableState)
 
-	retryErr, isRetryError := err.(*shared.RetryTaskV2Error)
+	retryErr, isRetryError := err.(*types.RetryTaskV2Error)
 	s.True(isRetryError)
-	expectedErr := &shared.RetryTaskV2Error{
+	expectedErr := &types.RetryTaskV2Error{
 		Message:         resendOnResetWorkflowMessage,
-		DomainId:        common.StringPtr(s.domainID),
-		WorkflowId:      common.StringPtr(s.workflowID),
-		RunId:           common.StringPtr(s.newRunID),
-		EndEventId:      common.Int64Ptr(incomingFirstEventID),
+		DomainID:        common.StringPtr(s.domainID),
+		WorkflowID:      common.StringPtr(s.workflowID),
+		RunID:           common.StringPtr(s.newRunID),
+		EndEventID:      common.Int64Ptr(incomingFirstEventID),
 		EndEventVersion: common.Int64Ptr(incomingFirstEventVersion),
 	}
 	s.Equal(retryErr, expectedErr)

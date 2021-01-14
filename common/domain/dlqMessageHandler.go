@@ -18,59 +18,61 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../LICENSE -package $GOPACKAGE -source $GOFILE -destination dlqMessageHandler_mock.go
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination dlqMessageHandler_mock.go
 
 package domain
 
 import (
-	"github.com/uber/cadence/.gen/go/replicator"
-	"github.com/uber/cadence/.gen/go/shared"
+	"context"
+
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
-	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 )
 
 type (
 	// DLQMessageHandler is the interface handles domain DLQ messages
 	DLQMessageHandler interface {
-		Read(lastMessageID int64, pageSize int, pageToken []byte) ([]*replicator.ReplicationTask, []byte, error)
-		Purge(lastMessageID int64) error
-		Merge(lastMessageID int64, pageSize int, pageToken []byte) ([]byte, error)
+		Read(ctx context.Context, lastMessageID int64, pageSize int, pageToken []byte) ([]*types.ReplicationTask, []byte, error)
+		Purge(ctx context.Context, lastMessageID int64) error
+		Merge(ctx context.Context, lastMessageID int64, pageSize int, pageToken []byte) ([]byte, error)
 	}
 
 	dlqMessageHandlerImpl struct {
-		replicationHandler     ReplicationTaskExecutor
-		domainReplicationQueue persistence.DomainReplicationQueue
-		logger                 log.Logger
+		replicationHandler ReplicationTaskExecutor
+		replicationQueue   ReplicationQueue
+		logger             log.Logger
 	}
 )
 
 // NewDLQMessageHandler returns a DLQTaskHandler instance
 func NewDLQMessageHandler(
 	replicationHandler ReplicationTaskExecutor,
-	domainReplicationQueue persistence.DomainReplicationQueue,
+	replicationQueue ReplicationQueue,
 	logger log.Logger,
 ) DLQMessageHandler {
 	return &dlqMessageHandlerImpl{
-		replicationHandler:     replicationHandler,
-		domainReplicationQueue: domainReplicationQueue,
-		logger:                 logger,
+		replicationHandler: replicationHandler,
+		replicationQueue:   replicationQueue,
+		logger:             logger,
 	}
 }
 
 // ReadMessages reads domain replication DLQ messages
 func (d *dlqMessageHandlerImpl) Read(
+	ctx context.Context,
 	lastMessageID int64,
 	pageSize int,
 	pageToken []byte,
-) ([]*replicator.ReplicationTask, []byte, error) {
+) ([]*types.ReplicationTask, []byte, error) {
 
-	ackLevel, err := d.domainReplicationQueue.GetDLQAckLevel()
+	ackLevel, err := d.replicationQueue.GetDLQAckLevel(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return d.domainReplicationQueue.GetMessagesFromDLQ(
+	return d.replicationQueue.GetMessagesFromDLQ(
+		ctx,
 		ackLevel,
 		lastMessageID,
 		pageSize,
@@ -80,22 +82,25 @@ func (d *dlqMessageHandlerImpl) Read(
 
 // PurgeMessages purges domain replication DLQ messages
 func (d *dlqMessageHandlerImpl) Purge(
+	ctx context.Context,
 	lastMessageID int64,
 ) error {
 
-	ackLevel, err := d.domainReplicationQueue.GetDLQAckLevel()
+	ackLevel, err := d.replicationQueue.GetDLQAckLevel(ctx)
 	if err != nil {
 		return err
 	}
 
-	if err := d.domainReplicationQueue.RangeDeleteMessagesFromDLQ(
+	if err := d.replicationQueue.RangeDeleteMessagesFromDLQ(
+		ctx,
 		ackLevel,
 		lastMessageID,
 	); err != nil {
 		return err
 	}
 
-	if err := d.domainReplicationQueue.UpdateDLQAckLevel(
+	if err := d.replicationQueue.UpdateDLQAckLevel(
+		ctx,
 		lastMessageID,
 	); err != nil {
 		d.logger.Error("Failed to update DLQ ack level after purging messages", tag.Error(err))
@@ -106,17 +111,19 @@ func (d *dlqMessageHandlerImpl) Purge(
 
 // MergeMessages merges domain replication DLQ messages
 func (d *dlqMessageHandlerImpl) Merge(
+	ctx context.Context,
 	lastMessageID int64,
 	pageSize int,
 	pageToken []byte,
 ) ([]byte, error) {
 
-	ackLevel, err := d.domainReplicationQueue.GetDLQAckLevel()
+	ackLevel, err := d.replicationQueue.GetDLQAckLevel(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	messages, token, err := d.domainReplicationQueue.GetMessagesFromDLQ(
+	messages, token, err := d.replicationQueue.GetMessagesFromDLQ(
+		ctx,
 		ackLevel,
 		lastMessageID,
 		pageSize,
@@ -130,25 +137,27 @@ func (d *dlqMessageHandlerImpl) Merge(
 	for _, message := range messages {
 		domainTask := message.GetDomainTaskAttributes()
 		if domainTask == nil {
-			return nil, &shared.InternalServiceError{Message: "Encounter non domain replication task in domain replication queue."}
+			return nil, &types.InternalServiceError{Message: "Encounter non domain replication task in domain replication queue."}
 		}
 
+		// TODO:
 		if err := d.replicationHandler.Execute(
 			domainTask,
 		); err != nil {
 			return nil, err
 		}
-		ackedMessageID = *message.SourceTaskId
+		ackedMessageID = *message.SourceTaskID
 	}
 
-	if err := d.domainReplicationQueue.RangeDeleteMessagesFromDLQ(
+	if err := d.replicationQueue.RangeDeleteMessagesFromDLQ(
+		ctx,
 		ackLevel,
 		ackedMessageID,
 	); err != nil {
 		d.logger.Error("failed to delete merged tasks on merging domain DLQ message", tag.Error(err))
 		return nil, err
 	}
-	if err := d.domainReplicationQueue.UpdateDLQAckLevel(ackedMessageID); err != nil {
+	if err := d.replicationQueue.UpdateDLQAckLevel(ctx, ackedMessageID); err != nil {
 		d.logger.Error("failed to update ack level on merging domain DLQ message", tag.Error(err))
 	}
 

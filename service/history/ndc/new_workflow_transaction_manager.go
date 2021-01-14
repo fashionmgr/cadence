@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination new_workflow_transaction_mamanger_mock.go
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination new_workflow_transaction_mamanger_mock.go
 
 package ndc
 
@@ -27,8 +27,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/execution"
 )
 
@@ -158,6 +158,7 @@ func (r *transactionManagerForNewWorkflowImpl) createAsCurrent(
 	}
 
 	targetWorkflowHistorySize, err := targetWorkflow.GetContext().PersistFirstWorkflowEvents(
+		ctx,
 		targetWorkflowEventsSeq[0],
 	)
 	if err != nil {
@@ -174,6 +175,7 @@ func (r *transactionManagerForNewWorkflowImpl) createAsCurrent(
 			return err
 		}
 		return targetWorkflow.GetContext().CreateWorkflowExecution(
+			ctx,
 			targetWorkflowSnapshot,
 			targetWorkflowHistorySize,
 			now,
@@ -188,6 +190,7 @@ func (r *transactionManagerForNewWorkflowImpl) createAsCurrent(
 	prevRunID := ""
 	prevLastWriteVersion := int64(0)
 	return targetWorkflow.GetContext().CreateWorkflowExecution(
+		ctx,
 		targetWorkflowSnapshot,
 		targetWorkflowHistorySize,
 		now,
@@ -211,7 +214,7 @@ func (r *transactionManagerForNewWorkflowImpl) createAsZombie(
 		return err
 	}
 	if targetWorkflowPolicy != execution.TransactionPolicyPassive {
-		return &shared.InternalServiceError{
+		return &types.InternalServiceError{
 			Message: "nDCTransactionManagerForNewWorkflow createAsZombie encounter target workflow policy not being passive",
 		}
 	}
@@ -225,6 +228,7 @@ func (r *transactionManagerForNewWorkflowImpl) createAsZombie(
 	}
 
 	targetWorkflowHistorySize, err := targetWorkflow.GetContext().PersistFirstWorkflowEvents(
+		ctx,
 		targetWorkflowEventsSeq[0],
 	)
 	if err != nil {
@@ -241,6 +245,7 @@ func (r *transactionManagerForNewWorkflowImpl) createAsZombie(
 	prevRunID := ""
 	prevLastWriteVersion := int64(0)
 	err = targetWorkflow.GetContext().CreateWorkflowExecution(
+		ctx,
 		targetWorkflowSnapshot,
 		targetWorkflowHistorySize,
 		now,
@@ -277,6 +282,7 @@ func (r *transactionManagerForNewWorkflowImpl) suppressCurrentAndCreateAsCurrent
 	}
 
 	return currentWorkflow.GetContext().UpdateWorkflowExecutionWithNew(
+		ctx,
 		now,
 		persistence.UpdateWorkflowModeUpdateCurrent,
 		targetWorkflow.GetContext(),
@@ -329,7 +335,7 @@ func (r *transactionManagerForNewWorkflowImpl) executeTransaction(
 		)
 
 	default:
-		return &shared.InternalServiceError{
+		return &types.InternalServiceError{
 			Message: fmt.Sprintf("nDCTransactionManager: encounter unknown transaction type: %v", transactionPolicy),
 		}
 	}

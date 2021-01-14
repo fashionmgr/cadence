@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source queryParser.go -destination queryParser_mock.go -mock_names Interface=MockQueryParser
+//go:generate mockgen -package $GOPACKAGE -source queryParser.go -destination queryParser_mock.go -mock_names Interface=MockQueryParser
 
 package gcloud
 
@@ -31,8 +31,8 @@ import (
 
 	"github.com/xwb1989/sqlparser"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/types"
 )
 
 type (
@@ -119,7 +119,7 @@ func (p *queryParser) convertWhereExpr(expr sqlparser.Expr, parsedQuery *parsedQ
 	case *sqlparser.ParenExpr:
 		return p.convertParenExpr(expr.(*sqlparser.ParenExpr), parsedQuery)
 	default:
-		return errors.New("only comparsion and \"and\" expression is supported")
+		return errors.New("only comparison and \"and\" expression is supported")
 	}
 }
 
@@ -154,7 +154,7 @@ func (p *queryParser) convertComparisonExpr(compExpr *sqlparser.ComparisonExpr, 
 			return err
 		}
 		if op != "=" {
-			return fmt.Errorf("only operation = is support for %s", WorkflowID)
+			return fmt.Errorf("only operator = is supported for %s with Google Cloud Storage", WorkflowID)
 		}
 		if parsedQuery.workflowID != nil && *parsedQuery.workflowID != val {
 			parsedQuery.emptyResult = true
@@ -167,7 +167,7 @@ func (p *queryParser) convertComparisonExpr(compExpr *sqlparser.ComparisonExpr, 
 			return err
 		}
 		if op != "=" {
-			return fmt.Errorf("only operation = is support for %s", RunID)
+			return fmt.Errorf("only operator = is supported for %s with Google Cloud Storage", RunID)
 		}
 		if parsedQuery.runID != nil && *parsedQuery.runID != val {
 			parsedQuery.emptyResult = true
@@ -180,7 +180,7 @@ func (p *queryParser) convertComparisonExpr(compExpr *sqlparser.ComparisonExpr, 
 			return err
 		}
 		if op != "=" {
-			return fmt.Errorf("only operation = is support for %s", CloseTime)
+			return fmt.Errorf("only operator = is supported for %s with Google Cloud Storage", CloseTime)
 		}
 		parsedQuery.closeTime = timestamp
 
@@ -190,7 +190,7 @@ func (p *queryParser) convertComparisonExpr(compExpr *sqlparser.ComparisonExpr, 
 			return err
 		}
 		if op != "=" {
-			return fmt.Errorf("only operation = is support for %s", CloseTime)
+			return fmt.Errorf("only operator = is supported for %s with Google Cloud Storage", StartTime)
 		}
 		parsedQuery.startTime = timestamp
 	case WorkflowType:
@@ -199,7 +199,7 @@ func (p *queryParser) convertComparisonExpr(compExpr *sqlparser.ComparisonExpr, 
 			return err
 		}
 		if op != "=" {
-			return fmt.Errorf("only operation = is support for %s", WorkflowType)
+			return fmt.Errorf("only operator = is supported for %s with Google Cloud Storage", WorkflowType)
 		}
 		if parsedQuery.workflowType != nil && *parsedQuery.workflowType != val {
 			parsedQuery.emptyResult = true
@@ -212,7 +212,7 @@ func (p *queryParser) convertComparisonExpr(compExpr *sqlparser.ComparisonExpr, 
 			return err
 		}
 		if op != "=" {
-			return fmt.Errorf("only operation = is support for %s", SearchPrecision)
+			return fmt.Errorf("only operator = is supported for %s with Google Cloud Storage", SearchPrecision)
 		}
 		if parsedQuery.searchPrecision != nil && *parsedQuery.searchPrecision != val {
 			return fmt.Errorf("only one expression is allowed for %s", SearchPrecision)
@@ -264,19 +264,19 @@ func convertToTimestamp(timeStr string) (int64, error) {
 	return parsedTime.UnixNano(), nil
 }
 
-func convertStatusStr(statusStr string) (shared.WorkflowExecutionCloseStatus, error) {
+func convertStatusStr(statusStr string) (types.WorkflowExecutionCloseStatus, error) {
 	statusStr = strings.ToLower(statusStr)
 	switch statusStr {
 	case "completed":
-		return shared.WorkflowExecutionCloseStatusCompleted, nil
+		return types.WorkflowExecutionCloseStatusCompleted, nil
 	case "failed":
-		return shared.WorkflowExecutionCloseStatusFailed, nil
+		return types.WorkflowExecutionCloseStatusFailed, nil
 	case "canceled":
-		return shared.WorkflowExecutionCloseStatusCanceled, nil
+		return types.WorkflowExecutionCloseStatusCanceled, nil
 	case "continuedasnew":
-		return shared.WorkflowExecutionCloseStatusContinuedAsNew, nil
+		return types.WorkflowExecutionCloseStatusContinuedAsNew, nil
 	case "timedout":
-		return shared.WorkflowExecutionCloseStatusTimedOut, nil
+		return types.WorkflowExecutionCloseStatusTimedOut, nil
 	default:
 		return 0, fmt.Errorf("unknown workflow close status: %s", statusStr)
 	}

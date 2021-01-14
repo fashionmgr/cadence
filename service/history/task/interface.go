@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination interface_mock.go -self_package github.com/uber/cadence/service/history/task
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interface_mock.go -self_package github.com/uber/cadence/service/history/task
 
 package task
 
@@ -64,6 +64,9 @@ type (
 	// Filter filters Task
 	Filter func(task Info) (bool, error)
 
+	// Initializer initializes a Task based on the Info
+	Initializer func(Info) Task
+
 	// PriorityAssigner assigns priority to Tasks
 	PriorityAssigner interface {
 		Assign(Task) error
@@ -77,15 +80,28 @@ type (
 		TrySubmit(Task) (bool, error)
 	}
 
+	// Redispatcher buffers tasks and periodically redispatch them to Processor
+	// redispatch can also be triggered immediately by calling the Redispatch method
+	Redispatcher interface {
+		common.Daemon
+		AddTask(Task)
+		Redispatch(targetSize int)
+		Size() int
+	}
+
 	// QueueType is the type of task queue
 	QueueType int
 )
 
 const (
-	// QueueTypeTransfer is the queue type for transfer queue
-	QueueTypeTransfer QueueType = iota + 1
-	// QueueTypeTimer is the queue type for timer queue
-	QueueTypeTimer
-	// QueueTypeReplication is the queue type for replication queue
+	// QueueTypeActiveTransfer is the queue type for active transfer queue processor
+	QueueTypeActiveTransfer QueueType = iota + 1
+	// QueueTypeStandbyTransfer is the queue type for standby transfer queue processor
+	QueueTypeStandbyTransfer
+	// QueueTypeActiveTimer is the queue type for active timer queue processor
+	QueueTypeActiveTimer
+	// QueueTypeStandbyTimer is the queue type for standby timer queue processor
+	QueueTypeStandbyTimer
+	// QueueTypeReplication is the queue type for replication queue processor
 	QueueTypeReplication
 )

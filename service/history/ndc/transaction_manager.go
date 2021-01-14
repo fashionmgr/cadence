@@ -18,17 +18,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination transaction_manager_mock.go
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination transaction_manager_mock.go
 
 package ndc
 
 import (
-	ctx "context"
+	"context"
 	"time"
 
 	"github.com/pborman/uuid"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
@@ -36,6 +35,7 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/reset"
 	"github.com/uber/cadence/service/history/shard"
@@ -107,37 +107,37 @@ const (
 type (
 	transactionManager interface {
 		createWorkflow(
-			ctx ctx.Context,
+			ctx context.Context,
 			now time.Time,
 			targetWorkflow execution.Workflow,
 		) error
 		updateWorkflow(
-			ctx ctx.Context,
+			ctx context.Context,
 			now time.Time,
 			isWorkflowRebuilt bool,
 			targetWorkflow execution.Workflow,
 			newWorkflow execution.Workflow,
 		) error
 		backfillWorkflow(
-			ctx ctx.Context,
+			ctx context.Context,
 			now time.Time,
 			targetWorkflow execution.Workflow,
 			targetWorkflowEvents *persistence.WorkflowEvents,
 		) error
 
 		checkWorkflowExists(
-			ctx ctx.Context,
+			ctx context.Context,
 			domainID string,
 			workflowID string,
 			runID string,
 		) (bool, error)
 		getCurrentWorkflowRunID(
-			ctx ctx.Context,
+			ctx context.Context,
 			domainID string,
 			workflowID string,
 		) (string, error)
 		loadNDCWorkflow(
-			ctx ctx.Context,
+			ctx context.Context,
 			domainID string,
 			workflowID string,
 			runID string,
@@ -195,7 +195,7 @@ func newTransactionManager(
 }
 
 func (r *transactionManagerImpl) createWorkflow(
-	ctx ctx.Context,
+	ctx context.Context,
 	now time.Time,
 	targetWorkflow execution.Workflow,
 ) error {
@@ -208,7 +208,7 @@ func (r *transactionManagerImpl) createWorkflow(
 }
 
 func (r *transactionManagerImpl) updateWorkflow(
-	ctx ctx.Context,
+	ctx context.Context,
 	now time.Time,
 	isWorkflowRebuilt bool,
 	targetWorkflow execution.Workflow,
@@ -225,7 +225,7 @@ func (r *transactionManagerImpl) updateWorkflow(
 }
 
 func (r *transactionManagerImpl) backfillWorkflow(
-	ctx ctx.Context,
+	ctx context.Context,
 	now time.Time,
 	targetWorkflow execution.Workflow,
 	targetWorkflowEvents *persistence.WorkflowEvents,
@@ -241,6 +241,7 @@ func (r *transactionManagerImpl) backfillWorkflow(
 	}()
 
 	if _, err := targetWorkflow.GetContext().PersistNonFirstWorkflowEvents(
+		ctx,
 		targetWorkflowEvents,
 	); err != nil {
 		return err
@@ -256,6 +257,7 @@ func (r *transactionManagerImpl) backfillWorkflow(
 	}
 
 	return targetWorkflow.GetContext().UpdateWorkflowExecutionWithNew(
+		ctx,
 		now,
 		updateMode,
 		nil,
@@ -266,7 +268,7 @@ func (r *transactionManagerImpl) backfillWorkflow(
 }
 
 func (r *transactionManagerImpl) backfillWorkflowEventsReapply(
-	ctx ctx.Context,
+	ctx context.Context,
 	targetWorkflow execution.Workflow,
 	targetWorkflowEvents *persistence.WorkflowEvents,
 ) (persistence.UpdateWorkflowMode, execution.TransactionPolicy, error) {
@@ -326,6 +328,9 @@ func (r *transactionManagerImpl) backfillWorkflowEventsReapply(
 		}
 
 		baseVersionHistories := baseMutableState.GetVersionHistories()
+		if baseVersionHistories == nil {
+			return 0, execution.TransactionPolicyActive, execution.ErrMissingVersionHistories
+		}
 		baseCurrentVersionHistory, err := baseVersionHistories.GetCurrentVersionHistory()
 		if err != nil {
 			return 0, execution.TransactionPolicyActive, err
@@ -351,6 +356,7 @@ func (r *transactionManagerImpl) backfillWorkflowEventsReapply(
 			targetWorkflow,
 			EventsReapplicationResetWorkflowReason,
 			targetWorkflowEvents.Events,
+			false,
 		); err != nil {
 			return 0, execution.TransactionPolicyActive, err
 		}
@@ -374,18 +380,19 @@ func (r *transactionManagerImpl) backfillWorkflowEventsReapply(
 }
 
 func (r *transactionManagerImpl) checkWorkflowExists(
-	ctx ctx.Context,
+	ctx context.Context,
 	domainID string,
 	workflowID string,
 	runID string,
 ) (bool, error) {
 
 	_, err := r.shard.GetExecutionManager().GetWorkflowExecution(
+		ctx,
 		&persistence.GetWorkflowExecutionRequest{
 			DomainID: domainID,
-			Execution: shared.WorkflowExecution{
-				WorkflowId: common.StringPtr(workflowID),
-				RunId:      common.StringPtr(runID),
+			Execution: types.WorkflowExecution{
+				WorkflowID: common.StringPtr(workflowID),
+				RunID:      common.StringPtr(runID),
 			},
 		},
 	)
@@ -393,7 +400,7 @@ func (r *transactionManagerImpl) checkWorkflowExists(
 	switch err.(type) {
 	case nil:
 		return true, nil
-	case *shared.EntityNotExistsError:
+	case *types.EntityNotExistsError:
 		return false, nil
 	default:
 		return false, err
@@ -401,12 +408,13 @@ func (r *transactionManagerImpl) checkWorkflowExists(
 }
 
 func (r *transactionManagerImpl) getCurrentWorkflowRunID(
-	ctx ctx.Context,
+	ctx context.Context,
 	domainID string,
 	workflowID string,
 ) (string, error) {
 
 	resp, err := r.shard.GetExecutionManager().GetCurrentExecution(
+		ctx,
 		&persistence.GetCurrentExecutionRequest{
 			DomainID:   domainID,
 			WorkflowID: workflowID,
@@ -416,7 +424,7 @@ func (r *transactionManagerImpl) getCurrentWorkflowRunID(
 	switch err.(type) {
 	case nil:
 		return resp.RunID, nil
-	case *shared.EntityNotExistsError:
+	case *types.EntityNotExistsError:
 		return "", nil
 	default:
 		return "", err
@@ -424,7 +432,7 @@ func (r *transactionManagerImpl) getCurrentWorkflowRunID(
 }
 
 func (r *transactionManagerImpl) loadNDCWorkflow(
-	ctx ctx.Context,
+	ctx context.Context,
 	domainID string,
 	workflowID string,
 	runID string,
@@ -434,16 +442,16 @@ func (r *transactionManagerImpl) loadNDCWorkflow(
 	context, release, err := r.executionCache.GetOrCreateWorkflowExecution(
 		ctx,
 		domainID,
-		shared.WorkflowExecution{
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(runID),
+		types.WorkflowExecution{
+			WorkflowID: common.StringPtr(workflowID),
+			RunID:      common.StringPtr(runID),
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	msBuilder, err := context.LoadWorkflowExecution()
+	msBuilder, err := context.LoadWorkflowExecution(ctx)
 	if err != nil {
 		// no matter what error happen, we need to retry
 		release(err)
@@ -453,7 +461,7 @@ func (r *transactionManagerImpl) loadNDCWorkflow(
 }
 
 func (r *transactionManagerImpl) isWorkflowCurrent(
-	ctx ctx.Context,
+	ctx context.Context,
 	targetWorkflow execution.Workflow,
 ) (bool, error) {
 

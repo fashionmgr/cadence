@@ -32,13 +32,12 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
-	workflow "github.com/uber/cadence/.gen/go/shared"
-	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/common/types"
 )
 
 func TestDeliverBufferTasks(t *testing.T) {
@@ -95,10 +94,10 @@ func TestReadLevelForAllExpiredTasksInBatch(t *testing.T) {
 	tlm := createTestTaskListManager(controller)
 	tlm.db.rangeID = int64(1)
 	tlm.db.ackLevel = int64(0)
-	tlm.taskAckManager.setAckLevel(tlm.db.ackLevel)
-	tlm.taskAckManager.setReadLevel(tlm.db.ackLevel)
-	require.Equal(t, int64(0), tlm.taskAckManager.getAckLevel())
-	require.Equal(t, int64(0), tlm.taskAckManager.getReadLevel())
+	tlm.taskAckManager.SetAckLevel(tlm.db.ackLevel)
+	tlm.taskAckManager.SetReadLevel(tlm.db.ackLevel)
+	require.Equal(t, int64(0), tlm.taskAckManager.GetAckLevel())
+	require.Equal(t, int64(0), tlm.taskAckManager.GetReadLevel())
 
 	// Add all expired tasks
 	tasks := []*persistence.TaskInfo{
@@ -115,8 +114,8 @@ func TestReadLevelForAllExpiredTasksInBatch(t *testing.T) {
 	}
 
 	require.True(t, tlm.taskReader.addTasksToBuffer(tasks, time.Now(), time.NewTimer(time.Minute)))
-	require.Equal(t, int64(0), tlm.taskAckManager.getAckLevel())
-	require.Equal(t, int64(12), tlm.taskAckManager.getReadLevel())
+	require.Equal(t, int64(0), tlm.taskAckManager.GetAckLevel())
+	require.Equal(t, int64(12), tlm.taskAckManager.GetReadLevel())
 
 	// Now add a mix of valid and expired tasks
 	require.True(t, tlm.taskReader.addTasksToBuffer([]*persistence.TaskInfo{
@@ -131,8 +130,8 @@ func TestReadLevelForAllExpiredTasksInBatch(t *testing.T) {
 			CreatedTime: time.Now().Add(time.Minute),
 		},
 	}, time.Now(), time.NewTimer(time.Minute)))
-	require.Equal(t, int64(0), tlm.taskAckManager.getAckLevel())
-	require.Equal(t, int64(14), tlm.taskAckManager.getReadLevel())
+	require.Equal(t, int64(0), tlm.taskAckManager.GetAckLevel())
+	require.Equal(t, int64(14), tlm.taskAckManager.GetReadLevel())
 }
 
 func createTestTaskListManager(controller *gomock.Controller) *taskListManagerImpl {
@@ -153,8 +152,8 @@ func createTestTaskListManagerWithConfig(controller *gomock.Controller, cfg *Con
 	tl := "tl"
 	dID := "domain"
 	tlID := newTestTaskListID(dID, tl, persistence.TaskListTypeActivity)
-	tlKind := common.TaskListKindPtr(workflow.TaskListKindNormal)
-	tlMgr, err := newTaskListManager(me, tlID, tlKind, cfg)
+	tlKind := types.TaskListKindNormal
+	tlMgr, err := newTaskListManager(me, tlID, &tlKind, cfg)
 	if err != nil {
 		logger.Fatal("error when createTestTaskListManager", tag.Error(err))
 	}
@@ -184,10 +183,11 @@ func TestDescribeTaskList(t *testing.T) {
 	tlm := createTestTaskListManager(controller)
 	tlm.db.rangeID = int64(1)
 	tlm.db.ackLevel = int64(0)
-	tlm.taskAckManager.setAckLevel(tlm.db.ackLevel)
+	tlm.taskAckManager.SetAckLevel(tlm.db.ackLevel)
 
 	for i := int64(0); i < taskCount; i++ {
-		tlm.taskAckManager.addTask(startTaskID + i)
+		err := tlm.taskAckManager.ReadItem(startTaskID + i)
+		assert.Nil(t, err)
 	}
 
 	includeTaskStatus := false
@@ -210,7 +210,7 @@ func TestDescribeTaskList(t *testing.T) {
 	// Add a poller and complete all tasks
 	tlm.pollerHistory.updatePollerInfo(pollerIdentity(PollerIdentity), nil)
 	for i := int64(0); i < taskCount; i++ {
-		tlm.taskAckManager.completeTask(startTaskID + i)
+		tlm.taskAckManager.AckItem(startTaskID + i)
 	}
 
 	descResp = tlm.DescribeTaskList(includeTaskStatus)

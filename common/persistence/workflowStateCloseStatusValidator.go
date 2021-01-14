@@ -23,7 +23,7 @@ package persistence
 import (
 	"fmt"
 
-	workflow "github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/common/types"
 )
 
 var (
@@ -61,7 +61,7 @@ func ValidateCreateWorkflowStateCloseStatus(
 
 	// validate workflow state & close status
 	if state == WorkflowStateCompleted || closeStatus != WorkflowCloseStatusNone {
-		return &workflow.InternalServiceError{
+		return &types.InternalServiceError{
 			Message: fmt.Sprintf("Create workflow with invalid state: %v or close status: %v",
 				state, closeStatus),
 		}
@@ -85,7 +85,7 @@ func ValidateUpdateWorkflowStateCloseStatus(
 	// validate workflow state & close status
 	if closeStatus == WorkflowCloseStatusNone {
 		if state == WorkflowStateCompleted {
-			return &workflow.InternalServiceError{
+			return &types.InternalServiceError{
 				Message: fmt.Sprintf("Update workflow with invalid state: %v or close status: %v",
 					state, closeStatus),
 			}
@@ -98,7 +98,7 @@ func ValidateUpdateWorkflowStateCloseStatus(
 		// WorkflowCloseStatusContinuedAsNew
 		// WorkflowCloseStatusTimedOut
 		if state != WorkflowStateCompleted {
-			return &workflow.InternalServiceError{
+			return &types.InternalServiceError{
 				Message: fmt.Sprintf("Update workflow with invalid state: %v or close status: %v",
 					state, closeStatus),
 			}
@@ -113,7 +113,7 @@ func validateWorkflowState(
 ) error {
 
 	if _, ok := validWorkflowStates[state]; !ok {
-		return &workflow.InternalServiceError{
+		return &types.InternalServiceError{
 			Message: fmt.Sprintf("Invalid workflow state: %v", state),
 		}
 	}
@@ -127,7 +127,7 @@ func validateWorkflowCloseStatus(
 ) error {
 
 	if _, ok := validWorkflowCloseStatuses[closeStatus]; !ok {
-		return &workflow.InternalServiceError{
+		return &types.InternalServiceError{
 			Message: fmt.Sprintf("Invalid workflow close status: %v", closeStatus),
 		}
 	}
@@ -135,24 +135,24 @@ func validateWorkflowCloseStatus(
 	return nil
 }
 
-// ToThriftWorkflowExecutionCloseStatus convert persistence representation of close status to thrift representation
-func ToThriftWorkflowExecutionCloseStatus(
+// ToInternalWorkflowExecutionCloseStatus convert persistence representation of close status to internal representation
+func ToInternalWorkflowExecutionCloseStatus(
 	closeStatus int,
-) workflow.WorkflowExecutionCloseStatus {
+) types.WorkflowExecutionCloseStatus {
 
 	switch closeStatus {
 	case WorkflowCloseStatusCompleted:
-		return workflow.WorkflowExecutionCloseStatusCompleted
+		return types.WorkflowExecutionCloseStatusCompleted
 	case WorkflowCloseStatusFailed:
-		return workflow.WorkflowExecutionCloseStatusFailed
+		return types.WorkflowExecutionCloseStatusFailed
 	case WorkflowCloseStatusCanceled:
-		return workflow.WorkflowExecutionCloseStatusCanceled
+		return types.WorkflowExecutionCloseStatusCanceled
 	case WorkflowCloseStatusTerminated:
-		return workflow.WorkflowExecutionCloseStatusTerminated
+		return types.WorkflowExecutionCloseStatusTerminated
 	case WorkflowCloseStatusContinuedAsNew:
-		return workflow.WorkflowExecutionCloseStatusContinuedAsNew
+		return types.WorkflowExecutionCloseStatusContinuedAsNew
 	case WorkflowCloseStatusTimedOut:
-		return workflow.WorkflowExecutionCloseStatusTimedOut
+		return types.WorkflowExecutionCloseStatusTimedOut
 	default:
 		panic("Invalid value for enum WorkflowExecutionCloseStatus")
 	}

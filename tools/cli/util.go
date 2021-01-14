@@ -1,4 +1,5 @@
-// Copyright (c) 2017 Uber Technologies, Inc.
+// Copyright (c) 2017-2020 Uber Technologies Inc.
+// Portions of the Software are attributed to Copyright (c) 2020 Temporal Technologies Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -510,6 +511,23 @@ func mapKeysToArray(m map[string]string) []string {
 	return out
 }
 
+func mapToString(m map[string]string, sep string) string {
+	kv := make([]string, 0, len(m))
+	for key, value := range m {
+		kv = append(kv, key+": "+value)
+	}
+
+	return strings.Join(kv, sep)
+}
+
+func intSliceToSet(s []int) map[int]struct{} {
+	var ret = make(map[int]struct{}, len(s))
+	for _, v := range s {
+		ret[v] = struct{}{}
+	}
+	return ret
+}
+
 func printError(msg string, err error) {
 	if err != nil {
 		fmt.Printf("%s %s\n%s %+v\n", colorRed("Error:"), msg, colorMagenta("Error Details:"), err)
@@ -671,6 +689,18 @@ func parseTimeRange(timeRange string) (time.Time, error) {
 	return res, nil
 }
 
+func parseSingleTs(ts string) (time.Time, error) {
+	var tsOut time.Time
+	var err error
+	formats := []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02", "2006-01-02T15:04:05+0700", time.RFC3339}
+	for _, format := range formats {
+		if tsOut, err = time.Parse(format, ts); err == nil {
+			return tsOut, err
+		}
+	}
+	return tsOut, err
+}
+
 // parseTimeDuration parses the given time duration in either short or long convention
 // and returns the time.Duration
 // Valid values (long notation/short notation):
@@ -742,6 +772,15 @@ func newContextForLongPoll(c *cli.Context) (context.Context, context.CancelFunc)
 	return context.WithTimeout(context.Background(), contextTimeout)
 }
 
+func newIndefiniteContext(c *cli.Context) (context.Context, context.CancelFunc) {
+	if c.GlobalIsSet(FlagContextTimeout) {
+		contextTimeout := time.Duration(c.GlobalInt(FlagContextTimeout)) * time.Second
+		return context.WithTimeout(context.Background(), contextTimeout)
+	}
+
+	return context.WithCancel(context.Background())
+}
+
 // process and validate input provided through cmd or file
 func processJSONInput(c *cli.Context) string {
 	return processJSONInputHelper(c, jsonTypeInput)
@@ -759,6 +798,12 @@ func processJSONInputHelper(c *cli.Context, jType jsonType) string {
 	case jsonTypeMemo:
 		flagNameOfRawInput = FlagMemo
 		flagNameOfInputFileName = FlagMemoFile
+	case jsonTypeHeader:
+		flagNameOfRawInput = FlagHeaderValue
+		flagNameOfInputFileName = FlagHeaderFile
+	case jsonTypeSignal:
+		flagNameOfRawInput = FlagSignalInput
+		flagNameOfInputFileName = FlagSignalInputFile
 	default:
 		return ""
 	}
@@ -782,6 +827,35 @@ func processJSONInputHelper(c *cli.Context, jType jsonType) string {
 		}
 	}
 	return input
+}
+
+func processMultipleKeys(rawKey, separator string) []string {
+	var keys []string
+	if strings.TrimSpace(rawKey) != "" {
+		keys = strings.Split(rawKey, separator)
+	}
+	return keys
+}
+
+func processMultipleJSONValues(rawValue string) []string {
+	var values []string
+	var sc fastjson.Scanner
+	sc.Init(rawValue)
+	for sc.Next() {
+		values = append(values, sc.Value().String())
+	}
+	if err := sc.Error(); err != nil {
+		ErrorAndExit("Parse json error.", err)
+	}
+	return values
+}
+
+func mapFromKeysValues(keys, values []string) map[string][]byte {
+	fields := map[string][]byte{}
+	for i, key := range keys {
+		fields[key] = []byte(values[i])
+	}
+	return fields
 }
 
 // validate whether str is a valid json or multi valid json concatenated with spaces/newlines
@@ -899,4 +973,24 @@ func prompt(msg string) {
 	if textLower != "y" && textLower != "yes" {
 		os.Exit(0)
 	}
+}
+func getInputFile(inputFile string) *os.File {
+	if len(inputFile) == 0 {
+		info, err := os.Stdin.Stat()
+		if err != nil {
+			ErrorAndExit("Failed to stat stdin file handle", err)
+		}
+		if info.Mode()&os.ModeCharDevice != 0 || info.Size() <= 0 {
+			fmt.Fprintln(os.Stderr, "Provide a filename or pass data to STDIN")
+			os.Exit(1)
+		}
+		return os.Stdin
+	}
+	// This code is executed from the CLI. All user input is from a CLI user.
+	// #nosec
+	f, err := os.Open(inputFile)
+	if err != nil {
+		ErrorAndExit(fmt.Sprintf("Failed to open input file for reading: %v", inputFile), err)
+	}
+	return f
 }

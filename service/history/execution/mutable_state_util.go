@@ -1,4 +1,5 @@
-// Copyright (c) 2020 Uber Technologies, Inc.
+// Copyright (c) 2017-2020 Uber Technologies, Inc.
+// Portions of the Software are attributed to Copyright (c) 2020 Temporal Technologies Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,11 +22,11 @@
 package execution
 
 import (
-	"time"
+	"encoding/json"
 
-	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 )
 
 type (
@@ -71,7 +72,7 @@ func convertUpdateActivityInfos(
 	return outputs
 }
 
-func convertDeleteActivityInfos(
+func convertInt64SetToSlice(
 	inputs map[int64]struct{},
 ) []int64 {
 
@@ -90,6 +91,7 @@ func convertSyncActivityInfos(
 	for item := range inputs {
 		activityInfo, ok := activityInfos[item]
 		if ok {
+			// the visibility timestamp will be set in shard context
 			outputs = append(outputs, &persistence.SyncActivityTask{
 				Version:     activityInfo.Version,
 				ScheduledID: activityInfo.ScheduleID,
@@ -121,7 +123,7 @@ func convertUpdateTimerInfos(
 	return outputs
 }
 
-func convertDeleteTimerInfos(
+func convertStringSetToSlice(
 	inputs map[string]struct{},
 ) []string {
 
@@ -198,38 +200,11 @@ func convertUpdateSignalInfos(
 	return outputs
 }
 
-func convertSignalRequestedIDs(
-	inputs map[string]struct{},
-) []string {
-
-	outputs := make([]string, 0, len(inputs))
-	for item := range inputs {
-		outputs = append(outputs, item)
-	}
-	return outputs
-}
-
-func setTaskInfo(
-	version int64,
-	timestamp time.Time,
-	transferTasks []persistence.Task,
-	timerTasks []persistence.Task,
-) {
-	// set both the task version, as well as the timestamp on the transfer tasks
-	for _, task := range transferTasks {
-		task.SetVersion(version)
-		task.SetVisibilityTimestamp(timestamp)
-	}
-	for _, task := range timerTasks {
-		task.SetVersion(version)
-	}
-}
-
 // FailDecision fails the current decision task
 func FailDecision(
 	mutableState MutableState,
 	decision *DecisionInfo,
-	decisionFailureCause workflow.DecisionTaskFailedCause,
+	decisionFailureCause types.DecisionTaskFailedCause,
 ) error {
 
 	if _, err := mutableState.AddDecisionTaskFailedEvent(
@@ -261,7 +236,7 @@ func ScheduleDecision(
 
 	_, err := mutableState.AddDecisionTaskScheduledEvent(false)
 	if err != nil {
-		return &workflow.InternalServiceError{Message: "Failed to add decision scheduled event."}
+		return &types.InternalServiceError{Message: "Failed to add decision scheduled event."}
 	}
 	return nil
 }
@@ -269,9 +244,9 @@ func ScheduleDecision(
 // FindAutoResetPoint returns the auto reset point
 func FindAutoResetPoint(
 	timeSource clock.TimeSource,
-	badBinaries *workflow.BadBinaries,
-	autoResetPoints *workflow.ResetPoints,
-) (string, *workflow.ResetPointInfo) {
+	badBinaries *types.BadBinaries,
+	autoResetPoints *types.ResetPoints,
+) (string, *types.ResetPointInfo) {
 	if badBinaries == nil || badBinaries.Binaries == nil || autoResetPoints == nil || autoResetPoints.Points == nil {
 		return "", nil
 	}
@@ -317,18 +292,18 @@ func CreatePersistenceMutableState(ms MutableState) *persistence.WorkflowMutable
 	}
 
 	builder.FlushBufferedEvents() //nolint:errcheck
-	var bufferedEvents []*workflow.HistoryEvent
+	var bufferedEvents []*types.HistoryEvent
 	if len(builder.bufferedEvents) > 0 {
 		bufferedEvents = append(bufferedEvents, builder.bufferedEvents...)
 	}
 	if len(builder.updateBufferedEvents) > 0 {
 		bufferedEvents = append(bufferedEvents, builder.updateBufferedEvents...)
 	}
-	var replicationState *persistence.ReplicationState
-	if builder.GetReplicationState() != nil {
-		replicationState = CopyReplicationState(builder.GetReplicationState())
-	}
 
+	var versionHistories *persistence.VersionHistories
+	if ms.GetVersionHistories() != nil {
+		versionHistories = ms.GetVersionHistories().Duplicate()
+	}
 	return &persistence.WorkflowMutableState{
 		ExecutionInfo:       info,
 		ExecutionStats:      stats,
@@ -338,7 +313,7 @@ func CreatePersistenceMutableState(ms MutableState) *persistence.WorkflowMutable
 		SignalInfos:         signalInfos,
 		RequestCancelInfos:  cancellationInfos,
 		ChildExecutionInfos: childInfos,
-		ReplicationState:    replicationState,
+		VersionHistories:    versionHistories,
 	}
 }
 
@@ -406,38 +381,13 @@ func CopyActivityInfo(sourceInfo *persistence.ActivityInfo) *persistence.Activit
 	details := make([]byte, len(sourceInfo.Details))
 	copy(details, sourceInfo.Details)
 
-	var scheduledEvent *workflow.HistoryEvent
-	var startedEvent *workflow.HistoryEvent
-	if sourceInfo.ScheduledEvent != nil {
-		scheduledEvent = &workflow.HistoryEvent{}
-		wv, err := sourceInfo.ScheduledEvent.ToWire()
-		if err != nil {
-			panic(err)
-		}
-		err = scheduledEvent.FromWire(wv)
-		if err != nil {
-			panic(err)
-		}
-	}
-	if sourceInfo.StartedEvent != nil {
-		startedEvent = &workflow.HistoryEvent{}
-		wv, err := sourceInfo.StartedEvent.ToWire()
-		if err != nil {
-			panic(err)
-		}
-		err = startedEvent.FromWire(wv)
-		if err != nil {
-			panic(err)
-		}
-	}
-
 	return &persistence.ActivityInfo{
 		Version:                  sourceInfo.Version,
 		ScheduleID:               sourceInfo.ScheduleID,
 		ScheduledEventBatchID:    sourceInfo.ScheduledEventBatchID,
-		ScheduledEvent:           scheduledEvent,
+		ScheduledEvent:           deepCopyHistoryEvent(sourceInfo.ScheduledEvent),
 		StartedID:                sourceInfo.StartedID,
-		StartedEvent:             startedEvent,
+		StartedEvent:             deepCopyHistoryEvent(sourceInfo.StartedEvent),
 		ActivityID:               sourceInfo.ActivityID,
 		RequestID:                sourceInfo.RequestID,
 		Details:                  details,
@@ -507,7 +457,7 @@ func CopySignalInfo(sourceInfo *persistence.SignalInfo) *persistence.SignalInfo 
 
 // CopyChildInfo copies ChildExecutionInfo
 func CopyChildInfo(sourceInfo *persistence.ChildExecutionInfo) *persistence.ChildExecutionInfo {
-	result := &persistence.ChildExecutionInfo{
+	return &persistence.ChildExecutionInfo{
 		Version:               sourceInfo.Version,
 		InitiatedID:           sourceInfo.InitiatedID,
 		InitiatedEventBatchID: sourceInfo.InitiatedEventBatchID,
@@ -518,51 +468,23 @@ func CopyChildInfo(sourceInfo *persistence.ChildExecutionInfo) *persistence.Chil
 		DomainName:            sourceInfo.DomainName,
 		WorkflowTypeName:      sourceInfo.WorkflowTypeName,
 		ParentClosePolicy:     sourceInfo.ParentClosePolicy,
+		InitiatedEvent:        deepCopyHistoryEvent(sourceInfo.InitiatedEvent),
+		StartedEvent:          deepCopyHistoryEvent(sourceInfo.StartedEvent),
 	}
-
-	if sourceInfo.InitiatedEvent != nil {
-		result.InitiatedEvent = &workflow.HistoryEvent{}
-		wv, err := sourceInfo.InitiatedEvent.ToWire()
-		if err != nil {
-			panic(err)
-		}
-		err = result.InitiatedEvent.FromWire(wv)
-		if err != nil {
-			panic(err)
-		}
-	}
-	if sourceInfo.StartedEvent != nil {
-		result.StartedEvent = &workflow.HistoryEvent{}
-		wv, err := sourceInfo.StartedEvent.ToWire()
-		if err != nil {
-			panic(err)
-		}
-		err = result.StartedEvent.FromWire(wv)
-		if err != nil {
-			panic(err)
-		}
-	}
-	return result
 }
 
-// CopyReplicationState copies workflow ReplicationState
-func CopyReplicationState(source *persistence.ReplicationState) *persistence.ReplicationState {
-	var lastReplicationInfo map[string]*persistence.ReplicationInfo
-	if source.LastReplicationInfo != nil {
-		lastReplicationInfo = map[string]*persistence.ReplicationInfo{}
-		for k, v := range source.LastReplicationInfo {
-			lastReplicationInfo[k] = &persistence.ReplicationInfo{
-				Version:     v.Version,
-				LastEventID: v.LastEventID,
-			}
-		}
+func deepCopyHistoryEvent(e *types.HistoryEvent) *types.HistoryEvent {
+	if e == nil {
+		return nil
 	}
-
-	return &persistence.ReplicationState{
-		CurrentVersion:      source.CurrentVersion,
-		StartVersion:        source.StartVersion,
-		LastWriteVersion:    source.LastWriteVersion,
-		LastWriteEventID:    source.LastWriteEventID,
-		LastReplicationInfo: lastReplicationInfo,
+	bytes, err := json.Marshal(e)
+	if err != nil {
+		panic(err)
 	}
+	var copy types.HistoryEvent
+	err = json.Unmarshal(bytes, &copy)
+	if err != nil {
+		panic(err)
+	}
+	return &copy
 }

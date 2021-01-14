@@ -20,6 +20,8 @@
 
 package metrics
 
+import "strconv"
+
 const (
 	revisionTag     = "revision"
 	branchTag       = "branch"
@@ -27,13 +29,16 @@ const (
 	buildVersionTag = "build_version"
 	goVersionTag    = "go_version"
 
-	instance      = "instance"
-	domain        = "domain"
-	targetCluster = "target_cluster"
-	taskList      = "tasklist"
-	workflowType  = "workflowType"
-	activityType  = "activityType"
-	decisionType  = "decisionType"
+	instance       = "instance"
+	domain         = "domain"
+	targetCluster  = "target_cluster"
+	activeCluster  = "active_cluster"
+	taskList       = "tasklist"
+	workflowType   = "workflowType"
+	activityType   = "activityType"
+	decisionType   = "decisionType"
+	invariantType  = "invariantType"
+	kafkaPartition = "kafkaPartition"
 
 	domainAllValue = "all"
 	unknownValue   = "_unknown_"
@@ -62,6 +67,10 @@ type (
 		value string
 	}
 
+	activeClusterTag struct {
+		value string
+	}
+
 	taskListTag struct {
 		value string
 	}
@@ -75,6 +84,14 @@ type (
 	}
 
 	decisionTypeTag struct {
+		value string
+	}
+
+	invariantTypeTag struct {
+		value string
+	}
+
+	kafkaPartitionTag struct {
 		value string
 	}
 )
@@ -157,6 +174,24 @@ func (d targetClusterTag) Key() string {
 	return targetCluster
 }
 
+// Key returns the key of the active cluster tag
+func (ac activeClusterTag) Key() string {
+	return activeCluster
+}
+
+// Value returns the value of the active cluster tag
+func (ac activeClusterTag) Value() string {
+	return ac.value
+}
+
+// ActiveClusterTag returns a new active cluster type tag.
+func ActiveClusterTag(value string) Tag {
+	if len(value) == 0 {
+		value = unknownValue
+	}
+	return activeClusterTag{value}
+}
+
 // Value returns the value of a target cluster tag
 func (d targetClusterTag) Value() string {
 	return d.value
@@ -231,5 +266,38 @@ func (d decisionTypeTag) Key() string {
 
 // Value returns the value of the decision type tag
 func (d decisionTypeTag) Value() string {
+	return d.value
+}
+
+// InvariantTypeTag returns a new invariant type tag.
+func InvariantTypeTag(value string) Tag {
+	if len(value) == 0 {
+		value = unknownValue
+	}
+	return invariantTypeTag{value}
+}
+
+// Key returns the key of invariant type tag
+func (d invariantTypeTag) Key() string {
+	return invariantType
+}
+
+// Value returns the value of invariant type tag
+func (d invariantTypeTag) Value() string {
+	return d.value
+}
+
+// KafkaPartitionTag returns a new KafkaPartition type tag.
+func KafkaPartitionTag(value int32) Tag {
+	return kafkaPartitionTag{strconv.Itoa(int(value))}
+}
+
+// Key returns the key of the decision type tag
+func (d kafkaPartitionTag) Key() string {
+	return kafkaPartition
+}
+
+// Value returns the value of the decision type tag
+func (d kafkaPartitionTag) Value() string {
 	return d.value
 }

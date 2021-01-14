@@ -23,21 +23,20 @@ package matching
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/uber/cadence/.gen/go/matching"
-	s "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/messaging"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 )
 
 const (
@@ -48,9 +47,9 @@ const (
 
 type (
 	addTaskParams struct {
-		execution     *s.WorkflowExecution
+		execution     *types.WorkflowExecution
 		taskInfo      *persistence.TaskInfo
-		source        matching.TaskSource
+		source        types.TaskSource
 		forwardedFrom string
 	}
 
@@ -70,26 +69,26 @@ type (
 		DispatchTask(ctx context.Context, task *internalTask) error
 		// DispatchQueryTask will dispatch query to local or remote poller. If forwarded then result or error is returned,
 		// if dispatched to local poller then nil and nil is returned.
-		DispatchQueryTask(ctx context.Context, taskID string, request *matching.QueryWorkflowRequest) (*s.QueryWorkflowResponse, error)
+		DispatchQueryTask(ctx context.Context, taskID string, request *types.MatchingQueryWorkflowRequest) (*types.QueryWorkflowResponse, error)
 		CancelPoller(pollerID string)
-		GetAllPollerInfo() []*s.PollerInfo
+		GetAllPollerInfo() []*types.PollerInfo
 		// DescribeTaskList returns information about the target tasklist
-		DescribeTaskList(includeTaskListStatus bool) *s.DescribeTaskListResponse
+		DescribeTaskList(includeTaskListStatus bool) *types.DescribeTaskListResponse
 		String() string
 	}
 
 	// Single task list in memory state
 	taskListManagerImpl struct {
 		taskListID       *taskListID
-		taskListKind     s.TaskListKind // sticky taskList has different process in persistence
+		taskListKind     types.TaskListKind // sticky taskList has different process in persistence
 		config           *taskListConfig
 		db               *taskListDB
 		engine           *matchingEngineImpl
 		taskWriter       *taskWriter
 		taskReader       *taskReader // reads tasks from db and async matches it with poller
 		taskGC           *taskGC
-		taskAckManager   ackManager   // tracks ackLevel for delivered messages
-		matcher          *TaskMatcher // for matching a task producer with a poller
+		taskAckManager   messaging.AckManager // tracks ackLevel for delivered messages
+		matcher          *TaskMatcher         // for matching a task producer with a poller
 		domainCache      cache.DomainCache
 		logger           log.Logger
 		metricsClient    metrics.Client
@@ -118,12 +117,12 @@ const (
 
 var _ taskListManager = (*taskListManagerImpl)(nil)
 
-var errRemoteSyncMatchFailed = errors.New("remote sync match failed")
+var errRemoteSyncMatchFailed = &types.RemoteSyncMatchedError{Message: "remote sync match failed"}
 
 func newTaskListManager(
 	e *matchingEngineImpl,
 	taskList *taskListID,
-	taskListKind *s.TaskListKind,
+	taskListKind *types.TaskListKind,
 	config *Config,
 ) (taskListManager, error) {
 
@@ -133,7 +132,8 @@ func newTaskListManager(
 	}
 
 	if taskListKind == nil {
-		taskListKind = common.TaskListKindPtr(s.TaskListKindNormal)
+		normalTaskListKind := types.TaskListKindNormal
+		taskListKind = &normalTaskListKind
 	}
 
 	db := newTaskListDB(e.taskManager, taskList.domainID, taskList.name, taskList.taskType, int(*taskListKind), e.logger)
@@ -148,7 +148,7 @@ func newTaskListManager(
 		logger: e.logger.WithTags(tag.WorkflowTaskListName(taskList.name),
 			tag.WorkflowTaskListType(taskList.taskType)),
 		db:                  db,
-		taskAckManager:      newAckManager(e.logger),
+		taskAckManager:      messaging.NewAckManager(e.logger),
 		taskGC:              newTaskGC(db, taskListConfig),
 		config:              taskListConfig,
 		pollerHistory:       newPollerHistory(),
@@ -190,7 +190,7 @@ func (c *taskListManagerImpl) Start() error {
 		return err
 	}
 
-	c.taskAckManager.setAckLevel(state.ackLevel)
+	c.taskAckManager.SetAckLevel(state.ackLevel)
 	c.taskWriter.Start(c.rangeIDToTaskIDBlock(state.rangeID))
 	c.taskReader.Start()
 
@@ -206,12 +206,11 @@ func (c *taskListManagerImpl) Stop() {
 	c.taskWriter.Stop()
 	c.taskReader.Stop()
 	c.engine.removeTaskListManager(c.taskListID)
-	c.engine.removeTaskListManager(c.taskListID)
-	c.logger.Info("", tag.LifeCycleStopped)
+	c.logger.Info("Task list manager state changed", tag.LifeCycleStopped)
 }
 
 // AddTask adds a task to the task list. This method will first attempt a synchronous
-// match with a poller. When there are no pollers or if ratelimit is exceeded, task will
+// match with a poller. When there are no pollers or if rate limit is exceeded, task will
 // be written to database and later asynchronously matched with a poller
 func (c *taskListManagerImpl) AddTask(ctx context.Context, params addTaskParams) (bool, error) {
 	c.startWG.Wait()
@@ -260,8 +259,8 @@ func (c *taskListManagerImpl) DispatchTask(ctx context.Context, task *internalTa
 func (c *taskListManagerImpl) DispatchQueryTask(
 	ctx context.Context,
 	taskID string,
-	request *matching.QueryWorkflowRequest,
-) (*s.QueryWorkflowResponse, error) {
+	request *types.MatchingQueryWorkflowRequest,
+) (*types.QueryWorkflowResponse, error) {
 	c.startWG.Wait()
 	task := newInternalQueryTask(taskID, request)
 	return c.matcher.OfferQuery(ctx, task)
@@ -280,7 +279,7 @@ func (c *taskListManagerImpl) GetTask(
 		return nil, err
 	}
 	task.domainName = c.domainName()
-	task.backlogCountHint = c.taskAckManager.getBacklogCountHint()
+	task.backlogCountHint = c.taskAckManager.GetBacklogCount()
 	return task, nil
 }
 
@@ -331,7 +330,7 @@ func (c *taskListManagerImpl) getTask(ctx context.Context, maxDispatchPerSecond 
 }
 
 // GetAllPollerInfo returns all pollers that polled from this tasklist in last few minutes
-func (c *taskListManagerImpl) GetAllPollerInfo() []*s.PollerInfo {
+func (c *taskListManagerImpl) GetAllPollerInfo() []*types.PollerInfo {
 	return c.pollerHistory.getAllPollerInfo()
 }
 
@@ -348,19 +347,19 @@ func (c *taskListManagerImpl) CancelPoller(pollerID string) {
 // DescribeTaskList returns information about the target tasklist, right now this API returns the
 // pollers which polled this tasklist in last few minutes and status of tasklist's ackManager
 // (readLevel, ackLevel, backlogCountHint and taskIDBlock).
-func (c *taskListManagerImpl) DescribeTaskList(includeTaskListStatus bool) *s.DescribeTaskListResponse {
-	response := &s.DescribeTaskListResponse{Pollers: c.GetAllPollerInfo()}
+func (c *taskListManagerImpl) DescribeTaskList(includeTaskListStatus bool) *types.DescribeTaskListResponse {
+	response := &types.DescribeTaskListResponse{Pollers: c.GetAllPollerInfo()}
 	if !includeTaskListStatus {
 		return response
 	}
 
 	taskIDBlock := c.rangeIDToTaskIDBlock(c.db.RangeID())
-	response.TaskListStatus = &s.TaskListStatus{
-		ReadLevel:        common.Int64Ptr(c.taskAckManager.getReadLevel()),
-		AckLevel:         common.Int64Ptr(c.taskAckManager.getAckLevel()),
-		BacklogCountHint: common.Int64Ptr(c.taskAckManager.getBacklogCountHint()),
+	response.TaskListStatus = &types.TaskListStatus{
+		ReadLevel:        common.Int64Ptr(c.taskAckManager.GetReadLevel()),
+		AckLevel:         common.Int64Ptr(c.taskAckManager.GetAckLevel()),
+		BacklogCountHint: common.Int64Ptr(c.taskAckManager.GetBacklogCount()),
 		RatePerSecond:    common.Float64Ptr(c.matcher.Rate()),
-		TaskIDBlock: &s.TaskIDBlock{
+		TaskIDBlock: &types.TaskIDBlock{
 			StartID: common.Int64Ptr(taskIDBlock.start),
 			EndID:   common.Int64Ptr(taskIDBlock.end),
 		},
@@ -380,8 +379,8 @@ func (c *taskListManagerImpl) String() string {
 	fmt.Fprintf(buf, " task list %v\n", c.taskListID.name)
 	fmt.Fprintf(buf, "RangeID=%v\n", rangeID)
 	fmt.Fprintf(buf, "TaskIDBlock=%+v\n", c.rangeIDToTaskIDBlock(rangeID))
-	fmt.Fprintf(buf, "AckLevel=%v\n", c.taskAckManager.ackLevel)
-	fmt.Fprintf(buf, "MaxReadLevel=%v\n", c.taskAckManager.getReadLevel())
+	fmt.Fprintf(buf, "AckLevel=%v\n", c.taskAckManager.GetAckLevel())
+	fmt.Fprintf(buf, "MaxReadLevel=%v\n", c.taskAckManager.GetReadLevel())
 
 	return buf.String()
 }
@@ -400,7 +399,7 @@ func (c *taskListManagerImpl) completeTask(task *persistence.TaskInfo, err error
 		// Note that RecordTaskStarted only fails after retrying for a long time, so a single task will not be
 		// re-written to persistence frequently.
 		_, err = c.executeWithRetry(func() (interface{}, error) {
-			wf := &s.WorkflowExecution{WorkflowId: &task.WorkflowID, RunId: &task.RunID}
+			wf := &types.WorkflowExecution{WorkflowID: &task.WorkflowID, RunID: &task.RunID}
 			return c.taskWriter.appendTask(wf, task)
 		})
 
@@ -418,7 +417,7 @@ func (c *taskListManagerImpl) completeTask(task *persistence.TaskInfo, err error
 		}
 		c.taskReader.Signal()
 	}
-	ackLevel := c.taskAckManager.completeTask(task.TaskID)
+	ackLevel := c.taskAckManager.AckItem(task.TaskID)
 	c.taskGC.Run(ackLevel)
 }
 
@@ -480,6 +479,9 @@ func (c *taskListManagerImpl) executeWithRetry(
 		c.metricScope().IncCounter(metrics.ConditionFailedErrorPerTaskListCounter)
 		c.logger.Debug(fmt.Sprintf("Stopping task list due to persistence condition failure. Err: %v", err))
 		c.Stop()
+		if c.taskListKind == types.TaskListKindSticky {
+			err = &types.InternalServiceError{Message: common.StickyTaskConditionFailedErrorMsg}
+		}
 	}
 	return
 }
@@ -525,8 +527,8 @@ func (c *taskListManagerImpl) newChildContext(
 	return context.WithTimeout(parent, timeout)
 }
 
-func (c *taskListManagerImpl) isFowardingAllowed(taskList *taskListID, kind s.TaskListKind) bool {
-	return !taskList.IsRoot() && kind != s.TaskListKindSticky
+func (c *taskListManagerImpl) isFowardingAllowed(taskList *taskListID, kind types.TaskListKind) bool {
+	return !taskList.IsRoot() && kind != types.TaskListKindSticky
 }
 
 func (c *taskListManagerImpl) metricScope() metrics.Scope {
@@ -569,6 +571,6 @@ func (c *taskListManagerImpl) tryInitDomainNameAndScope() {
 	c.domainNameValue.Store(domainName)
 }
 
-func createServiceBusyError(msg string) *s.ServiceBusyError {
-	return &s.ServiceBusyError{Message: msg}
+func createServiceBusyError(msg string) *types.ServiceBusyError {
+	return &types.ServiceBusyError{Message: msg}
 }

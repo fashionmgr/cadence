@@ -33,10 +33,10 @@ import (
 	"github.com/urfave/cli"
 	s "go.uber.org/cadence/.gen/go/shared"
 
-	serviceFrontend "github.com/uber/cadence/.gen/go/cadence/workflowserviceclient"
-	"github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/client/frontend"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/domain"
+	"github.com/uber/cadence/common/types"
 )
 
 var (
@@ -46,7 +46,7 @@ var (
 type (
 	domainCLIImpl struct {
 		// used when making RPC call to frontend service
-		frontendClient serviceFrontend.Interface
+		frontendClient frontend.Client
 
 		// act as admin to modify domain in DB directly
 		domainHandler domain.Handler
@@ -59,7 +59,7 @@ func newDomainCLI(
 	isAdminMode bool,
 ) *domainCLIImpl {
 
-	var frontendClient serviceFrontend.Interface
+	var frontendClient frontend.Client
 	var domainHandler domain.Handler
 	if !isAdminMode {
 		frontendClient = initializeFrontendClient(c)
@@ -115,20 +115,20 @@ func (d *domainCLIImpl) RegisterDomain(c *cli.Context) {
 		activeClusterName = common.StringPtr(c.String(FlagActiveClusterName))
 	}
 
-	var clusters []*shared.ClusterReplicationConfiguration
+	var clusters []*types.ClusterReplicationConfiguration
 	if c.IsSet(FlagClusters) {
 		clusterStr := c.String(FlagClusters)
-		clusters = append(clusters, &shared.ClusterReplicationConfiguration{
+		clusters = append(clusters, &types.ClusterReplicationConfiguration{
 			ClusterName: common.StringPtr(clusterStr),
 		})
 		for _, clusterStr := range c.Args() {
-			clusters = append(clusters, &shared.ClusterReplicationConfiguration{
+			clusters = append(clusters, &types.ClusterReplicationConfiguration{
 				ClusterName: common.StringPtr(clusterStr),
 			})
 		}
 	}
 
-	request := &shared.RegisterDomainRequest{
+	request := &types.RegisterDomainRequest{
 		Name:                                   common.StringPtr(domainName),
 		Description:                            common.StringPtr(description),
 		OwnerEmail:                             common.StringPtr(ownerEmail),
@@ -162,14 +162,14 @@ func (d *domainCLIImpl) RegisterDomain(c *cli.Context) {
 func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 	domainName := getRequiredGlobalOption(c, FlagDomain)
 
-	var updateRequest *shared.UpdateDomainRequest
+	var updateRequest *types.UpdateDomainRequest
 	ctx, cancel := newContext(c)
 	defer cancel()
 
 	if c.IsSet(FlagActiveClusterName) {
 		activeCluster := c.String(FlagActiveClusterName)
 		fmt.Printf("Will set active cluster name to: %s, other flag will be omitted.\n", activeCluster)
-		replicationConfig := &shared.DomainReplicationConfiguration{
+		replicationConfig := &types.DomainReplicationConfiguration{
 			ActiveClusterName: common.StringPtr(activeCluster),
 		}
 
@@ -179,17 +179,17 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 			failoverTimeout = &timeout
 		}
 
-		updateRequest = &shared.UpdateDomainRequest{
+		updateRequest = &types.UpdateDomainRequest{
 			Name:                     common.StringPtr(domainName),
 			ReplicationConfiguration: replicationConfig,
 			FailoverTimeoutInSeconds: failoverTimeout,
 		}
 	} else {
-		resp, err := d.describeDomain(ctx, &shared.DescribeDomainRequest{
+		resp, err := d.describeDomain(ctx, &types.DescribeDomainRequest{
 			Name: common.StringPtr(domainName),
 		})
 		if err != nil {
-			if _, ok := err.(*shared.EntityNotExistsError); !ok {
+			if _, ok := err.(*types.EntityNotExistsError); !ok {
 				ErrorAndExit("Operation UpdateDomain failed.", err)
 			} else {
 				ErrorAndExit(fmt.Sprintf("Domain %s does not exist.", domainName), err)
@@ -201,7 +201,7 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 		ownerEmail := resp.DomainInfo.GetOwnerEmail()
 		retentionDays := resp.Configuration.GetWorkflowExecutionRetentionPeriodInDays()
 		emitMetric := resp.Configuration.GetEmitMetric()
-		var clusters []*shared.ClusterReplicationConfiguration
+		var clusters []*types.ClusterReplicationConfiguration
 
 		if c.IsSet(FlagDescription) {
 			description = c.String(FlagDescription)
@@ -222,17 +222,17 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 		}
 		if c.IsSet(FlagClusters) {
 			clusterStr := c.String(FlagClusters)
-			clusters = append(clusters, &shared.ClusterReplicationConfiguration{
+			clusters = append(clusters, &types.ClusterReplicationConfiguration{
 				ClusterName: common.StringPtr(clusterStr),
 			})
 			for _, clusterStr := range c.Args() {
-				clusters = append(clusters, &shared.ClusterReplicationConfiguration{
+				clusters = append(clusters, &types.ClusterReplicationConfiguration{
 					ClusterName: common.StringPtr(clusterStr),
 				})
 			}
 		}
 
-		var binBinaries *shared.BadBinaries
+		var binBinaries *types.BadBinaries
 		if c.IsSet(FlagAddBadBinary) {
 			if !c.IsSet(FlagReason) {
 				ErrorAndExit("Must provide a reason.", nil)
@@ -240,8 +240,8 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 			binChecksum := c.String(FlagAddBadBinary)
 			reason := c.String(FlagReason)
 			operator := getCurrentUserFromEnv()
-			binBinaries = &shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{
+			binBinaries = &types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{
 					binChecksum: {
 						Reason:   common.StringPtr(reason),
 						Operator: common.StringPtr(operator),
@@ -255,12 +255,12 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 			badBinaryToDelete = common.StringPtr(c.String(FlagRemoveBadBinary))
 		}
 
-		updateInfo := &shared.UpdateDomainInfo{
+		updateInfo := &types.UpdateDomainInfo{
 			Description: common.StringPtr(description),
 			OwnerEmail:  common.StringPtr(ownerEmail),
 			Data:        domainData,
 		}
-		updateConfig := &shared.DomainConfiguration{
+		updateConfig := &types.DomainConfiguration{
 			WorkflowExecutionRetentionPeriodInDays: common.Int32Ptr(retentionDays),
 			EmitMetric:                             common.BoolPtr(emitMetric),
 			HistoryArchivalStatus:                  archivalStatus(c, FlagHistoryArchivalStatus),
@@ -269,10 +269,10 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 			VisibilityArchivalURI:                  common.StringPtr(c.String(FlagVisibilityArchivalURI)),
 			BadBinaries:                            binBinaries,
 		}
-		replicationConfig := &shared.DomainReplicationConfiguration{
+		replicationConfig := &types.DomainReplicationConfiguration{
 			Clusters: clusters,
 		}
-		updateRequest = &shared.UpdateDomainRequest{
+		updateRequest = &types.UpdateDomainRequest{
 			Name:                     common.StringPtr(domainName),
 			UpdatedInfo:              updateInfo,
 			Configuration:            updateConfig,
@@ -306,7 +306,7 @@ func (d *domainCLIImpl) FailoverDomains(c *cli.Context) {
 func (d *domainCLIImpl) failoverDomains(c *cli.Context) ([]string, []string) {
 	targetCluster := getRequiredOption(c, FlagActiveClusterName)
 	domains := d.getAllDomains(c)
-	shouldFailover := func(domain *shared.DescribeDomainResponse) bool {
+	shouldFailover := func(domain *types.DescribeDomainResponse) bool {
 		isDomainNotActiveInTargetCluster := domain.ReplicationConfiguration.GetActiveClusterName() != targetCluster
 		return isDomainNotActiveInTargetCluster && isDomainFailoverManagedByCadence(domain)
 	}
@@ -330,14 +330,14 @@ func (d *domainCLIImpl) failoverDomains(c *cli.Context) ([]string, []string) {
 	return succeedDomains, failedDomains
 }
 
-func (d *domainCLIImpl) getAllDomains(c *cli.Context) []*shared.DescribeDomainResponse {
-	var res []*shared.DescribeDomainResponse
+func (d *domainCLIImpl) getAllDomains(c *cli.Context) []*types.DescribeDomainResponse {
+	var res []*types.DescribeDomainResponse
 	pagesize := int32(200)
 	var token []byte
 	ctx, cancel := newContext(c)
 	defer cancel()
 	for more := true; more; more = len(token) > 0 {
-		listRequest := &shared.ListDomainsRequest{
+		listRequest := &types.ListDomainsRequest{
 			PageSize:      common.Int32Ptr(pagesize),
 			NextPageToken: token,
 		}
@@ -351,16 +351,16 @@ func (d *domainCLIImpl) getAllDomains(c *cli.Context) []*shared.DescribeDomainRe
 	return res
 }
 
-func isDomainFailoverManagedByCadence(domain *shared.DescribeDomainResponse) bool {
+func isDomainFailoverManagedByCadence(domain *types.DescribeDomainResponse) bool {
 	domainData := domain.DomainInfo.GetData()
 	return strings.ToLower(strings.TrimSpace(domainData[common.DomainDataKeyForManagedFailover])) == "true"
 }
 
 func (d *domainCLIImpl) failover(c *cli.Context, domainName string, targetCluster string) error {
-	replicationConfig := &shared.DomainReplicationConfiguration{
+	replicationConfig := &types.DomainReplicationConfiguration{
 		ActiveClusterName: common.StringPtr(targetCluster),
 	}
-	updateRequest := &shared.UpdateDomainRequest{
+	updateRequest := &types.UpdateDomainRequest{
 		Name:                     common.StringPtr(domainName),
 		ReplicationConfiguration: replicationConfig,
 	}
@@ -380,7 +380,7 @@ func (d *domainCLIImpl) DescribeDomain(c *cli.Context) {
 	}
 	ctx, cancel := newContext(c)
 	defer cancel()
-	resp, err := d.describeDomain(ctx, &shared.DescribeDomainRequest{
+	resp, err := d.describeDomain(ctx, &types.DescribeDomainRequest{
 		Name: common.StringPtr(domainName),
 		UUID: common.StringPtr(domainID),
 	})
@@ -437,10 +437,43 @@ func (d *domainCLIImpl) DescribeDomain(c *cli.Context) {
 	}
 }
 
+func (d *domainCLIImpl) ListDomains(c *cli.Context) {
+	domains := d.getAllDomains(c)
+	pageSize := c.Int(FlagPageSize)
+	printAll := c.Bool(FlagAll)
+	printFull := c.Bool(FlagPrintFullyDetail)
+
+	table := createTableForListDomains(printAll, printFull)
+
+	currentPageSize := 0
+	for i, domain := range domains {
+		if !printAll && *domain.DomainInfo.Status != types.DomainStatusRegistered {
+			continue
+		}
+
+		appendDomainToTable(table, domain, printAll, printFull)
+		currentPageSize++
+
+		if currentPageSize != pageSize {
+			continue
+		}
+
+		// page is full
+		table.Render()
+		if i == len(domains)-1 || !showNextPage() {
+			return
+		}
+		table.ClearRows()
+		currentPageSize = 0
+	}
+
+	table.Render()
+}
+
 func (d *domainCLIImpl) listDomains(
 	ctx context.Context,
-	request *shared.ListDomainsRequest,
-) (*shared.ListDomainsResponse, error) {
+	request *types.ListDomainsRequest,
+) (*types.ListDomainsResponse, error) {
 
 	if d.frontendClient != nil {
 		return d.frontendClient.ListDomains(ctx, request)
@@ -451,7 +484,7 @@ func (d *domainCLIImpl) listDomains(
 
 func (d *domainCLIImpl) registerDomain(
 	ctx context.Context,
-	request *shared.RegisterDomainRequest,
+	request *types.RegisterDomainRequest,
 ) error {
 
 	if d.frontendClient != nil {
@@ -463,8 +496,8 @@ func (d *domainCLIImpl) registerDomain(
 
 func (d *domainCLIImpl) updateDomain(
 	ctx context.Context,
-	request *shared.UpdateDomainRequest,
-) (*shared.UpdateDomainResponse, error) {
+	request *types.UpdateDomainRequest,
+) (*types.UpdateDomainResponse, error) {
 
 	if d.frontendClient != nil {
 		return d.frontendClient.UpdateDomain(ctx, request)
@@ -475,8 +508,8 @@ func (d *domainCLIImpl) updateDomain(
 
 func (d *domainCLIImpl) describeDomain(
 	ctx context.Context,
-	request *shared.DescribeDomainRequest,
-) (*shared.DescribeDomainResponse, error) {
+	request *types.DescribeDomainRequest,
+) (*types.DescribeDomainResponse, error) {
 
 	if d.frontendClient != nil {
 		return d.frontendClient.DescribeDomain(ctx, request)
@@ -485,13 +518,64 @@ func (d *domainCLIImpl) describeDomain(
 	return d.domainHandler.DescribeDomain(ctx, request)
 }
 
-func archivalStatus(c *cli.Context, statusFlagName string) *shared.ArchivalStatus {
+func createTableForListDomains(printAll, printFull bool) *tablewriter.Table {
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetBorder(false)
+	table.SetColumnSeparator("|")
+	header := []string{"Name", "UUID", "Domain Data"}
+	if printAll || printFull {
+		header = append(header, "Status")
+	}
+	header = append(header, "Is Global Domain", "Active Cluster")
+	if printFull {
+		header = append(header, "Clusters", "Retention Days", "History Archival Status", "History Archival URI", "Visibility Archival Status", "Visibility Archival URI")
+	}
+	headerColor := make([]tablewriter.Colors, len(header))
+	for i := range headerColor {
+		headerColor[i] = tableHeaderBlue
+	}
+	table.SetHeader(header)
+	table.SetHeaderColor(headerColor...)
+	table.SetHeaderLine(false)
+
+	return table
+}
+
+func appendDomainToTable(
+	table *tablewriter.Table,
+	domain *types.DescribeDomainResponse,
+	printAll bool,
+	printFull bool,
+) {
+	row := []string{
+		domain.DomainInfo.GetName(),
+		domain.DomainInfo.GetUUID(),
+		mapToString(domain.DomainInfo.GetData(), ", "),
+	}
+	if printAll || printFull {
+		row = append(row, domain.DomainInfo.GetStatus().String())
+	}
+	row = append(row, strconv.FormatBool(domain.GetIsGlobalDomain()), domain.ReplicationConfiguration.GetActiveClusterName())
+	if printFull {
+		row = append(row,
+			clustersToString(domain.ReplicationConfiguration.GetClusters()),
+			fmt.Sprintf("%v", domain.Configuration.GetWorkflowExecutionRetentionPeriodInDays()),
+			domain.Configuration.GetHistoryArchivalStatus().String(),
+			domain.Configuration.GetHistoryArchivalURI(),
+			domain.Configuration.GetVisibilityArchivalStatus().String(),
+			domain.Configuration.GetVisibilityArchivalURI(),
+		)
+	}
+	table.Append(row)
+}
+
+func archivalStatus(c *cli.Context, statusFlagName string) *types.ArchivalStatus {
 	if c.IsSet(statusFlagName) {
 		switch c.String(statusFlagName) {
 		case "disabled":
-			return common.ArchivalStatusPtr(shared.ArchivalStatusDisabled)
+			return types.ArchivalStatusDisabled.Ptr()
 		case "enabled":
-			return common.ArchivalStatusPtr(shared.ArchivalStatusEnabled)
+			return types.ArchivalStatusEnabled.Ptr()
 		default:
 			ErrorAndExit(fmt.Sprintf("Option %s format is invalid.", statusFlagName), errors.New("invalid status, valid values are \"disabled\" and \"enabled\""))
 		}
@@ -499,7 +583,7 @@ func archivalStatus(c *cli.Context, statusFlagName string) *shared.ArchivalStatu
 	return nil
 }
 
-func clustersToString(clusters []*shared.ClusterReplicationConfiguration) string {
+func clustersToString(clusters []*types.ClusterReplicationConfiguration) string {
 	var res string
 	for i, cluster := range clusters {
 		if i == 0 {

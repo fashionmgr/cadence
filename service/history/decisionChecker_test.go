@@ -22,12 +22,12 @@ package history
 
 import (
 	"testing"
+	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
@@ -35,6 +35,7 @@ import (
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/constants"
 )
@@ -51,6 +52,8 @@ type (
 
 		testDomainID       string
 		testTargetDomainID string
+
+		testActivityMaxScheduleToStartTimeoutForRetryInSeconds int32
 	}
 )
 
@@ -62,6 +65,7 @@ func TestDecisionAttrValidatorSuite(t *testing.T) {
 func (s *decisionAttrValidatorSuite) SetupSuite() {
 	s.testDomainID = "test domain ID"
 	s.testTargetDomainID = "test target domain ID"
+	s.testActivityMaxScheduleToStartTimeoutForRetryInSeconds = 1800
 }
 
 func (s *decisionAttrValidatorSuite) TearDownSuite() {
@@ -78,6 +82,9 @@ func (s *decisionAttrValidatorSuite) SetupTest() {
 		SearchAttributesNumberOfKeysLimit: dynamicconfig.GetIntPropertyFilteredByDomain(100),
 		SearchAttributesSizeOfValueLimit:  dynamicconfig.GetIntPropertyFilteredByDomain(2 * 1024),
 		SearchAttributesTotalSizeLimit:    dynamicconfig.GetIntPropertyFilteredByDomain(40 * 1024),
+		ActivityMaxScheduleToStartTimeoutForRetry: dynamicconfig.GetDurationPropertyFnFilteredByDomain(
+			time.Duration(s.testActivityMaxScheduleToStartTimeoutForRetryInSeconds) * time.Second,
+		),
 	}
 	s.validator = newDecisionAttrValidator(
 		s.mockDomainCache,
@@ -107,24 +114,24 @@ func (s *decisionAttrValidatorSuite) TestValidateSignalExternalWorkflowExecution
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testDomainID).Return(domainEntry, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).AnyTimes()
 
-	var attributes *workflow.SignalExternalWorkflowExecutionDecisionAttributes
+	var attributes *types.SignalExternalWorkflowExecutionDecisionAttributes
 
 	err := s.validator.validateSignalExternalWorkflowExecutionAttributes(s.testDomainID, s.testTargetDomainID, attributes)
 	s.EqualError(err, "BadRequestError{Message: SignalExternalWorkflowExecutionDecisionAttributes is not set on decision.}")
 
-	attributes = &workflow.SignalExternalWorkflowExecutionDecisionAttributes{}
+	attributes = &types.SignalExternalWorkflowExecutionDecisionAttributes{}
 	err = s.validator.validateSignalExternalWorkflowExecutionAttributes(s.testDomainID, s.testTargetDomainID, attributes)
 	s.EqualError(err, "BadRequestError{Message: Execution is nil on decision.}")
 
-	attributes.Execution = &workflow.WorkflowExecution{}
-	attributes.Execution.WorkflowId = common.StringPtr("workflow-id")
+	attributes.Execution = &types.WorkflowExecution{}
+	attributes.Execution.WorkflowID = common.StringPtr("workflow-id")
 	err = s.validator.validateSignalExternalWorkflowExecutionAttributes(s.testDomainID, s.testTargetDomainID, attributes)
 	s.EqualError(err, "BadRequestError{Message: SignalName is not set on decision.}")
 
-	attributes.Execution.RunId = common.StringPtr("run-id")
+	attributes.Execution.RunID = common.StringPtr("run-id")
 	err = s.validator.validateSignalExternalWorkflowExecutionAttributes(s.testDomainID, s.testTargetDomainID, attributes)
 	s.EqualError(err, "BadRequestError{Message: Invalid RunId set on decision.}")
-	attributes.Execution.RunId = common.StringPtr(constants.TestRunID)
+	attributes.Execution.RunID = common.StringPtr(constants.TestRunID)
 
 	attributes.SignalName = common.StringPtr("my signal name")
 	err = s.validator.validateSignalExternalWorkflowExecutionAttributes(s.testDomainID, s.testTargetDomainID, attributes)
@@ -137,16 +144,16 @@ func (s *decisionAttrValidatorSuite) TestValidateSignalExternalWorkflowExecution
 
 func (s *decisionAttrValidatorSuite) TestValidateUpsertWorkflowSearchAttributes() {
 	domainName := "testDomain"
-	var attributes *workflow.UpsertWorkflowSearchAttributesDecisionAttributes
+	var attributes *types.UpsertWorkflowSearchAttributesDecisionAttributes
 
 	err := s.validator.validateUpsertWorkflowSearchAttributes(domainName, attributes)
 	s.EqualError(err, "BadRequestError{Message: UpsertWorkflowSearchAttributesDecisionAttributes is not set on decision.}")
 
-	attributes = &workflow.UpsertWorkflowSearchAttributesDecisionAttributes{}
+	attributes = &types.UpsertWorkflowSearchAttributesDecisionAttributes{}
 	err = s.validator.validateUpsertWorkflowSearchAttributes(domainName, attributes)
 	s.EqualError(err, "BadRequestError{Message: SearchAttributes is not set on decision.}")
 
-	attributes.SearchAttributes = &workflow.SearchAttributes{}
+	attributes.SearchAttributes = &types.SearchAttributes{}
 	err = s.validator.validateUpsertWorkflowSearchAttributes(domainName, attributes)
 	s.EqualError(err, "BadRequestError{Message: IndexedFields is empty on decision.}")
 
@@ -223,7 +230,7 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_LocalToEffectiv
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
 
 	err := s.validator.validateCrossDomainCall(s.testDomainID, s.testTargetDomainID)
-	s.IsType(&workflow.BadRequestError{}, err)
+	s.IsType(&types.BadRequestError{}, err)
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_LocalToGlobal() {
@@ -251,7 +258,7 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_LocalToGlobal()
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
 
 	err := s.validator.validateCrossDomainCall(s.testDomainID, s.testTargetDomainID)
-	s.IsType(&workflow.BadRequestError{}, err)
+	s.IsType(&types.BadRequestError{}, err)
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_EffectiveLocalToLocal_SameCluster() {
@@ -301,7 +308,7 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_EffectiveLocalT
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
 
 	err := s.validator.validateCrossDomainCall(s.testDomainID, s.testTargetDomainID)
-	s.IsType(&workflow.BadRequestError{}, err)
+	s.IsType(&types.BadRequestError{}, err)
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_EffectiveLocalToEffectiveLocal_SameCluster() {
@@ -359,7 +366,7 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_EffectiveLocalT
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
 
 	err := s.validator.validateCrossDomainCall(s.testDomainID, s.testTargetDomainID)
-	s.IsType(&workflow.BadRequestError{}, err)
+	s.IsType(&types.BadRequestError{}, err)
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_EffectiveLocalToGlobal() {
@@ -393,7 +400,7 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_EffectiveLocalT
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
 
 	err := s.validator.validateCrossDomainCall(s.testDomainID, s.testTargetDomainID)
-	s.IsType(&workflow.BadRequestError{}, err)
+	s.IsType(&types.BadRequestError{}, err)
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_GlobalToLocal() {
@@ -421,7 +428,7 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_GlobalToLocal()
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
 
 	err := s.validator.validateCrossDomainCall(s.testDomainID, s.testTargetDomainID)
-	s.IsType(&workflow.BadRequestError{}, err)
+	s.IsType(&types.BadRequestError{}, err)
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_GlobalToEffectiveLocal() {
@@ -455,7 +462,7 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_GlobalToEffecti
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
 
 	err := s.validator.validateCrossDomainCall(s.testDomainID, s.testTargetDomainID)
-	s.IsType(&workflow.BadRequestError{}, err)
+	s.IsType(&types.BadRequestError{}, err)
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_GlobalToGlobal_DiffDomain() {
@@ -490,7 +497,7 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_GlobalToGlobal_
 	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
 
 	err := s.validator.validateCrossDomainCall(s.testDomainID, s.testTargetDomainID)
-	s.IsType(&workflow.BadRequestError{}, err)
+	s.IsType(&types.BadRequestError{}, err)
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_GlobalToGlobal_SameDomain() {
@@ -501,28 +508,28 @@ func (s *decisionAttrValidatorSuite) TestValidateCrossDomainCall_GlobalToGlobal_
 }
 
 func (s *decisionAttrValidatorSuite) TestValidateTaskListName() {
-	taskList := func(name string) *workflow.TaskList {
-		kind := workflow.TaskListKindNormal
-		return &workflow.TaskList{Name: &name, Kind: &kind}
+	taskList := func(name string) *types.TaskList {
+		kind := types.TaskListKindNormal
+		return &types.TaskList{Name: &name, Kind: &kind}
 	}
 
 	testCases := []struct {
 		defaultVal  string
-		input       *workflow.TaskList
-		output      *workflow.TaskList
+		input       *types.TaskList
+		output      *types.TaskList
 		isOutputErr bool
 	}{
-		{"tl-1", nil, &workflow.TaskList{Name: common.StringPtr("tl-1")}, false},
+		{"tl-1", nil, &types.TaskList{Name: common.StringPtr("tl-1")}, false},
 		{"", taskList("tl-1"), taskList("tl-1"), false},
 		{"tl-1", taskList("tl-1"), taskList("tl-1"), false},
 		{"", taskList("/tl-1"), taskList("/tl-1"), false},
 		{"", taskList("/__cadence_sys"), taskList("/__cadence_sys"), false},
-		{"", nil, &workflow.TaskList{}, true},
+		{"", nil, &types.TaskList{}, true},
 		{"", taskList(""), taskList(""), true},
-		{"", taskList(reservedTaskListPrefix), taskList(reservedTaskListPrefix), true},
-		{"tl-1", taskList(reservedTaskListPrefix), taskList(reservedTaskListPrefix), true},
-		{"", taskList(reservedTaskListPrefix + "tl-1"), taskList(reservedTaskListPrefix + "tl-1"), true},
-		{"tl-1", taskList(reservedTaskListPrefix + "tl-1"), taskList(reservedTaskListPrefix + "tl-1"), true},
+		{"", taskList(common.ReservedTaskListPrefix), taskList(common.ReservedTaskListPrefix), true},
+		{"tl-1", taskList(common.ReservedTaskListPrefix), taskList(common.ReservedTaskListPrefix), true},
+		{"", taskList(common.ReservedTaskListPrefix + "tl-1"), taskList(common.ReservedTaskListPrefix + "tl-1"), true},
+		{"tl-1", taskList(common.ReservedTaskListPrefix + "tl-1"), taskList(common.ReservedTaskListPrefix + "tl-1"), true},
 	}
 
 	for _, tc := range testCases {
@@ -542,4 +549,185 @@ func (s *decisionAttrValidatorSuite) TestValidateTaskListName() {
 			s.EqualValues(tc.output, output)
 		})
 	}
+}
+
+func (s *decisionAttrValidatorSuite) TestValidateActivityScheduleAttributes_NoRetryPolicy() {
+	wfTimeout := int32(5)
+	attributes := &types.ScheduleActivityTaskDecisionAttributes{
+		ActivityID: common.StringPtr("some random activityID"),
+		ActivityType: &types.ActivityType{
+			Name: common.StringPtr("some random activity type"),
+		},
+		Domain: common.StringPtr(s.testDomainID),
+		TaskList: &types.TaskList{
+			Name: common.StringPtr("some random task list"),
+		},
+		Input:                         []byte{1, 2, 3},
+		ScheduleToCloseTimeoutSeconds: nil, // not set
+		ScheduleToStartTimeoutSeconds: common.Int32Ptr(3),
+		StartToCloseTimeoutSeconds:    common.Int32Ptr(3),  // ScheduleToStart + StartToClose > wfTimeout
+		HeartbeatTimeoutSeconds:       common.Int32Ptr(10), // larger then wfTimeout
+	}
+
+	expectedAttributesAfterValidation := &types.ScheduleActivityTaskDecisionAttributes{
+		ActivityID:                    attributes.ActivityID,
+		ActivityType:                  attributes.ActivityType,
+		Domain:                        attributes.Domain,
+		TaskList:                      attributes.TaskList,
+		Input:                         attributes.Input,
+		ScheduleToCloseTimeoutSeconds: common.Int32Ptr(wfTimeout),
+		ScheduleToStartTimeoutSeconds: attributes.ScheduleToStartTimeoutSeconds,
+		StartToCloseTimeoutSeconds:    attributes.StartToCloseTimeoutSeconds,
+		HeartbeatTimeoutSeconds:       common.Int32Ptr(wfTimeout),
+	}
+
+	domainEntry := cache.NewLocalDomainCacheEntryForTest(
+		&persistence.DomainInfo{Name: s.testDomainID},
+		nil,
+		cluster.TestCurrentClusterName,
+		nil,
+	)
+	targetDomainEntry := cache.NewLocalDomainCacheEntryForTest(
+		&persistence.DomainInfo{Name: s.testTargetDomainID},
+		nil,
+		cluster.TestCurrentClusterName,
+		nil,
+	)
+	s.mockDomainCache.EXPECT().GetDomainByID(s.testDomainID).Return(domainEntry, nil).Times(1)
+	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
+
+	err := s.validator.validateActivityScheduleAttributes(
+		s.testDomainID,
+		s.testTargetDomainID,
+		attributes,
+		wfTimeout,
+	)
+	s.Nil(err)
+	s.Equal(expectedAttributesAfterValidation, attributes)
+}
+
+func (s *decisionAttrValidatorSuite) TestValidateActivityScheduleAttributes_WithRetryPolicy_ScheduleToStartRetryable() {
+	s.mockDomainCache.EXPECT().GetDomainName(s.testDomainID).Return("some random domain name", nil).Times(1)
+
+	wfTimeout := int32(3000)
+	attributes := &types.ScheduleActivityTaskDecisionAttributes{
+		ActivityID: common.StringPtr("some random activityID"),
+		ActivityType: &types.ActivityType{
+			Name: common.StringPtr("some random activity type"),
+		},
+		Domain: common.StringPtr(s.testDomainID),
+		TaskList: &types.TaskList{
+			Name: common.StringPtr("some random task list"),
+		},
+		Input:                         []byte{1, 2, 3},
+		ScheduleToCloseTimeoutSeconds: nil, // not set
+		ScheduleToStartTimeoutSeconds: common.Int32Ptr(3),
+		StartToCloseTimeoutSeconds:    common.Int32Ptr(500), // extended ScheduleToStart + StartToClose > wfTimeout
+		HeartbeatTimeoutSeconds:       common.Int32Ptr(1),
+		RetryPolicy: &types.RetryPolicy{
+			InitialIntervalInSeconds:    common.Int32Ptr(1),
+			BackoffCoefficient:          common.Float64Ptr(1.1),
+			ExpirationIntervalInSeconds: common.Int32Ptr(s.testActivityMaxScheduleToStartTimeoutForRetryInSeconds + 1000), // larger than maximumScheduleToStartTimeoutForRetryInSeconds
+			NonRetriableErrorReasons:    []string{"non-retryable error"},
+		},
+	}
+
+	expectedAttributesAfterValidation := &types.ScheduleActivityTaskDecisionAttributes{
+		ActivityID:                    attributes.ActivityID,
+		ActivityType:                  attributes.ActivityType,
+		Domain:                        attributes.Domain,
+		TaskList:                      attributes.TaskList,
+		Input:                         attributes.Input,
+		ScheduleToCloseTimeoutSeconds: attributes.RetryPolicy.ExpirationIntervalInSeconds,
+		ScheduleToStartTimeoutSeconds: common.Int32Ptr(s.testActivityMaxScheduleToStartTimeoutForRetryInSeconds),
+		StartToCloseTimeoutSeconds:    attributes.StartToCloseTimeoutSeconds,
+		HeartbeatTimeoutSeconds:       attributes.HeartbeatTimeoutSeconds,
+		RetryPolicy:                   attributes.RetryPolicy,
+	}
+
+	domainEntry := cache.NewLocalDomainCacheEntryForTest(
+		&persistence.DomainInfo{Name: s.testDomainID},
+		nil,
+		cluster.TestCurrentClusterName,
+		nil,
+	)
+	targetDomainEntry := cache.NewLocalDomainCacheEntryForTest(
+		&persistence.DomainInfo{Name: s.testTargetDomainID},
+		nil,
+		cluster.TestCurrentClusterName,
+		nil,
+	)
+	s.mockDomainCache.EXPECT().GetDomainByID(s.testDomainID).Return(domainEntry, nil).Times(1)
+	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
+
+	err := s.validator.validateActivityScheduleAttributes(
+		s.testDomainID,
+		s.testTargetDomainID,
+		attributes,
+		wfTimeout,
+	)
+	s.Nil(err)
+	s.Equal(expectedAttributesAfterValidation, attributes)
+}
+
+func (s *decisionAttrValidatorSuite) TestValidateActivityScheduleAttributes_WithRetryPolicy_ScheduleToStartNonRetryable() {
+	wfTimeout := int32(1000)
+	attributes := &types.ScheduleActivityTaskDecisionAttributes{
+		ActivityID: common.StringPtr("some random activityID"),
+		ActivityType: &types.ActivityType{
+			Name: common.StringPtr("some random activity type"),
+		},
+		Domain: common.StringPtr(s.testDomainID),
+		TaskList: &types.TaskList{
+			Name: common.StringPtr("some random task list"),
+		},
+		Input:                         []byte{1, 2, 3},
+		ScheduleToCloseTimeoutSeconds: nil, // not set
+		ScheduleToStartTimeoutSeconds: common.Int32Ptr(3),
+		StartToCloseTimeoutSeconds:    common.Int32Ptr(500), // extended ScheduleToStart + StartToClose > wfTimeout
+		HeartbeatTimeoutSeconds:       common.Int32Ptr(1),
+		RetryPolicy: &types.RetryPolicy{
+			InitialIntervalInSeconds:    common.Int32Ptr(1),
+			BackoffCoefficient:          common.Float64Ptr(1.1),
+			ExpirationIntervalInSeconds: common.Int32Ptr(s.testActivityMaxScheduleToStartTimeoutForRetryInSeconds + 1000), // larger than wfTimeout and maximumScheduleToStartTimeoutForRetryInSeconds
+			NonRetriableErrorReasons:    []string{"cadenceInternal:Timeout SCHEDULE_TO_START"},
+		},
+	}
+
+	expectedAttributesAfterValidation := &types.ScheduleActivityTaskDecisionAttributes{
+		ActivityID:                    attributes.ActivityID,
+		ActivityType:                  attributes.ActivityType,
+		Domain:                        attributes.Domain,
+		TaskList:                      attributes.TaskList,
+		Input:                         attributes.Input,
+		ScheduleToCloseTimeoutSeconds: common.Int32Ptr(wfTimeout),
+		ScheduleToStartTimeoutSeconds: attributes.ScheduleToStartTimeoutSeconds,
+		StartToCloseTimeoutSeconds:    attributes.StartToCloseTimeoutSeconds,
+		HeartbeatTimeoutSeconds:       attributes.HeartbeatTimeoutSeconds,
+		RetryPolicy:                   attributes.RetryPolicy,
+	}
+
+	domainEntry := cache.NewLocalDomainCacheEntryForTest(
+		&persistence.DomainInfo{Name: s.testDomainID},
+		nil,
+		cluster.TestCurrentClusterName,
+		nil,
+	)
+	targetDomainEntry := cache.NewLocalDomainCacheEntryForTest(
+		&persistence.DomainInfo{Name: s.testTargetDomainID},
+		nil,
+		cluster.TestCurrentClusterName,
+		nil,
+	)
+	s.mockDomainCache.EXPECT().GetDomainByID(s.testDomainID).Return(domainEntry, nil).Times(1)
+	s.mockDomainCache.EXPECT().GetDomainByID(s.testTargetDomainID).Return(targetDomainEntry, nil).Times(1)
+
+	err := s.validator.validateActivityScheduleAttributes(
+		s.testDomainID,
+		s.testTargetDomainID,
+		attributes,
+		wfTimeout,
+	)
+	s.Nil(err)
+	s.Equal(expectedAttributesAfterValidation, attributes)
 }

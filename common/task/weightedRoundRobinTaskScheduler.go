@@ -23,8 +23,6 @@ package task
 import (
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,10 +38,11 @@ import (
 type (
 	// WeightedRoundRobinTaskSchedulerOptions configs WRR task scheduler
 	WeightedRoundRobinTaskSchedulerOptions struct {
-		Weights     dynamicconfig.MapPropertyFn
-		QueueSize   int
-		WorkerCount int
-		RetryPolicy backoff.RetryPolicy
+		Weights         dynamicconfig.MapPropertyFn
+		QueueSize       int
+		WorkerCount     dynamicconfig.IntPropertyFn
+		DispatcherCount int
+		RetryPolicy     backoff.RetryPolicy
 	}
 
 	weightedRoundRobinTaskSchedulerImpl struct {
@@ -79,7 +78,7 @@ func NewWeightedRoundRobinTaskScheduler(
 	metricsClient metrics.Client,
 	options *WeightedRoundRobinTaskSchedulerOptions,
 ) (Scheduler, error) {
-	weights, err := convertWeightsFromDynamicConfig(options.Weights())
+	weights, err := common.ConvertDynamicConfigMapPropertyToIntMap(options.Weights())
 	if err != nil {
 		return nil, err
 	}
@@ -118,8 +117,10 @@ func (w *weightedRoundRobinTaskSchedulerImpl) Start() {
 
 	w.processor.Start()
 
-	w.dispatcherWG.Add(1)
-	go w.dispatcher()
+	w.dispatcherWG.Add(w.options.DispatcherCount)
+	for i := 0; i != w.options.DispatcherCount; i++ {
+		go w.dispatcher()
+	}
 	go w.updateWeights()
 
 	w.logger.Info("Weighted round robin task scheduler started.")
@@ -134,6 +135,12 @@ func (w *weightedRoundRobinTaskSchedulerImpl) Stop() {
 
 	w.processor.Stop()
 
+	w.RLock()
+	for _, taskCh := range w.taskChs {
+		drainAndNackPriorityTask(taskCh)
+	}
+	w.RUnlock()
+
 	if success := common.AwaitWaitGroup(&w.dispatcherWG, time.Minute); !success {
 		w.logger.Warn("Weighted round robin task scheduler timedout on shutdown.")
 	}
@@ -146,6 +153,10 @@ func (w *weightedRoundRobinTaskSchedulerImpl) Submit(task PriorityTask) error {
 	sw := w.metricsScope.StartTimer(metrics.PriorityTaskSubmitLatency)
 	defer sw.Stop()
 
+	if w.isStopped() {
+		return ErrTaskSchedulerClosed
+	}
+
 	taskCh, err := w.getOrCreateTaskChan(task.Priority())
 	if err != nil {
 		return err
@@ -154,6 +165,9 @@ func (w *weightedRoundRobinTaskSchedulerImpl) Submit(task PriorityTask) error {
 	select {
 	case taskCh <- task:
 		w.notifyDispatcher()
+		if w.isStopped() {
+			drainAndNackPriorityTask(taskCh)
+		}
 		return nil
 	case <-w.shutdownCh:
 		return ErrTaskSchedulerClosed
@@ -163,6 +177,10 @@ func (w *weightedRoundRobinTaskSchedulerImpl) Submit(task PriorityTask) error {
 func (w *weightedRoundRobinTaskSchedulerImpl) TrySubmit(
 	task PriorityTask,
 ) (bool, error) {
+	if w.isStopped() {
+		return false, ErrTaskSchedulerClosed
+	}
+
 	taskCh, err := w.getOrCreateTaskChan(task.Priority())
 	if err != nil {
 		return false, err
@@ -171,7 +189,11 @@ func (w *weightedRoundRobinTaskSchedulerImpl) TrySubmit(
 	select {
 	case taskCh <- task:
 		w.metricsScope.IncCounter(metrics.PriorityTaskSubmitRequest)
-		w.notifyDispatcher()
+		if w.isStopped() {
+			drainAndNackPriorityTask(taskCh)
+		} else {
+			w.notifyDispatcher()
+		}
 		return true, nil
 	case <-w.shutdownCh:
 		return false, ErrTaskSchedulerClosed
@@ -276,7 +298,7 @@ func (w *weightedRoundRobinTaskSchedulerImpl) updateWeights() {
 	for {
 		select {
 		case <-ticker.C:
-			weights, err := convertWeightsFromDynamicConfig(w.options.Weights())
+			weights, err := common.ConvertDynamicConfigMapPropertyToIntMap(w.options.Weights())
 			if err != nil {
 				w.logger.Error("failed to update weight for round robin task scheduler", tag.Error(err))
 			} else {
@@ -289,20 +311,17 @@ func (w *weightedRoundRobinTaskSchedulerImpl) updateWeights() {
 	}
 }
 
-func convertWeightsFromDynamicConfig(
-	weightsFromDC map[string]interface{},
-) (map[int]int, error) {
-	weights := make(map[int]int)
-	for key, value := range weightsFromDC {
-		priority, err := strconv.Atoi(strings.TrimSpace(key))
-		if err != nil {
-			return nil, err
+func (w *weightedRoundRobinTaskSchedulerImpl) isStopped() bool {
+	return atomic.LoadInt32(&w.status) == common.DaemonStatusStopped
+}
+
+func drainAndNackPriorityTask(taskCh <-chan PriorityTask) {
+	for {
+		select {
+		case task := <-taskCh:
+			task.Nack()
+		default:
+			return
 		}
-		weight, ok := value.(int)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert weight %v", value)
-		}
-		weights[priority] = weight
 	}
-	return weights, nil
 }

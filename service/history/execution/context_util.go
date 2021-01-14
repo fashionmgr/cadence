@@ -23,10 +23,9 @@ package execution
 import (
 	"time"
 
-	"github.com/uber/cadence/.gen/go/shared"
-	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 )
 
 func emitWorkflowHistoryStats(
@@ -110,8 +109,9 @@ func emitSessionUpdateStats(
 func emitWorkflowCompletionStats(
 	metricsClient metrics.Client,
 	domainName string,
+	workflowType string,
 	taskList string,
-	event *workflow.HistoryEvent,
+	event *types.HistoryEvent,
 ) {
 
 	if event.EventType == nil {
@@ -121,19 +121,20 @@ func emitWorkflowCompletionStats(
 	scope := metricsClient.Scope(
 		metrics.WorkflowCompletionStatsScope,
 		metrics.DomainTag(domainName),
+		metrics.WorkflowTypeTag(workflowType),
 		metrics.TaskListTag(taskList),
 	)
 
 	switch *event.EventType {
-	case shared.EventTypeWorkflowExecutionCompleted:
+	case types.EventTypeWorkflowExecutionCompleted:
 		scope.IncCounter(metrics.WorkflowSuccessCount)
-	case shared.EventTypeWorkflowExecutionCanceled:
+	case types.EventTypeWorkflowExecutionCanceled:
 		scope.IncCounter(metrics.WorkflowCancelCount)
-	case shared.EventTypeWorkflowExecutionFailed:
+	case types.EventTypeWorkflowExecutionFailed:
 		scope.IncCounter(metrics.WorkflowFailedCount)
-	case shared.EventTypeWorkflowExecutionTimedOut:
+	case types.EventTypeWorkflowExecutionTimedOut:
 		scope.IncCounter(metrics.WorkflowTimeoutCount)
-	case shared.EventTypeWorkflowExecutionTerminated:
+	case types.EventTypeWorkflowExecutionTerminated:
 		scope.IncCounter(metrics.WorkflowTerminateCount)
 	}
 }

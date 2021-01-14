@@ -23,10 +23,10 @@ package execution
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/pborman/uuid"
 
-	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
 	"github.com/uber/cadence/common/cache"
@@ -35,6 +35,7 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/shard"
 )
@@ -72,9 +73,10 @@ func NewCache(shard shard.Context) *Cache {
 	opts.InitialCapacity = config.HistoryCacheInitialSize()
 	opts.TTL = config.HistoryCacheTTL()
 	opts.Pin = true
+	opts.MaxCount = config.HistoryCacheMaxSize()
 
 	return &Cache{
-		Cache:            cache.New(config.HistoryCacheMaxSize(), opts),
+		Cache:            cache.New(opts),
 		shard:            shard,
 		executionManager: shard.GetExecutionManager(),
 		logger:           shard.GetLogger().WithTags(tag.ComponentHistoryCache),
@@ -97,9 +99,9 @@ func (c *Cache) GetOrCreateCurrentWorkflowExecution(
 
 	// using empty run ID as current workflow run ID
 	runID := ""
-	execution := workflow.WorkflowExecution{
-		WorkflowId: common.StringPtr(workflowID),
-		RunId:      common.StringPtr(runID),
+	execution := types.WorkflowExecution{
+		WorkflowID: common.StringPtr(workflowID),
+		RunID:      common.StringPtr(runID),
 	}
 
 	return c.getOrCreateWorkflowExecutionInternal(
@@ -116,7 +118,7 @@ func (c *Cache) GetOrCreateCurrentWorkflowExecution(
 func (c *Cache) GetAndCreateWorkflowExecution(
 	ctx context.Context,
 	domainID string,
-	execution workflow.WorkflowExecution,
+	execution types.WorkflowExecution,
 ) (Context, Context, ReleaseFunc, bool, error) {
 
 	scope := metrics.HistoryCacheGetAndCreateScope
@@ -124,12 +126,12 @@ func (c *Cache) GetAndCreateWorkflowExecution(
 	sw := c.metricsClient.StartTimer(scope, metrics.CacheLatency)
 	defer sw.Stop()
 
-	if err := c.validateWorkflowExecutionInfo(domainID, &execution); err != nil {
+	if err := c.validateWorkflowExecutionInfo(ctx, domainID, &execution); err != nil {
 		c.metricsClient.IncCounter(scope, metrics.CacheFailures)
 		return nil, nil, nil, false, err
 	}
 
-	key := definition.NewWorkflowIdentifier(domainID, execution.GetWorkflowId(), execution.GetRunId())
+	key := definition.NewWorkflowIdentifier(domainID, execution.GetWorkflowID(), execution.GetRunID())
 	contextFromCache, cacheHit := c.Get(key).(Context)
 	// TODO This will create a closure on every request.
 	//  Consider revisiting this if it causes too much GC activity
@@ -154,19 +156,33 @@ func (c *Cache) GetAndCreateWorkflowExecution(
 }
 
 // GetOrCreateWorkflowExecutionForBackground gets or creates workflow execution context with background context
+// currently only used in tests
 func (c *Cache) GetOrCreateWorkflowExecutionForBackground(
 	domainID string,
-	execution workflow.WorkflowExecution,
+	execution types.WorkflowExecution,
 ) (Context, ReleaseFunc, error) {
 
 	return c.GetOrCreateWorkflowExecution(context.Background(), domainID, execution)
+}
+
+// GetOrCreateWorkflowExecutionWithTimeout gets or creates workflow execution context with timeout
+func (c *Cache) GetOrCreateWorkflowExecutionWithTimeout(
+	domainID string,
+	execution types.WorkflowExecution,
+	timeout time.Duration,
+) (Context, ReleaseFunc, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	return c.GetOrCreateWorkflowExecution(ctx, domainID, execution)
 }
 
 // GetOrCreateWorkflowExecution gets or creates workflow execution context
 func (c *Cache) GetOrCreateWorkflowExecution(
 	ctx context.Context,
 	domainID string,
-	execution workflow.WorkflowExecution,
+	execution types.WorkflowExecution,
 ) (Context, ReleaseFunc, error) {
 
 	scope := metrics.HistoryCacheGetOrCreateScope
@@ -174,7 +190,7 @@ func (c *Cache) GetOrCreateWorkflowExecution(
 	sw := c.metricsClient.StartTimer(scope, metrics.CacheLatency)
 	defer sw.Stop()
 
-	if err := c.validateWorkflowExecutionInfo(domainID, &execution); err != nil {
+	if err := c.validateWorkflowExecutionInfo(ctx, domainID, &execution); err != nil {
 		c.metricsClient.IncCounter(scope, metrics.CacheFailures)
 		return nil, nil, err
 	}
@@ -191,7 +207,7 @@ func (c *Cache) GetOrCreateWorkflowExecution(
 func (c *Cache) getOrCreateWorkflowExecutionInternal(
 	ctx context.Context,
 	domainID string,
-	execution workflow.WorkflowExecution,
+	execution types.WorkflowExecution,
 	scope int,
 	forceClearContext bool,
 ) (Context, ReleaseFunc, error) {
@@ -201,7 +217,7 @@ func (c *Cache) getOrCreateWorkflowExecutionInternal(
 		return NewContext(domainID, execution, c.shard, c.executionManager, c.logger), NoopReleaseFn, nil
 	}
 
-	key := definition.NewWorkflowIdentifier(domainID, execution.GetWorkflowId(), execution.GetRunId())
+	key := definition.NewWorkflowIdentifier(domainID, execution.GetWorkflowID(), execution.GetRunID())
 	workflowCtx, cacheHit := c.Get(key).(Context)
 	if !cacheHit {
 		c.metricsClient.IncCounter(scope, metrics.CacheMissCounter)
@@ -230,28 +246,29 @@ func (c *Cache) getOrCreateWorkflowExecutionInternal(
 }
 
 func (c *Cache) validateWorkflowExecutionInfo(
+	ctx context.Context,
 	domainID string,
-	execution *workflow.WorkflowExecution,
+	execution *types.WorkflowExecution,
 ) error {
 
-	if execution.GetWorkflowId() == "" {
-		return &workflow.BadRequestError{Message: "Can't load workflow execution.  WorkflowId not set."}
+	if execution.GetWorkflowID() == "" {
+		return &types.BadRequestError{Message: "Can't load workflow execution.  WorkflowId not set."}
 	}
 
 	// RunID is not provided, lets try to retrieve the RunID for current active execution
-	if execution.GetRunId() == "" {
-		response, err := c.getCurrentExecutionWithRetry(&persistence.GetCurrentExecutionRequest{
+	if execution.GetRunID() == "" {
+		response, err := c.getCurrentExecutionWithRetry(ctx, &persistence.GetCurrentExecutionRequest{
 			DomainID:   domainID,
-			WorkflowID: execution.GetWorkflowId(),
+			WorkflowID: execution.GetWorkflowID(),
 		})
 
 		if err != nil {
 			return err
 		}
 
-		execution.RunId = common.StringPtr(response.RunID)
-	} else if uuid.Parse(execution.GetRunId()) == nil { // immediately return if invalid runID
-		return &workflow.BadRequestError{Message: "RunID is not valid UUID."}
+		execution.RunID = common.StringPtr(response.RunID)
+	} else if uuid.Parse(execution.GetRunID()) == nil { // immediately return if invalid runID
+		return &types.BadRequestError{Message: "RunID is not valid UUID."}
 	}
 	return nil
 }
@@ -283,6 +300,7 @@ func (c *Cache) makeReleaseFunc(
 }
 
 func (c *Cache) getCurrentExecutionWithRetry(
+	ctx context.Context,
 	request *persistence.GetCurrentExecutionRequest,
 ) (*persistence.GetCurrentExecutionResponse, error) {
 
@@ -293,7 +311,7 @@ func (c *Cache) getCurrentExecutionWithRetry(
 	var response *persistence.GetCurrentExecutionResponse
 	op := func() error {
 		var err error
-		response, err = c.executionManager.GetCurrentExecution(request)
+		response, err = c.executionManager.GetCurrentExecution(ctx, request)
 
 		return err
 	}

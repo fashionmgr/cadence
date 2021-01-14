@@ -23,15 +23,17 @@ package task
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
-	gomock "github.com/golang/mock/gomock"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
 
+	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/metrics"
@@ -77,13 +79,14 @@ func (s *weightedRoundRobinTaskSchedulerSuite) SetupTest() {
 	s.controller = gomock.NewController(s.T())
 	s.mockProcessor = NewMockProcessor(s.controller)
 
-	s.queueSize = 10
+	s.queueSize = 1000
 	s.scheduler = s.newTestWeightedRoundRobinTaskScheduler(
 		&WeightedRoundRobinTaskSchedulerOptions{
-			Weights:     testSchedulerWeights,
-			QueueSize:   s.queueSize,
-			WorkerCount: 1,
-			RetryPolicy: backoff.NewExponentialRetryPolicy(time.Millisecond),
+			Weights:         testSchedulerWeights,
+			QueueSize:       s.queueSize,
+			WorkerCount:     dynamicconfig.GetIntPropertyFn(1),
+			DispatcherCount: 3,
+			RetryPolicy:     backoff.NewExponentialRetryPolicy(time.Millisecond),
 		},
 	)
 }
@@ -111,16 +114,15 @@ func (s *weightedRoundRobinTaskSchedulerSuite) TestSubmit_Fail_SchedulerShutDown
 	// create a new scheduler here with queue size 0, otherwise test is non-deterministic
 	scheduler := s.newTestWeightedRoundRobinTaskScheduler(
 		&WeightedRoundRobinTaskSchedulerOptions{
-			Weights:     testSchedulerWeights,
-			QueueSize:   0,
-			WorkerCount: 1,
-			RetryPolicy: backoff.NewExponentialRetryPolicy(time.Millisecond),
+			Weights:         testSchedulerWeights,
+			QueueSize:       0,
+			WorkerCount:     dynamicconfig.GetIntPropertyFn(1),
+			DispatcherCount: 3,
+			RetryPolicy:     backoff.NewExponentialRetryPolicy(time.Millisecond),
 		},
 	)
 
-	taskPriority := 1
 	mockTask := NewMockPriorityTask(s.controller)
-	mockTask.EXPECT().Priority().Return(taskPriority)
 	scheduler.Start()
 	scheduler.Stop()
 	err := scheduler.Submit(mockTask)
@@ -155,7 +157,7 @@ func (s *weightedRoundRobinTaskSchedulerSuite) TestTrySubmit() {
 }
 
 func (s *weightedRoundRobinTaskSchedulerSuite) TestDispatcher_SubmitWithNoError() {
-	weights, err := convertWeightsFromDynamicConfig(testSchedulerWeights())
+	weights, err := common.ConvertDynamicConfigMapPropertyToIntMap(testSchedulerWeights())
 	s.NoError(err)
 
 	numPriorities := len(weights)
@@ -243,6 +245,45 @@ func (s *weightedRoundRobinTaskSchedulerSuite) TestDispatcher_FailToSubmit() {
 	<-doneCh
 }
 
+func (s *weightedRoundRobinTaskSchedulerSuite) TestWRR() {
+	numTasks := 1000
+	var taskWG sync.WaitGroup
+
+	s.mockProcessor.EXPECT().Start()
+	s.mockProcessor.EXPECT().Stop()
+
+	tasks := []PriorityTask{}
+	mockFn := func(_ Task) error {
+		taskWG.Done()
+		return nil
+	}
+	for i := 0; i != numTasks; i++ {
+		mockTask := NewMockPriorityTask(s.controller)
+		mockTask.EXPECT().Priority().Return(rand.Intn(len(testSchedulerWeights()))).Times(1)
+		tasks = append(tasks, mockTask)
+		taskWG.Add(1)
+		s.mockProcessor.EXPECT().Submit(newMockPriorityTaskMatcher(mockTask)).DoAndReturn(mockFn)
+	}
+
+	s.scheduler.processor = s.mockProcessor
+	s.scheduler.Start()
+	for _, task := range tasks {
+		if rand.Intn(2) == 0 {
+			s.NoError(s.scheduler.Submit(task))
+		} else {
+			submitted, err := s.scheduler.TrySubmit(task)
+			s.NoError(err)
+			s.True(submitted)
+		}
+	}
+	taskWG.Wait()
+	s.scheduler.Stop()
+}
+
+func (s *weightedRoundRobinTaskSchedulerSuite) TestSchedulerContract() {
+	testSchedulerContract(s.Assertions, s.controller, s.scheduler)
+}
+
 func (s *weightedRoundRobinTaskSchedulerSuite) newTestWeightedRoundRobinTaskScheduler(
 	options *WeightedRoundRobinTaskSchedulerOptions,
 ) *weightedRoundRobinTaskSchedulerImpl {
@@ -253,6 +294,80 @@ func (s *weightedRoundRobinTaskSchedulerSuite) newTestWeightedRoundRobinTaskSche
 	)
 	s.NoError(err)
 	return scheduler.(*weightedRoundRobinTaskSchedulerImpl)
+}
+
+func testSchedulerContract(
+	s *require.Assertions,
+	controller *gomock.Controller,
+	scheduler Scheduler,
+) {
+	numTasks := 10000
+	var taskWG sync.WaitGroup
+
+	tasks := []PriorityTask{}
+	taskStatusLock := &sync.Mutex{}
+	taskStatus := make(map[PriorityTask]State)
+	for i := 0; i != numTasks; i++ {
+		mockTask := NewMockPriorityTask(controller)
+		taskStatus[mockTask] = TaskStatePending
+		mockTask.EXPECT().Priority().Return(rand.Intn(len(testSchedulerWeights()))).MaxTimes(1)
+		mockTask.EXPECT().Execute().Return(nil).MaxTimes(1)
+		mockTask.EXPECT().Ack().Do(func() {
+			taskStatusLock.Lock()
+			defer taskStatusLock.Unlock()
+
+			s.Equal(TaskStatePending, taskStatus[mockTask])
+			taskStatus[mockTask] = TaskStateAcked
+			taskWG.Done()
+		}).MaxTimes(1)
+		mockTask.EXPECT().Nack().Do(func() {
+			taskStatusLock.Lock()
+			defer taskStatusLock.Unlock()
+
+			s.Equal(TaskStatePending, taskStatus[mockTask])
+			taskStatus[mockTask] = TaskStateNacked
+			taskWG.Done()
+		}).MaxTimes(1)
+		tasks = append(tasks, mockTask)
+		taskWG.Add(1)
+	}
+
+	scheduler.Start()
+	go func() {
+		time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
+		scheduler.Stop()
+	}()
+
+	for _, task := range tasks {
+		if rand.Intn(2) == 0 {
+			if err := scheduler.Submit(task); err != nil {
+				taskWG.Done()
+				taskStatusLock.Lock()
+				delete(taskStatus, task)
+				taskStatusLock.Unlock()
+			}
+		} else {
+			if submitted, _ := scheduler.TrySubmit(task); !submitted {
+				taskWG.Done()
+				taskStatusLock.Lock()
+				delete(taskStatus, task)
+				taskStatusLock.Unlock()
+			}
+		}
+	}
+	s.True(common.AwaitWaitGroup(&taskWG, 10*time.Second))
+	switch schedulerImpl := scheduler.(type) {
+	case *fifoTaskSchedulerImpl:
+		<-schedulerImpl.shutdownCh
+	case *weightedRoundRobinTaskSchedulerImpl:
+		<-schedulerImpl.shutdownCh
+	default:
+		s.Fail("unknown task scheduler type")
+	}
+
+	for _, status := range taskStatus {
+		s.NotEqual(TaskStatePending, status)
+	}
 }
 
 func newMockPriorityTaskMatcher(mockTask *MockPriorityTask) gomock.Matcher {

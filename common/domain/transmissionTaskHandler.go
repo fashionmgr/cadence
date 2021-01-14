@@ -21,13 +21,14 @@
 package domain
 
 import (
-	"github.com/uber/cadence/.gen/go/replicator"
-	"github.com/uber/cadence/.gen/go/shared"
+	"context"
+
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/messaging"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 )
 
 // NOTE: the counterpart of domain replication receiving logic is in service/worker package
@@ -35,9 +36,17 @@ import (
 type (
 	// Replicator is the interface which can replicate the domain
 	Replicator interface {
-		HandleTransmissionTask(domainOperation replicator.DomainOperation, info *persistence.DomainInfo,
-			config *persistence.DomainConfig, replicationConfig *persistence.DomainReplicationConfig,
-			configVersion int64, failoverVersion int64, isGlobalDomainEnabled bool) error
+		HandleTransmissionTask(
+			ctx context.Context,
+			domainOperation types.DomainOperation,
+			info *persistence.DomainInfo,
+			config *persistence.DomainConfig,
+			replicationConfig *persistence.DomainReplicationConfig,
+			configVersion int64,
+			failoverVersion int64,
+			previousFailoverVersion int64,
+			isGlobalDomainEnabled bool,
+		) error
 	}
 
 	domainReplicatorImpl struct {
@@ -55,9 +64,17 @@ func NewDomainReplicator(replicationMessageSink messaging.Producer, logger log.L
 }
 
 // HandleTransmissionTask handle transmission of the domain replication task
-func (domainReplicator *domainReplicatorImpl) HandleTransmissionTask(domainOperation replicator.DomainOperation,
-	info *persistence.DomainInfo, config *persistence.DomainConfig, replicationConfig *persistence.DomainReplicationConfig,
-	configVersion int64, failoverVersion int64, isGlobalDomainEnabled bool) error {
+func (domainReplicator *domainReplicatorImpl) HandleTransmissionTask(
+	ctx context.Context,
+	domainOperation types.DomainOperation,
+	info *persistence.DomainInfo,
+	config *persistence.DomainConfig,
+	replicationConfig *persistence.DomainReplicationConfig,
+	configVersion int64,
+	failoverVersion int64,
+	previousFailoverVersion int64,
+	isGlobalDomainEnabled bool,
+) error {
 
 	if !isGlobalDomainEnabled {
 		domainReplicator.logger.Warn("Should not replicate non global domain", tag.WorkflowDomainID(info.ID))
@@ -69,36 +86,38 @@ func (domainReplicator *domainReplicatorImpl) HandleTransmissionTask(domainOpera
 		return err
 	}
 
-	taskType := replicator.ReplicationTaskTypeDomain
-	task := &replicator.DomainTaskAttributes{
+	taskType := types.ReplicationTaskTypeDomain
+	task := &types.DomainTaskAttributes{
 		DomainOperation: &domainOperation,
 		ID:              common.StringPtr(info.ID),
-		Info: &shared.DomainInfo{
+		Info: &types.DomainInfo{
 			Name:        common.StringPtr(info.Name),
 			Status:      status,
 			Description: common.StringPtr(info.Description),
 			OwnerEmail:  common.StringPtr(info.OwnerEmail),
 			Data:        info.Data,
 		},
-		Config: &shared.DomainConfiguration{
+		Config: &types.DomainConfiguration{
 			WorkflowExecutionRetentionPeriodInDays: common.Int32Ptr(config.Retention),
 			EmitMetric:                             common.BoolPtr(config.EmitMetric),
-			HistoryArchivalStatus:                  common.ArchivalStatusPtr(config.HistoryArchivalStatus),
+			HistoryArchivalStatus:                  config.HistoryArchivalStatus.Ptr(),
 			HistoryArchivalURI:                     common.StringPtr(config.HistoryArchivalURI),
-			VisibilityArchivalStatus:               common.ArchivalStatusPtr(config.VisibilityArchivalStatus),
+			VisibilityArchivalStatus:               config.VisibilityArchivalStatus.Ptr(),
 			VisibilityArchivalURI:                  common.StringPtr(config.VisibilityArchivalURI),
 			BadBinaries:                            &config.BadBinaries,
 		},
-		ReplicationConfig: &shared.DomainReplicationConfiguration{
+		ReplicationConfig: &types.DomainReplicationConfiguration{
 			ActiveClusterName: common.StringPtr(replicationConfig.ActiveClusterName),
 			Clusters:          domainReplicator.convertClusterReplicationConfigToThrift(replicationConfig.Clusters),
 		},
-		ConfigVersion:   common.Int64Ptr(configVersion),
-		FailoverVersion: common.Int64Ptr(failoverVersion),
+		ConfigVersion:           common.Int64Ptr(configVersion),
+		FailoverVersion:         common.Int64Ptr(failoverVersion),
+		PreviousFailoverVersion: common.Int64Ptr(previousFailoverVersion),
 	}
 
 	return domainReplicator.replicationMessageSink.Publish(
-		&replicator.ReplicationTask{
+		ctx,
+		&types.ReplicationTask{
 			TaskType:             &taskType,
 			DomainTaskAttributes: task,
 		})
@@ -106,22 +125,22 @@ func (domainReplicator *domainReplicatorImpl) HandleTransmissionTask(domainOpera
 
 func (domainReplicator *domainReplicatorImpl) convertClusterReplicationConfigToThrift(
 	input []*persistence.ClusterReplicationConfig,
-) []*shared.ClusterReplicationConfiguration {
-	output := []*shared.ClusterReplicationConfiguration{}
+) []*types.ClusterReplicationConfiguration {
+	output := []*types.ClusterReplicationConfiguration{}
 	for _, cluster := range input {
 		clusterName := common.StringPtr(cluster.ClusterName)
-		output = append(output, &shared.ClusterReplicationConfiguration{ClusterName: clusterName})
+		output = append(output, &types.ClusterReplicationConfiguration{ClusterName: clusterName})
 	}
 	return output
 }
 
-func (domainReplicator *domainReplicatorImpl) convertDomainStatusToThrift(input int) (*shared.DomainStatus, error) {
+func (domainReplicator *domainReplicatorImpl) convertDomainStatusToThrift(input int) (*types.DomainStatus, error) {
 	switch input {
 	case persistence.DomainStatusRegistered:
-		output := shared.DomainStatusRegistered
+		output := types.DomainStatusRegistered
 		return &output, nil
 	case persistence.DomainStatusDeprecated:
-		output := shared.DomainStatusDeprecated
+		output := types.DomainStatusDeprecated
 		return &output, nil
 	default:
 		return nil, ErrInvalidDomainStatus

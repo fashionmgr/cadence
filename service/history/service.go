@@ -30,11 +30,11 @@ import (
 	"github.com/uber/cadence/common/persistence"
 	persistenceClient "github.com/uber/cadence/common/persistence/client"
 	espersistence "github.com/uber/cadence/common/persistence/elasticsearch"
-	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/common/service"
 	sconfig "github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/service/history/config"
+	"github.com/uber/cadence/service/history/resource"
 )
 
 // Service represents the cadence-history service
@@ -42,7 +42,7 @@ type Service struct {
 	resource.Resource
 
 	status  int32
-	handler *Handler
+	handler *handlerImpl
 	stopC   chan struct{}
 	params  *service.BootstrapParams
 	config  *config.Config
@@ -52,7 +52,12 @@ type Service struct {
 func NewService(
 	params *service.BootstrapParams,
 ) (resource.Resource, error) {
-	serviceConfig := config.New(dynamicconfig.NewCollection(params.DynamicConfig, params.Logger),
+	serviceConfig := config.New(
+		dynamicconfig.NewCollection(
+			params.DynamicConfig,
+			params.Logger,
+			dynamicconfig.ClusterNameFilter(params.ClusterMetadata.GetCurrentClusterName()),
+		),
 		params.PersistenceConfig.NumHistoryShards,
 		params.PersistenceConfig.DefaultStoreType(),
 		params.PersistenceConfig.IsAdvancedVisibilityConfigExist())
@@ -91,9 +96,7 @@ func NewService(
 	serviceResource, err := resource.New(
 		params,
 		common.HistoryServiceName,
-		serviceConfig.PersistenceMaxQPS,
-		serviceConfig.PersistenceGlobalMaxQPS,
-		serviceConfig.ThrottledLogRPS,
+		serviceConfig,
 		visibilityManagerInitializer,
 	)
 	if err != nil {
@@ -120,7 +123,9 @@ func (s *Service) Start() {
 	logger.Info("history starting")
 
 	s.handler = NewHandler(s.Resource, s.config)
-	s.handler.RegisterHandler()
+
+	thriftHandler := NewThriftHandler(s.handler)
+	thriftHandler.register(s.GetDispatcher())
 
 	// must start resource first
 	s.Resource.Start()

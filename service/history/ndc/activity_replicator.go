@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination activity_replicator_mock.go
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination activity_replicator_mock.go
 
 package ndc
 
@@ -26,16 +26,13 @@ import (
 	ctx "context"
 	"time"
 
-	"go.uber.org/cadence/.gen/go/shared"
-
-	h "github.com/uber/cadence/.gen/go/history"
-	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
 )
@@ -51,7 +48,7 @@ type (
 	ActivityReplicator interface {
 		SyncActivity(
 			ctx ctx.Context,
-			request *h.SyncActivityRequest,
+			request *types.SyncActivityRequest,
 		) error
 	}
 
@@ -80,7 +77,7 @@ func NewActivityReplicator(
 
 func (r *activityReplicatorImpl) SyncActivity(
 	ctx ctx.Context,
-	request *h.SyncActivityRequest,
+	request *types.SyncActivityRequest,
 ) (retError error) {
 
 	// sync activity info will only be sent from active side, when
@@ -88,10 +85,10 @@ func (r *activityReplicatorImpl) SyncActivity(
 	// 2. activity heart beat
 	// no sync activity task will be sent when active side fail / timeout activity,
 	// since standby side does not have activity retry timer
-	domainID := request.GetDomainId()
-	workflowExecution := workflow.WorkflowExecution{
-		WorkflowId: request.WorkflowId,
-		RunId:      request.RunId,
+	domainID := request.GetDomainID()
+	workflowExecution := types.WorkflowExecution{
+		WorkflowID: request.WorkflowID,
+		RunID:      request.RunID,
 	}
 
 	context, release, err := r.executionCache.GetOrCreateWorkflowExecution(ctx, domainID, workflowExecution)
@@ -102,9 +99,9 @@ func (r *activityReplicatorImpl) SyncActivity(
 	}
 	defer func() { release(retError) }()
 
-	mutableState, err := context.LoadWorkflowExecution()
+	mutableState, err := context.LoadWorkflowExecution(ctx)
 	if err != nil {
-		if _, ok := err.(*workflow.EntityNotExistsError); !ok {
+		if _, ok := err.(*types.EntityNotExistsError); !ok {
 			return err
 		}
 
@@ -116,11 +113,11 @@ func (r *activityReplicatorImpl) SyncActivity(
 	}
 
 	version := request.GetVersion()
-	scheduleID := request.GetScheduledId()
+	scheduleID := request.GetScheduledID()
 	shouldApply, err := r.shouldApplySyncActivity(
 		domainID,
-		workflowExecution.GetWorkflowId(),
-		workflowExecution.GetRunId(),
+		workflowExecution.GetWorkflowID(),
+		workflowExecution.GetRunID(),
 		scheduleID,
 		version,
 		mutableState,
@@ -202,6 +199,7 @@ func (r *activityReplicatorImpl) SyncActivity(
 	}
 
 	return context.UpdateWorkflowExecutionWithNew(
+		ctx,
 		now,
 		updateMode,
 		nil, // no new workflow
@@ -218,10 +216,14 @@ func (r *activityReplicatorImpl) shouldApplySyncActivity(
 	scheduleID int64,
 	activityVersion int64,
 	mutableState execution.MutableState,
-	incomingRawVersionHistory *workflow.VersionHistory,
+	incomingRawVersionHistory *types.VersionHistory,
 ) (bool, error) {
 
 	if mutableState.GetVersionHistories() != nil {
+		if state, _ := mutableState.GetWorkflowStateCloseStatus(); state == persistence.WorkflowStateCompleted {
+			return false, nil
+		}
+
 		currentVersionHistory, err := mutableState.GetVersionHistories().GetCurrentVersionHistory()
 		if err != nil {
 			return false, err
@@ -232,7 +234,7 @@ func (r *activityReplicatorImpl) shouldApplySyncActivity(
 			return false, err
 		}
 
-		incomingVersionHistory := persistence.NewVersionHistoryFromThrift(incomingRawVersionHistory)
+		incomingVersionHistory := persistence.NewVersionHistoryFromInternalType(incomingRawVersionHistory)
 		lastIncomingItem, err := incomingVersionHistory.GetLastItem()
 		if err != nil {
 			return false, err
@@ -283,58 +285,9 @@ func (r *activityReplicatorImpl) shouldApplySyncActivity(
 				)
 			}
 		}
-
-		if state, _ := mutableState.GetWorkflowStateCloseStatus(); state == persistence.WorkflowStateCompleted {
-			return false, nil
-		}
-	} else if mutableState.GetReplicationState() != nil {
-		// TODO when 2DC is deprecated, remove this block
-		if !mutableState.IsWorkflowExecutionRunning() {
-			// perhaps conflict resolution force termination
-			return false, nil
-		}
-
-		if scheduleID >= mutableState.GetNextEventID() {
-			lastWriteVersion, err := mutableState.GetLastWriteVersion()
-			if err != nil {
-				return false, err
-			}
-			if activityVersion < lastWriteVersion {
-				// this can happen if target workflow has different history branch
-				return false, nil
-			}
-			// version >= last write version
-			// this can happen if out of order delivery happens
-			return false, NewRetryTaskErrorWithHint(
-				errRetrySyncActivityMsg,
-				domainID,
-				workflowID,
-				runID,
-				mutableState.GetNextEventID(),
-			)
-		}
 	} else {
-		return false, &shared.InternalServiceError{Message: "The workflow is neither 2DC or 3DC enabled."}
+		return false, &types.InternalServiceError{Message: "The workflow version histories is corrupted."}
 	}
 
 	return true, nil
-}
-
-// NewRetryTaskErrorWithHint returns a 2DC resend error
-// TODO: remove it after remove 2DC code
-func NewRetryTaskErrorWithHint(
-	msg string,
-	domainID string,
-	workflowID string,
-	runID string,
-	nextEventID int64,
-) *shared.RetryTaskError {
-
-	return &shared.RetryTaskError{
-		Message:     msg,
-		DomainId:    common.StringPtr(domainID),
-		WorkflowId:  common.StringPtr(workflowID),
-		RunId:       common.StringPtr(runID),
-		NextEventId: common.Int64Ptr(nextEventID),
-	}
 }

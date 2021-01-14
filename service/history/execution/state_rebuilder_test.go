@@ -21,16 +21,16 @@
 package execution
 
 import (
-	ctx "context"
+	"context"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/pborman/uuid"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
@@ -39,6 +39,7 @@ import (
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/constants"
 	"github.com/uber/cadence/service/history/events"
@@ -121,16 +122,16 @@ func (s *stateRebuilderSuite) TestInitializeBuilders() {
 func (s *stateRebuilderSuite) TestApplyEvents() {
 
 	requestID := uuid.New()
-	events := []*shared.HistoryEvent{
+	events := []*types.HistoryEvent{
 		{
-			EventId:                                 common.Int64Ptr(1),
-			EventType:                               shared.EventTypeWorkflowExecutionStarted.Ptr(),
-			WorkflowExecutionStartedEventAttributes: &shared.WorkflowExecutionStartedEventAttributes{},
+			EventID:                                 common.Int64Ptr(1),
+			EventType:                               types.EventTypeWorkflowExecutionStarted.Ptr(),
+			WorkflowExecutionStartedEventAttributes: &types.WorkflowExecutionStartedEventAttributes{},
 		},
 		{
-			EventId:                                  common.Int64Ptr(2),
-			EventType:                                shared.EventTypeWorkflowExecutionSignaled.Ptr(),
-			WorkflowExecutionSignaledEventAttributes: &shared.WorkflowExecutionSignaledEventAttributes{},
+			EventID:                                  common.Int64Ptr(2),
+			EventType:                                types.EventTypeWorkflowExecutionSignaled.Ptr(),
+			WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{},
 		},
 	}
 
@@ -140,13 +141,12 @@ func (s *stateRebuilderSuite) TestApplyEvents() {
 	mockStateBuilder.EXPECT().ApplyEvents(
 		s.domainID,
 		requestID,
-		shared.WorkflowExecution{
-			WorkflowId: common.StringPtr(s.workflowID),
-			RunId:      common.StringPtr(s.runID),
+		types.WorkflowExecution{
+			WorkflowID: common.StringPtr(s.workflowID),
+			RunID:      common.StringPtr(s.runID),
 		},
 		events,
-		[]*shared.HistoryEvent(nil),
-		true,
+		[]*types.HistoryEvent(nil),
 	).Return(nil, nil).Times(1)
 
 	err := s.nDCStateRebuilder.applyEvents(workflowIdentifier, mockStateBuilder, events, requestID)
@@ -159,32 +159,32 @@ func (s *stateRebuilderSuite) TestPagination() {
 	branchToken := []byte("some random branch token")
 	workflowIdentifier := definition.NewWorkflowIdentifier(s.domainID, s.workflowID, s.runID)
 
-	event1 := &shared.HistoryEvent{
-		EventId:                                 common.Int64Ptr(1),
-		WorkflowExecutionStartedEventAttributes: &shared.WorkflowExecutionStartedEventAttributes{},
+	event1 := &types.HistoryEvent{
+		EventID:                                 common.Int64Ptr(1),
+		WorkflowExecutionStartedEventAttributes: &types.WorkflowExecutionStartedEventAttributes{},
 	}
-	event2 := &shared.HistoryEvent{
-		EventId:                              common.Int64Ptr(2),
-		DecisionTaskScheduledEventAttributes: &shared.DecisionTaskScheduledEventAttributes{},
+	event2 := &types.HistoryEvent{
+		EventID:                              common.Int64Ptr(2),
+		DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{},
 	}
-	event3 := &shared.HistoryEvent{
-		EventId:                            common.Int64Ptr(3),
-		DecisionTaskStartedEventAttributes: &shared.DecisionTaskStartedEventAttributes{},
+	event3 := &types.HistoryEvent{
+		EventID:                            common.Int64Ptr(3),
+		DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{},
 	}
-	event4 := &shared.HistoryEvent{
-		EventId:                              common.Int64Ptr(4),
-		DecisionTaskCompletedEventAttributes: &shared.DecisionTaskCompletedEventAttributes{},
+	event4 := &types.HistoryEvent{
+		EventID:                              common.Int64Ptr(4),
+		DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{},
 	}
-	event5 := &shared.HistoryEvent{
-		EventId:                              common.Int64Ptr(5),
-		ActivityTaskScheduledEventAttributes: &shared.ActivityTaskScheduledEventAttributes{},
+	event5 := &types.HistoryEvent{
+		EventID:                              common.Int64Ptr(5),
+		ActivityTaskScheduledEventAttributes: &types.ActivityTaskScheduledEventAttributes{},
 	}
-	history1 := []*shared.History{{[]*shared.HistoryEvent{event1, event2, event3}}}
-	history2 := []*shared.History{{[]*shared.HistoryEvent{event4, event5}}}
+	history1 := []*types.History{{[]*types.HistoryEvent{event1, event2, event3}}}
+	history2 := []*types.History{{[]*types.HistoryEvent{event4, event5}}}
 	history := append(history1, history2...)
 	pageToken := []byte("some random token")
 
-	s.mockHistoryV2Mgr.On("ReadHistoryBranchByBatch", &persistence.ReadHistoryBranchRequest{
+	s.mockHistoryV2Mgr.On("ReadHistoryBranchByBatch", mock.Anything, &persistence.ReadHistoryBranchRequest{
 		BranchToken:   branchToken,
 		MinEventID:    firstEventID,
 		MaxEventID:    nextEventID,
@@ -196,7 +196,7 @@ func (s *stateRebuilderSuite) TestPagination() {
 		NextPageToken: pageToken,
 		Size:          12345,
 	}, nil).Once()
-	s.mockHistoryV2Mgr.On("ReadHistoryBranchByBatch", &persistence.ReadHistoryBranchRequest{
+	s.mockHistoryV2Mgr.On("ReadHistoryBranchByBatch", mock.Anything, &persistence.ReadHistoryBranchRequest{
 		BranchToken:   branchToken,
 		MinEventID:    firstEventID,
 		MaxEventID:    nextEventID,
@@ -209,14 +209,14 @@ func (s *stateRebuilderSuite) TestPagination() {
 		Size:          67890,
 	}, nil).Once()
 
-	paginationFn := s.nDCStateRebuilder.getPaginationFn(workflowIdentifier, firstEventID, nextEventID, branchToken)
+	paginationFn := s.nDCStateRebuilder.getPaginationFn(context.Background(), workflowIdentifier, firstEventID, nextEventID, branchToken)
 	iter := collection.NewPagingIterator(paginationFn)
 
-	result := []*shared.History{}
+	result := []*types.History{}
 	for iter.HasNext() {
 		item, err := iter.Next()
 		s.NoError(err)
-		result = append(result, item.(*shared.History))
+		result = append(result, item.(*types.History))
 	}
 
 	s.Equal(history, result)
@@ -237,36 +237,36 @@ func (s *stateRebuilderSuite) TestRebuild() {
 
 	firstEventID := common.FirstEventID
 	nextEventID := lastEventID + 1
-	events1 := []*shared.HistoryEvent{{
-		EventId:   common.Int64Ptr(1),
+	events1 := []*types.HistoryEvent{{
+		EventID:   common.Int64Ptr(1),
 		Version:   common.Int64Ptr(version),
-		EventType: shared.EventTypeWorkflowExecutionStarted.Ptr(),
-		WorkflowExecutionStartedEventAttributes: &shared.WorkflowExecutionStartedEventAttributes{
-			WorkflowType:                        &shared.WorkflowType{Name: common.StringPtr("some random workflow type")},
-			TaskList:                            &shared.TaskList{Name: common.StringPtr("some random workflow type")},
+		EventType: types.EventTypeWorkflowExecutionStarted.Ptr(),
+		WorkflowExecutionStartedEventAttributes: &types.WorkflowExecutionStartedEventAttributes{
+			WorkflowType:                        &types.WorkflowType{Name: common.StringPtr("some random workflow type")},
+			TaskList:                            &types.TaskList{Name: common.StringPtr("some random workflow type")},
 			Input:                               []byte("some random input"),
 			ExecutionStartToCloseTimeoutSeconds: common.Int32Ptr(123),
 			TaskStartToCloseTimeoutSeconds:      common.Int32Ptr(233),
 			Identity:                            common.StringPtr("some random identity"),
 		},
 	}}
-	events2 := []*shared.HistoryEvent{{
-		EventId:   common.Int64Ptr(2),
+	events2 := []*types.HistoryEvent{{
+		EventID:   common.Int64Ptr(2),
 		Version:   common.Int64Ptr(version),
-		EventType: shared.EventTypeWorkflowExecutionSignaled.Ptr(),
-		WorkflowExecutionSignaledEventAttributes: &shared.WorkflowExecutionSignaledEventAttributes{
+		EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
+		WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
 			SignalName: common.StringPtr("some random signal name"),
 			Input:      []byte("some random signal input"),
 			Identity:   common.StringPtr("some random identity"),
 		},
 	}}
-	history1 := []*shared.History{{events1}}
-	history2 := []*shared.History{{events2}}
+	history1 := []*types.History{{events1}}
+	history2 := []*types.History{{events2}}
 	pageToken := []byte("some random pagination token")
 
 	historySize1 := 12345
 	historySize2 := 67890
-	s.mockHistoryV2Mgr.On("ReadHistoryBranchByBatch", &persistence.ReadHistoryBranchRequest{
+	s.mockHistoryV2Mgr.On("ReadHistoryBranchByBatch", mock.Anything, &persistence.ReadHistoryBranchRequest{
 		BranchToken:   branchToken,
 		MinEventID:    firstEventID,
 		MaxEventID:    nextEventID,
@@ -278,7 +278,7 @@ func (s *stateRebuilderSuite) TestRebuild() {
 		NextPageToken: pageToken,
 		Size:          historySize1,
 	}, nil).Once()
-	s.mockHistoryV2Mgr.On("ReadHistoryBranchByBatch", &persistence.ReadHistoryBranchRequest{
+	s.mockHistoryV2Mgr.On("ReadHistoryBranchByBatch", mock.Anything, &persistence.ReadHistoryBranchRequest{
 		BranchToken:   branchToken,
 		MinEventID:    firstEventID,
 		MaxEventID:    nextEventID,
@@ -304,10 +304,10 @@ func (s *stateRebuilderSuite) TestRebuild() {
 		1234,
 		s.mockClusterMetadata,
 	), nil).AnyTimes()
-	s.mockTaskRefresher.EXPECT().RefreshTasks(now, gomock.Any()).Return(nil).Times(1)
+	s.mockTaskRefresher.EXPECT().RefreshTasks(gomock.Any(), now, gomock.Any()).Return(nil).Times(1)
 
 	rebuildMutableState, rebuiltHistorySize, err := s.nDCStateRebuilder.Rebuild(
-		ctx.Background(),
+		context.Background(),
 		now,
 		definition.NewWorkflowIdentifier(s.domainID, s.workflowID, s.runID),
 		branchToken,

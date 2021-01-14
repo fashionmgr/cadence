@@ -27,10 +27,11 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/urfave/cli"
 
-	sericeFrontend "github.com/uber/cadence/.gen/go/cadence/workflowserviceclient"
+	"github.com/uber/cadence/client/frontend"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/provider"
+	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/domain"
 	"github.com/uber/cadence/common/log"
@@ -213,7 +214,7 @@ var (
 
 func initializeFrontendClient(
 	context *cli.Context,
-) sericeFrontend.Interface {
+) frontend.Client {
 	return cFactory.ServerFrontendClient(context)
 }
 
@@ -265,15 +266,21 @@ func initializeDomainHandler(
 	archivalMetadata archiver.ArchivalMetadata,
 	archiverProvider provider.ArchiverProvider,
 ) domain.Handler {
+
+	domainConfig := domain.Config{
+		MinRetentionDays:  dynamicconfig.GetIntPropertyFn(domain.MinRetentionDays),
+		MaxBadBinaryCount: dynamicconfig.GetIntPropertyFilteredByDomain(domain.MaxBadBinaries),
+		FailoverCoolDown:  dynamicconfig.GetDurationPropertyFnFilteredByDomain(domain.FailoverCoolDown),
+	}
 	return domain.NewHandler(
-		domain.MinRetentionDays,
-		dynamicconfig.GetIntPropertyFilteredByDomain(domain.MaxBadBinaries),
+		domainConfig,
 		logger,
 		metadataMgr,
 		clusterMetadata,
 		initializeDomainReplicator(logger),
 		archivalMetadata,
 		archiverProvider,
+		clock.NewRealTimeSource(),
 	)
 }
 
@@ -299,7 +306,6 @@ func initializeMetadataMgr(
 	pFactory := client.NewFactory(
 		&pConfig,
 		dynamicconfig.GetIntPropertyFn(dependencyMaxQPS),
-		nil, // TODO propagate abstract datastore factory from the CLI.
 		clusterMetadata.GetCurrentClusterName(),
 		metricsClient,
 		logger,
@@ -324,7 +330,6 @@ func initializeClusterMetadata(
 		clusterMetadata.MasterClusterName,
 		clusterMetadata.CurrentClusterName,
 		clusterMetadata.ClusterInformation,
-		clusterMetadata.ReplicationConsumer,
 	)
 }
 
@@ -385,7 +390,7 @@ func initializeDomainReplicator(
 ) domain.Replicator {
 
 	replicationMessageSink := &mocks.KafkaProducer{}
-	replicationMessageSink.On("Publish", mock.Anything).Return(nil)
+	replicationMessageSink.On("Publish", mock.Anything, mock.Anything).Return(nil)
 	return domain.NewDomainReplicator(replicationMessageSink, logger)
 }
 

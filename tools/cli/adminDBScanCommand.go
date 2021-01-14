@@ -23,395 +23,291 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
-	"github.com/gocql/gocql"
 	"github.com/urfave/cli"
 
-	"github.com/uber/cadence/.gen/go/shared"
-	"github.com/uber/cadence/common/codec"
+	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/collection"
+	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/persistence"
-	cassp "github.com/uber/cadence/common/persistence/cassandra"
+	"github.com/uber/cadence/common/persistence/cassandra"
+	"github.com/uber/cadence/common/persistence/serialization"
+	"github.com/uber/cadence/common/persistence/sql"
 	"github.com/uber/cadence/common/quotas"
+	"github.com/uber/cadence/common/reconciliation/fetcher"
+	"github.com/uber/cadence/common/reconciliation/invariant"
+	"github.com/uber/cadence/common/reconciliation/store"
+	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/service/worker/scanner/executions"
 )
 
-type (
-	// ScanOutputDirectories are the directory paths for output of scan
-	ScanOutputDirectories struct {
-		ShardScanReportDirectoryPath       string
-		ExecutionCheckFailureDirectoryPath string
-		CorruptedExecutionDirectoryPath    string
-	}
-
-	// ShardScanOutputFiles are the files produced for a scan of a single shard
-	ShardScanOutputFiles struct {
-		ShardScanReportFile       *os.File
-		ExecutionCheckFailureFile *os.File
-		CorruptedExecutionFile    *os.File
-	}
-
-	// ExecutionToRecord is an execution which needs to be recorded
-	ExecutionToRecord struct {
-		ShardID           int
-		DomainID          string
-		WorkflowID        string
-		RunID             string
-		TreeID            string
-		BranchID          string
-		CloseStatus       int
-		State             int
-		CheckType         CheckType
-		CheckResultStatus CheckResultStatus
-		ErrorInfo         *ErrorInfo
-	}
+const (
+	listContextTimeout = time.Minute
 )
 
-// AdminDBScan is used to scan over all executions in database and detect corruptions
+// AdminDBScan is used to scan over executions in database and detect corruptions.
 func AdminDBScan(c *cli.Context) {
-	lowerShardBound := c.Int(FlagLowerShardBound)
-	upperShardBound := c.Int(FlagUpperShardBound)
-	numShards := upperShardBound - lowerShardBound
-	startingRPS := c.Int(FlagStartingRPS)
-	targetRPS := c.Int(FlagRPS)
-	scaleUpSeconds := c.Int(FlagRPSScaleUpSeconds)
-	scanWorkerCount := c.Int(FlagConcurrency)
-	executionsPageSize := c.Int(FlagPageSize)
-	scanReportRate := c.Int(FlagReportRate)
-	if numShards < scanWorkerCount {
-		scanWorkerCount = numShards
-	}
-	skipHistoryChecks := c.Bool(FlagSkipHistoryChecks)
+	scanType, err := executions.ScanTypeString(c.String(FlagScanType))
 
-	payloadSerializer := persistence.NewPayloadSerializer()
-	rateLimiter := getRateLimiter(startingRPS, targetRPS, scaleUpSeconds)
-	session := connectToCassandra(c)
+	if err != nil {
+		ErrorAndExit("unknown scan type", err)
+	}
+
+	numberOfShards := getRequiredIntOption(c, FlagNumberOfShards)
+	collectionSlice := c.StringSlice(FlagInvariantCollection)
+
+	var collections []invariant.Collection
+	for _, v := range collectionSlice {
+		collection, err := invariant.CollectionString(v)
+		if err != nil {
+			ErrorAndExit("unknown invariant collection", err)
+		}
+		collections = append(collections, collection)
+	}
+
+	invariants := scanType.ToInvariants(collections)
+	if len(invariants) < 1 {
+		ErrorAndExit(
+			fmt.Sprintf("no invariants for scan type %q and collections %q",
+				scanType.String(),
+				collectionSlice),
+			nil,
+		)
+	}
+	ef := scanType.ToExecutionFetcher()
+
+	input := getInputFile(c.String(FlagInputFile))
+
+	dec := json.NewDecoder(input)
+	if err != nil {
+		ErrorAndExit("", err)
+	}
+	var data []fetcher.ExecutionRequest
+
+	for {
+		var exec fetcher.ExecutionRequest
+		if err := dec.Decode(&exec); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				break
+			}
+		} else {
+			data = append(data, exec)
+		}
+	}
+
+	for _, e := range data {
+		execution, result := checkExecution(c, numberOfShards, e, invariants, ef)
+		out := store.ScanOutputEntity{
+			Execution: execution,
+			Result:    result,
+		}
+		data, err := json.Marshal(out)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			continue
+		}
+
+		fmt.Println(string(data))
+	}
+}
+
+func checkExecution(
+	c *cli.Context,
+	numberOfShards int,
+	req fetcher.ExecutionRequest,
+	invariants []executions.InvariantFactory,
+	fetcher executions.ExecutionFetcher,
+) (interface{}, invariant.ManagerCheckResult) {
+	client, session := connectToCassandra(c)
 	defer session.Close()
-	historyStore := cassp.NewHistoryV2PersistenceFromSession(session, loggerimpl.NewNopLogger())
-	branchDecoder := codec.NewThriftRWEncoder()
-	scanOutputDirectories := createScanOutputDirectories()
+	logger := loggerimpl.NewNopLogger()
 
-	reports := make(chan *ShardScanReport)
-	for i := 0; i < scanWorkerCount; i++ {
-		go func(workerIdx int) {
-			for shardID := lowerShardBound; shardID < upperShardBound; shardID++ {
-				if shardID%scanWorkerCount == workerIdx {
-					reports <- scanShard(
-						session,
-						shardID,
-						scanOutputDirectories,
-						rateLimiter,
-						executionsPageSize,
-						payloadSerializer,
-						branchDecoder,
-						skipHistoryChecks,
-						historyStore)
-				}
-			}
-		}(i)
+	execStore, err := cassandra.NewWorkflowExecutionPersistence(
+		common.WorkflowIDToHistoryShard(req.WorkflowID, numberOfShards),
+		client,
+		session,
+		logger,
+	)
+
+	if err != nil {
+		ErrorAndExit("Failed to get execution store", err)
 	}
 
-	startTime := time.Now()
-	progressReport := &ProgressReport{}
-	for i := 0; i < numShards; i++ {
-		report := <-reports
-		includeShardInProgressReport(report, progressReport, startTime)
-		if i%scanReportRate == 0 || i == numShards-1 {
-			reportBytes, err := json.MarshalIndent(*progressReport, "", "\t")
-			if err != nil {
-				ErrorAndExit("failed to print progress", err)
-			}
-			fmt.Println(string(reportBytes))
-		}
+	historyV2Mgr := persistence.NewHistoryV2ManagerImpl(
+		cassandra.NewHistoryV2PersistenceFromSession(client, session, logger),
+		logger,
+		dynamicconfig.GetIntPropertyFn(common.DefaultTransactionSizeLimit),
+	)
+
+	pr := persistence.NewPersistenceRetryer(
+		persistence.NewExecutionManagerImpl(execStore, logger),
+		historyV2Mgr,
+		common.CreatePersistenceRetryPolicy(),
+	)
+
+	ctx, cancel := newContext(c)
+	defer cancel()
+
+	execution, err := fetcher(ctx, pr, req)
+
+	if err != nil {
+		return nil, invariant.ManagerCheckResult{}
+	}
+
+	var ivs []invariant.Invariant
+
+	for _, fn := range invariants {
+		ivs = append(ivs, fn(pr))
+	}
+
+	return execution, invariant.NewInvariantManager(ivs).RunChecks(ctx, execution)
+}
+
+// AdminDBScanUnsupportedWorkflow is to scan DB for unsupported workflow for a new release
+func AdminDBScanUnsupportedWorkflow(c *cli.Context) {
+	rps := c.Int(FlagRPS)
+	outputFile := getOutputFile(c.String(FlagOutputFilename))
+	startShardID := c.Int(FlagLowerShardBound)
+	endShardID := c.Int(FlagUpperShardBound)
+
+	defer outputFile.Close()
+	for i := startShardID; i <= endShardID; i++ {
+		listExecutionsByShardID(c, i, rps, outputFile)
+		fmt.Println(fmt.Sprintf("Shard %v scan operation is completed.", i))
 	}
 }
 
-func scanShard(
-	session *gocql.Session,
+func listExecutionsByShardID(
+	c *cli.Context,
 	shardID int,
-	scanOutputDirectories *ScanOutputDirectories,
-	limiter *quotas.DynamicRateLimiter,
-	executionsPageSize int,
-	payloadSerializer persistence.PayloadSerializer,
-	branchDecoder *codec.ThriftRWEncoder,
-	skipHistoryChecks bool,
-	historyStore persistence.HistoryStore,
-) *ShardScanReport {
-	outputFiles, closeFn := createShardScanOutputFiles(shardID, scanOutputDirectories)
-	report := &ShardScanReport{
-		ShardID: shardID,
-	}
-	checkFailureWriter := NewBufferedWriter(outputFiles.ExecutionCheckFailureFile)
-	corruptedExecutionWriter := NewBufferedWriter(outputFiles.CorruptedExecutionFile)
-	defer func() {
-		checkFailureWriter.Flush()
-		corruptedExecutionWriter.Flush()
-		recordShardScanReport(outputFiles.ShardScanReportFile, report)
-		deleteEmptyFiles(outputFiles.CorruptedExecutionFile, outputFiles.ExecutionCheckFailureFile, outputFiles.ShardScanReportFile)
-		closeFn()
-	}()
-	execStore, err := cassp.NewWorkflowExecutionPersistence(shardID, session, loggerimpl.NewNopLogger())
-	if err != nil {
-		report.Failure = &ShardScanReportFailure{
-			Note:    "failed to create execution store",
-			Details: err.Error(),
-		}
-		return report
-	}
+	rps int,
+	outputFile *os.File,
+) {
 
-	checks := getChecks(skipHistoryChecks, limiter, execStore, payloadSerializer, historyStore)
+	client := initializeExecutionStore(c, shardID, rps)
+	defer client.Close()
 
-	var token []byte
-	isFirstIteration := true
-	for isFirstIteration || len(token) != 0 {
-		isFirstIteration = false
-		req := &persistence.ListConcreteExecutionsRequest{
-			PageSize:  executionsPageSize,
-			PageToken: token,
-		}
-		resp, err := retryListConcreteExecutions(limiter, &report.TotalDBRequests, execStore, req)
+	paginationFunc := func(paginationToken []byte) ([]interface{}, []byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), listContextTimeout)
+		defer cancel()
+
+		resp, err := client.ListConcreteExecutions(
+			ctx,
+			&persistence.ListConcreteExecutionsRequest{
+				PageSize:  1000,
+				PageToken: paginationToken,
+			},
+		)
 		if err != nil {
-			report.Failure = &ShardScanReportFailure{
-				Note:    "failed to call ListConcreteExecutions",
-				Details: err.Error(),
-			}
-			return report
+			return nil, nil, err
 		}
-		token = resp.NextPageToken
-		for _, e := range resp.Executions {
-			if e == nil || e.ExecutionInfo == nil {
-				continue
-			}
-			if report.Scanned == nil {
-				report.Scanned = &ShardScanReportExecutionsScanned{}
-			}
-			report.Scanned.TotalExecutionsCount++
-
-			cr, err := getCheckRequest(shardID, e, payloadSerializer, branchDecoder)
-			if err != nil {
-				report.Scanned.ExecutionCheckFailureCount++
-				checkFailureWriter.Add(&ExecutionToRecord{
-					ShardID:           shardID,
-					DomainID:          e.ExecutionInfo.DomainID,
-					WorkflowID:        e.ExecutionInfo.WorkflowID,
-					RunID:             e.ExecutionInfo.RunID,
-					CheckResultStatus: CheckResultFailed,
-					ErrorInfo: &ErrorInfo{
-						Note:    "failed to get check request",
-						Details: err.Error(),
-					},
-				})
-				continue
-			}
-		CheckerLoop:
-			for _, c := range checks {
-				if !c.ValidRequest(cr) {
-					continue
-				}
-				result := c.Check(cr)
-				cr.PrerequisiteCheckPayload = result.Payload
-
-				etr := &ExecutionToRecord{
-					ShardID:           shardID,
-					DomainID:          e.ExecutionInfo.DomainID,
-					WorkflowID:        e.ExecutionInfo.WorkflowID,
-					RunID:             e.ExecutionInfo.RunID,
-					TreeID:            cr.TreeID,
-					BranchID:          cr.BranchID,
-					CloseStatus:       e.ExecutionInfo.CloseStatus,
-					State:             cr.State,
-					CheckType:         result.CheckType,
-					CheckResultStatus: result.CheckResultStatus,
-					ErrorInfo:         result.ErrorInfo,
-				}
-
-				switch result.CheckResultStatus {
-				case CheckResultHealthy:
-					// nothing to do just keep checking other conditions
-				case CheckResultFailed:
-					report.Scanned.ExecutionCheckFailureCount++
-					checkFailureWriter.Add(etr)
-					break CheckerLoop
-				case CheckResultCorrupted:
-					report.Scanned.CorruptedExecutionsCount++
-					switch result.CheckType {
-					case CheckTypeOrphanExecution:
-						report.Scanned.CorruptionTypeBreakdown.TotalOpenExecutionInvalidCurrentExecution++
-					case CheckTypeValidFirstEvent:
-						report.Scanned.CorruptionTypeBreakdown.TotalInvalidFirstEvent++
-					case CheckTypeHistoryExists:
-						report.Scanned.CorruptionTypeBreakdown.TotalHistoryMissing++
-					}
-					if executionOpen(cr) {
-						report.Scanned.OpenCorruptions.TotalOpen++
-					}
-					corruptedExecutionWriter.Add(etr)
-					break CheckerLoop
-				}
-			}
+		var paginateItems []interface{}
+		for _, history := range resp.Executions {
+			paginateItems = append(paginateItems, history)
 		}
+		return paginateItems, resp.PageToken, nil
 	}
-	return report
-}
 
-func deleteEmptyFiles(files ...*os.File) {
-	shouldDelete := func(filepath string) bool {
-		fi, err := os.Stat(filepath)
-		return err == nil && fi.Size() == 0
-	}
-	for _, f := range files {
-		if shouldDelete(f.Name()) {
-			os.Remove(f.Name())
+	executionIterator := collection.NewPagingIterator(paginationFunc)
+	for executionIterator.HasNext() {
+		result, err := executionIterator.Next()
+		if err != nil {
+			ErrorAndExit(fmt.Sprintf("Failed to scan shard ID: %v for unsupported workflow. Please retry.", shardID), err)
+		}
+		execution := result.(*persistence.ListConcreteExecutionsEntity)
+		executionInfo := execution.ExecutionInfo
+		if executionInfo != nil && executionInfo.CloseStatus == 0 && execution.VersionHistories == nil {
+
+			outStr := fmt.Sprintf("cadence --address <host>:<port> --domain <%v> workflow reset --wid %v --rid %v --reset_type LastDecisionCompleted --reason 'release 0.16 upgrade'\n",
+				executionInfo.DomainID,
+				executionInfo.WorkflowID,
+				executionInfo.RunID,
+			)
+			if _, err = outputFile.WriteString(outStr); err != nil {
+				ErrorAndExit("Failed to write data to file", err)
+			}
+			if err = outputFile.Sync(); err != nil {
+				ErrorAndExit("Failed to sync data to file", err)
+			}
 		}
 	}
 }
 
-func createShardScanOutputFiles(shardID int, sod *ScanOutputDirectories) (*ShardScanOutputFiles, func()) {
-	executionCheckFailureFile, err := os.Create(fmt.Sprintf("%v/%v", sod.ExecutionCheckFailureDirectoryPath, constructFileNameFromShard(shardID)))
-	if err != nil {
-		ErrorAndExit("failed to create executionCheckFailureFile", err)
-	}
-	shardScanReportFile, err := os.Create(fmt.Sprintf("%v/%v", sod.ShardScanReportDirectoryPath, constructFileNameFromShard(shardID)))
-	if err != nil {
-		ErrorAndExit("failed to create shardScanReportFile", err)
-	}
-	corruptedExecutionFile, err := os.Create(fmt.Sprintf("%v/%v", sod.CorruptedExecutionDirectoryPath, constructFileNameFromShard(shardID)))
-	if err != nil {
-		ErrorAndExit("failed to create corruptedExecutionFile", err)
-	}
-
-	deferFn := func() {
-		executionCheckFailureFile.Close()
-		shardScanReportFile.Close()
-		corruptedExecutionFile.Close()
-	}
-	return &ShardScanOutputFiles{
-		ShardScanReportFile:       shardScanReportFile,
-		ExecutionCheckFailureFile: executionCheckFailureFile,
-		CorruptedExecutionFile:    corruptedExecutionFile,
-	}, deferFn
-}
-
-func constructFileNameFromShard(shardID int) string {
-	return fmt.Sprintf("shard_%v.json", shardID)
-}
-
-func createScanOutputDirectories() *ScanOutputDirectories {
-	now := time.Now().Unix()
-	sod := &ScanOutputDirectories{
-		ShardScanReportDirectoryPath:       fmt.Sprintf("./scan_%v/shard_scan_report", now),
-		ExecutionCheckFailureDirectoryPath: fmt.Sprintf("./scan_%v/execution_check_failure", now),
-		CorruptedExecutionDirectoryPath:    fmt.Sprintf("./scan_%v/corrupted_execution", now),
-	}
-	if err := os.MkdirAll(sod.ShardScanReportDirectoryPath, 0777); err != nil {
-		ErrorAndExit("failed to create ShardScanFailureDirectoryPath", err)
-	}
-	if err := os.MkdirAll(sod.ExecutionCheckFailureDirectoryPath, 0777); err != nil {
-		ErrorAndExit("failed to create ExecutionCheckFailureDirectoryPath", err)
-	}
-	if err := os.MkdirAll(sod.CorruptedExecutionDirectoryPath, 0777); err != nil {
-		ErrorAndExit("failed to create CorruptedExecutionDirectoryPath", err)
-	}
-	fmt.Println("scan results located under: ", fmt.Sprintf("./scan_%v", now))
-	return sod
-}
-
-func recordShardScanReport(file *os.File, ssr *ShardScanReport) {
-	data, err := json.Marshal(ssr)
-	if err != nil {
-		ErrorAndExit("failed to marshal ShardScanReport", err)
-	}
-	writeToFile(file, string(data))
-}
-
-func writeToFile(file *os.File, message string) {
-	if _, err := file.WriteString(fmt.Sprintf("%v\r\n", message)); err != nil {
-		ErrorAndExit("failed to write to file", err)
-	}
-}
-
-func getRateLimiter(startRPS int, targetRPS int, scaleUpSeconds int) *quotas.DynamicRateLimiter {
-	if startRPS >= targetRPS {
-		ErrorAndExit("startRPS is greater than target RPS", nil)
-	}
-	if scaleUpSeconds == 0 {
-		return quotas.NewDynamicRateLimiter(func() float64 { return float64(targetRPS) })
-	}
-	rpsIncreasePerSecond := (targetRPS - startRPS) / scaleUpSeconds
-	startTime := time.Now()
-	rpsFn := func() float64 {
-		secondsPast := int(time.Now().Sub(startTime).Seconds())
-		if secondsPast >= scaleUpSeconds {
-			return float64(targetRPS)
-		}
-		return float64((rpsIncreasePerSecond * secondsPast) + startRPS)
-	}
-	return quotas.NewDynamicRateLimiter(rpsFn)
-}
-
-func getCheckRequest(
+func initializeExecutionStore(
+	c *cli.Context,
 	shardID int,
-	e *persistence.InternalListConcreteExecutionsEntity,
-	payloadSerializer persistence.PayloadSerializer,
-	branchDecoder *codec.ThriftRWEncoder,
-) (*CheckRequest, error) {
-	hb, err := getHistoryBranch(e, payloadSerializer, branchDecoder)
+	rps int,
+) persistence.ExecutionManager {
+
+	var execStore persistence.ExecutionStore
+	dbType := c.String(FlagDBType)
+	logger := loggerimpl.NewNopLogger()
+	switch dbType {
+	case "cassandra":
+		execStore = initializeCassandraExecutionClient(c, shardID, logger)
+	case "mysql":
+		execStore = initializeSQLExecutionStore(c, shardID, logger)
+	case "postgres":
+		execStore = initializeSQLExecutionStore(c, shardID, logger)
+	default:
+		ErrorAndExit("The DB type is not supported. Options are: cassandra, mysql, postgres.", nil)
+	}
+
+	historyManager := persistence.NewExecutionManagerImpl(execStore, logger)
+	rateLimiter := quotas.NewSimpleRateLimiter(rps)
+	return persistence.NewWorkflowExecutionPersistenceRateLimitedClient(historyManager, rateLimiter, logger)
+}
+
+func initializeCassandraExecutionClient(
+	c *cli.Context,
+	shardID int,
+	logger log.Logger,
+) persistence.ExecutionStore {
+
+	client, session := connectToCassandra(c)
+	execStore, err := cassandra.NewWorkflowExecutionPersistence(
+		shardID,
+		client,
+		session,
+		logger,
+	)
 	if err != nil {
-		return nil, err
+		ErrorAndExit("Failed to get execution store from cassandra config", err)
 	}
-	return &CheckRequest{
-		ShardID:    shardID,
-		DomainID:   e.ExecutionInfo.DomainID,
-		WorkflowID: e.ExecutionInfo.WorkflowID,
-		RunID:      e.ExecutionInfo.RunID,
-		TreeID:     hb.GetTreeID(),
-		BranchID:   hb.GetBranchID(),
-		State:      e.ExecutionInfo.State,
-	}, nil
+	return execStore
 }
 
-func getHistoryBranch(
-	e *persistence.InternalListConcreteExecutionsEntity,
-	payloadSerializer persistence.PayloadSerializer,
-	branchDecoder *codec.ThriftRWEncoder,
-) (*shared.HistoryBranch, error) {
-	branchTokenBytes := e.ExecutionInfo.BranchToken
-	if len(branchTokenBytes) == 0 {
-		if e.VersionHistories == nil {
-			return nil, errors.New("failed to get branch token")
-		}
-		vh, err := payloadSerializer.DeserializeVersionHistories(e.VersionHistories)
-		if err != nil {
-			return nil, err
-		}
-		branchTokenBytes = vh.GetHistories()[vh.GetCurrentVersionHistoryIndex()].GetBranchToken()
+func initializeSQLExecutionStore(
+	c *cli.Context,
+	shardID int,
+	logger log.Logger,
+) persistence.ExecutionStore {
+
+	sqlDB := connectToSQL(c)
+	encodingType := c.String(FlagEncodingType)
+	decodingTypesStr := c.StringSlice(FlagDecodingTypes)
+	var decodingTypes []common.EncodingType
+	for _, dt := range decodingTypesStr {
+		decodingTypes = append(decodingTypes, common.EncodingType(dt))
 	}
-	var branch shared.HistoryBranch
-	if err := branchDecoder.Decode(branchTokenBytes, &branch); err != nil {
-		return nil, err
+	execStore, err := sql.NewSQLExecutionStore(sqlDB, logger, shardID, getSQLParser(common.EncodingType(encodingType), decodingTypes...))
+	if err != nil {
+		ErrorAndExit("Failed to get execution store from cassandra config", err)
 	}
-	return &branch, nil
+	return execStore
 }
 
-func getChecks(
-	skipHistoryChecks bool,
-	limiter *quotas.DynamicRateLimiter,
-	execStore persistence.ExecutionStore,
-	payloadSerializer persistence.PayloadSerializer,
-	historyStore persistence.HistoryStore,
-) []AdminDBCheck {
-	// the order in which checks are added to the list is important
-	// some checks depend on the output of other checks
-	if skipHistoryChecks {
-		return []AdminDBCheck{NewOrphanExecutionCheck(limiter, execStore, payloadSerializer)}
+func getSQLParser(encodingType common.EncodingType, decodingTypes ...common.EncodingType) serialization.Parser {
+	parser, err := serialization.NewParser(encodingType, decodingTypes...)
+	if err != nil {
+		ErrorAndExit("failed to initialize sql parser", err)
 	}
-	return []AdminDBCheck{
-		NewHistoryExistsCheck(limiter, historyStore, execStore),
-		NewFirstHistoryEventCheck(payloadSerializer),
-		NewOrphanExecutionCheck(limiter, execStore, payloadSerializer),
-	}
+	return parser
 }

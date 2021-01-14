@@ -21,6 +21,7 @@
 package task
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -30,12 +31,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
@@ -120,25 +121,25 @@ func (s *timerQueueTaskExecutorBaseSuite) TestDeleteWorkflow_NoErr() {
 		TaskID:              12345,
 		VisibilityTimestamp: time.Now(),
 	}
-	executionInfo := workflow.WorkflowExecution{
-		WorkflowId: &task.WorkflowID,
-		RunId:      &task.RunID,
+	executionInfo := types.WorkflowExecution{
+		WorkflowID: &task.WorkflowID,
+		RunID:      &task.RunID,
 	}
-	ctx := execution.NewContext(task.DomainID, executionInfo, s.mockShard, s.mockExecutionManager, log.NewNoop())
+	wfContext := execution.NewContext(task.DomainID, executionInfo, s.mockShard, s.mockExecutionManager, log.NewNoop())
 
-	s.mockExecutionManager.On("DeleteCurrentWorkflowExecution", mock.Anything).Return(nil).Once()
-	s.mockExecutionManager.On("DeleteWorkflowExecution", mock.Anything).Return(nil).Once()
-	s.mockHistoryV2Manager.On("DeleteHistoryBranch", mock.Anything).Return(nil).Once()
-	s.mockVisibilityManager.On("DeleteWorkflowExecution", mock.Anything).Return(nil).Once()
+	s.mockExecutionManager.On("DeleteCurrentWorkflowExecution", mock.Anything, mock.Anything).Return(nil).Once()
+	s.mockExecutionManager.On("DeleteWorkflowExecution", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	s.mockHistoryV2Manager.On("DeleteHistoryBranch", mock.Anything, mock.Anything).Return(nil).Once()
+	s.mockVisibilityManager.On("DeleteWorkflowExecution", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	s.mockMutableState.EXPECT().GetCurrentBranchToken().Return([]byte{1, 2, 3}, nil).Times(1)
 	s.mockMutableState.EXPECT().GetLastWriteVersion().Return(int64(1234), nil).AnyTimes()
 
-	err := s.timerQueueTaskExecutorBase.deleteWorkflow(task, ctx, s.mockMutableState)
+	err := s.timerQueueTaskExecutorBase.deleteWorkflow(context.Background(), task, wfContext, s.mockMutableState)
 	s.NoError(err)
 }
 
 func (s *timerQueueTaskExecutorBaseSuite) TestArchiveHistory_NoErr_InlineArchivalFailed() {
-	s.mockWorkflowExecutionContext.EXPECT().LoadExecutionStats().Return(&persistence.ExecutionStats{
+	s.mockWorkflowExecutionContext.EXPECT().LoadExecutionStats(gomock.Any()).Return(&persistence.ExecutionStats{
 		HistorySize: 1024,
 	}, nil).Times(1)
 	s.mockWorkflowExecutionContext.EXPECT().Clear().Times(1)
@@ -147,9 +148,9 @@ func (s *timerQueueTaskExecutorBaseSuite) TestArchiveHistory_NoErr_InlineArchiva
 	s.mockMutableState.EXPECT().GetLastWriteVersion().Return(int64(1234), nil).Times(1)
 	s.mockMutableState.EXPECT().GetNextEventID().Return(int64(101)).Times(1)
 
-	s.mockExecutionManager.On("DeleteCurrentWorkflowExecution", mock.Anything).Return(nil).Once()
-	s.mockExecutionManager.On("DeleteWorkflowExecution", mock.Anything).Return(nil).Once()
-	s.mockVisibilityManager.On("DeleteWorkflowExecution", mock.Anything).Return(nil).Once()
+	s.mockExecutionManager.On("DeleteCurrentWorkflowExecution", mock.Anything, mock.Anything).Return(nil).Once()
+	s.mockExecutionManager.On("DeleteWorkflowExecution", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	s.mockVisibilityManager.On("DeleteWorkflowExecution", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	s.mockArchivalClient.On("Archive", mock.Anything, mock.MatchedBy(func(req *archiver.ClientRequest) bool {
 		return req.CallerService == common.HistoryServiceName && req.AttemptArchiveInline && req.ArchiveRequest.Targets[0] == archiver.ArchiveTargetHistory
@@ -157,13 +158,27 @@ func (s *timerQueueTaskExecutorBaseSuite) TestArchiveHistory_NoErr_InlineArchiva
 		HistoryArchivedInline: false,
 	}, nil)
 
-	domainCacheEntry := cache.NewDomainCacheEntryForTest(&persistence.DomainInfo{}, &persistence.DomainConfig{}, false, nil, 0, nil)
-	err := s.timerQueueTaskExecutorBase.archiveWorkflow(&persistence.TimerTaskInfo{}, s.mockWorkflowExecutionContext, s.mockMutableState, domainCacheEntry)
+	domainCacheEntry := cache.NewDomainCacheEntryForTest(
+		&persistence.DomainInfo{},
+		&persistence.DomainConfig{},
+		false,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+	err := s.timerQueueTaskExecutorBase.archiveWorkflow(
+		context.Background(),
+		&persistence.TimerTaskInfo{},
+		s.mockWorkflowExecutionContext,
+		s.mockMutableState,
+		domainCacheEntry,
+	)
 	s.NoError(err)
 }
 
 func (s *timerQueueTaskExecutorBaseSuite) TestArchiveHistory_SendSignalErr() {
-	s.mockWorkflowExecutionContext.EXPECT().LoadExecutionStats().Return(&persistence.ExecutionStats{
+	s.mockWorkflowExecutionContext.EXPECT().LoadExecutionStats(gomock.Any()).Return(&persistence.ExecutionStats{
 		HistorySize: 1024 * 1024 * 1024,
 	}, nil).Times(1)
 
@@ -175,7 +190,20 @@ func (s *timerQueueTaskExecutorBaseSuite) TestArchiveHistory_SendSignalErr() {
 		return req.CallerService == common.HistoryServiceName && !req.AttemptArchiveInline && req.ArchiveRequest.Targets[0] == archiver.ArchiveTargetHistory
 	})).Return(nil, errors.New("failed to send signal"))
 
-	domainCacheEntry := cache.NewDomainCacheEntryForTest(&persistence.DomainInfo{}, &persistence.DomainConfig{}, false, nil, 0, nil)
-	err := s.timerQueueTaskExecutorBase.archiveWorkflow(&persistence.TimerTaskInfo{}, s.mockWorkflowExecutionContext, s.mockMutableState, domainCacheEntry)
+	domainCacheEntry := cache.NewDomainCacheEntryForTest(
+		&persistence.DomainInfo{},
+		&persistence.DomainConfig{},
+		false,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+	err := s.timerQueueTaskExecutorBase.archiveWorkflow(
+		context.Background(),
+		&persistence.TimerTaskInfo{},
+		s.mockWorkflowExecutionContext,
+		s.mockMutableState, domainCacheEntry,
+	)
 	s.Error(err)
 }

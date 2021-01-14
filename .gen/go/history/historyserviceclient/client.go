@@ -1,7 +1,7 @@
 // The MIT License (MIT)
-// 
+
 // Copyright (c) 2017-2020 Uber Technologies Inc.
-// 
+
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -57,6 +57,12 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) (*history.DescribeMutableStateResponse, error)
 
+	DescribeQueue(
+		ctx context.Context,
+		Request *shared.DescribeQueueRequest,
+		opts ...yarpc.CallOption,
+	) (*shared.DescribeQueueResponse, error)
+
 	DescribeWorkflowExecution(
 		ctx context.Context,
 		DescribeRequest *history.DescribeWorkflowExecutionRequest,
@@ -86,6 +92,12 @@ type Interface interface {
 		Request *replicator.MergeDLQMessagesRequest,
 		opts ...yarpc.CallOption,
 	) (*replicator.MergeDLQMessagesResponse, error)
+
+	NotifyFailoverMarkers(
+		ctx context.Context,
+		Request *history.NotifyFailoverMarkersRequest,
+		opts ...yarpc.CallOption,
+	) error
 
 	PollMutableState(
 		ctx context.Context,
@@ -159,27 +171,21 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) error
 
-	ReplicateEvents(
-		ctx context.Context,
-		ReplicateRequest *history.ReplicateEventsRequest,
-		opts ...yarpc.CallOption,
-	) error
-
 	ReplicateEventsV2(
 		ctx context.Context,
 		ReplicateV2Request *history.ReplicateEventsV2Request,
 		opts ...yarpc.CallOption,
 	) error
 
-	ReplicateRawEvents(
-		ctx context.Context,
-		ReplicateRequest *history.ReplicateRawEventsRequest,
-		opts ...yarpc.CallOption,
-	) error
-
 	RequestCancelWorkflowExecution(
 		ctx context.Context,
 		CancelRequest *history.RequestCancelWorkflowExecutionRequest,
+		opts ...yarpc.CallOption,
+	) error
+
+	ResetQueue(
+		ctx context.Context,
+		Request *shared.ResetQueueRequest,
 		opts ...yarpc.CallOption,
 	) error
 
@@ -361,6 +367,29 @@ func (c client) DescribeMutableState(
 	return
 }
 
+func (c client) DescribeQueue(
+	ctx context.Context,
+	_Request *shared.DescribeQueueRequest,
+	opts ...yarpc.CallOption,
+) (success *shared.DescribeQueueResponse, err error) {
+
+	args := history.HistoryService_DescribeQueue_Helper.Args(_Request)
+
+	var body wire.Value
+	body, err = c.c.Call(ctx, args, opts...)
+	if err != nil {
+		return
+	}
+
+	var result history.HistoryService_DescribeQueue_Result
+	if err = result.FromWire(body); err != nil {
+		return
+	}
+
+	success, err = history.HistoryService_DescribeQueue_Helper.UnwrapResponse(&result)
+	return
+}
+
 func (c client) DescribeWorkflowExecution(
 	ctx context.Context,
 	_DescribeRequest *history.DescribeWorkflowExecutionRequest,
@@ -473,6 +502,29 @@ func (c client) MergeDLQMessages(
 	}
 
 	success, err = history.HistoryService_MergeDLQMessages_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) NotifyFailoverMarkers(
+	ctx context.Context,
+	_Request *history.NotifyFailoverMarkersRequest,
+	opts ...yarpc.CallOption,
+) (err error) {
+
+	args := history.HistoryService_NotifyFailoverMarkers_Helper.Args(_Request)
+
+	var body wire.Value
+	body, err = c.c.Call(ctx, args, opts...)
+	if err != nil {
+		return
+	}
+
+	var result history.HistoryService_NotifyFailoverMarkers_Result
+	if err = result.FromWire(body); err != nil {
+		return
+	}
+
+	err = history.HistoryService_NotifyFailoverMarkers_Helper.UnwrapResponse(&result)
 	return
 }
 
@@ -752,29 +804,6 @@ func (c client) RemoveTask(
 	return
 }
 
-func (c client) ReplicateEvents(
-	ctx context.Context,
-	_ReplicateRequest *history.ReplicateEventsRequest,
-	opts ...yarpc.CallOption,
-) (err error) {
-
-	args := history.HistoryService_ReplicateEvents_Helper.Args(_ReplicateRequest)
-
-	var body wire.Value
-	body, err = c.c.Call(ctx, args, opts...)
-	if err != nil {
-		return
-	}
-
-	var result history.HistoryService_ReplicateEvents_Result
-	if err = result.FromWire(body); err != nil {
-		return
-	}
-
-	err = history.HistoryService_ReplicateEvents_Helper.UnwrapResponse(&result)
-	return
-}
-
 func (c client) ReplicateEventsV2(
 	ctx context.Context,
 	_ReplicateV2Request *history.ReplicateEventsV2Request,
@@ -798,29 +827,6 @@ func (c client) ReplicateEventsV2(
 	return
 }
 
-func (c client) ReplicateRawEvents(
-	ctx context.Context,
-	_ReplicateRequest *history.ReplicateRawEventsRequest,
-	opts ...yarpc.CallOption,
-) (err error) {
-
-	args := history.HistoryService_ReplicateRawEvents_Helper.Args(_ReplicateRequest)
-
-	var body wire.Value
-	body, err = c.c.Call(ctx, args, opts...)
-	if err != nil {
-		return
-	}
-
-	var result history.HistoryService_ReplicateRawEvents_Result
-	if err = result.FromWire(body); err != nil {
-		return
-	}
-
-	err = history.HistoryService_ReplicateRawEvents_Helper.UnwrapResponse(&result)
-	return
-}
-
 func (c client) RequestCancelWorkflowExecution(
 	ctx context.Context,
 	_CancelRequest *history.RequestCancelWorkflowExecutionRequest,
@@ -841,6 +847,29 @@ func (c client) RequestCancelWorkflowExecution(
 	}
 
 	err = history.HistoryService_RequestCancelWorkflowExecution_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) ResetQueue(
+	ctx context.Context,
+	_Request *shared.ResetQueueRequest,
+	opts ...yarpc.CallOption,
+) (err error) {
+
+	args := history.HistoryService_ResetQueue_Helper.Args(_Request)
+
+	var body wire.Value
+	body, err = c.c.Call(ctx, args, opts...)
+	if err != nil {
+		return
+	}
+
+	var result history.HistoryService_ResetQueue_Result
+	if err = result.FromWire(body); err != nil {
+		return
+	}
+
+	err = history.HistoryService_ResetQueue_Helper.UnwrapResponse(&result)
 	return
 }
 

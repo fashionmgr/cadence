@@ -21,24 +21,26 @@
 package task
 
 import (
+	"context"
 	"time"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/execution"
 )
 
 type (
-	standbyActionFn     func(execution.Context, execution.MutableState) (interface{}, error)
-	standbyPostActionFn func(Info, interface{}, log.Logger) error
+	standbyActionFn     func(context.Context, execution.Context, execution.MutableState) (interface{}, error)
+	standbyPostActionFn func(context.Context, Info, interface{}, log.Logger) error
 
 	standbyCurrentTimeFn func() time.Time
 )
 
 func standbyTaskPostActionNoOp(
+	ctx context.Context,
 	taskInfo Info,
 	postActionInfo interface{},
 	logger log.Logger,
@@ -49,10 +51,11 @@ func standbyTaskPostActionNoOp(
 	}
 
 	// return error so task processing logic will retry
-	return ErrTaskRetry
+	return ErrTaskRedispatch
 }
 
 func standbyTransferTaskPostActionTaskDiscarded(
+	ctx context.Context,
 	taskInfo Info,
 	postActionInfo interface{},
 	logger log.Logger,
@@ -76,6 +79,7 @@ func standbyTransferTaskPostActionTaskDiscarded(
 }
 
 func standbyTimerTaskPostActionTaskDiscarded(
+	ctx context.Context,
 	taskInfo Info,
 	postActionInfo interface{},
 	logger log.Logger,
@@ -116,7 +120,7 @@ type (
 
 	pushDecisionToMatchingInfo struct {
 		decisionScheduleToStartTimeout int32
-		tasklist                       shared.TaskList
+		tasklist                       types.TaskList
 	}
 )
 
@@ -127,15 +131,6 @@ func newHistoryResendInfo(
 	return &historyResendInfo{
 		lastEventID:      common.Int64Ptr(lastEventID),
 		lastEventVersion: common.Int64Ptr(lastEventVersion),
-	}
-}
-
-// TODO this logic is for 2DC, to be deprecated
-func newHistoryResendInfoFor2DC(
-	nextEventID int64,
-) *historyResendInfo {
-	return &historyResendInfo{
-		nextEventID: common.Int64Ptr(nextEventID),
 	}
 }
 
@@ -150,7 +145,7 @@ func newPushActivityToMatchingInfo(
 
 func newPushDecisionToMatchingInfo(
 	decisionScheduleToStartTimeout int32,
-	tasklist shared.TaskList,
+	tasklist types.TaskList,
 ) *pushDecisionToMatchingInfo {
 
 	return &pushDecisionToMatchingInfo{
@@ -163,12 +158,11 @@ func getHistoryResendInfo(
 	mutableState execution.MutableState,
 ) (*historyResendInfo, error) {
 
-	// TODO this logic is for 2DC, to be deprecated
-	if mutableState.GetVersionHistories() == nil {
-		return newHistoryResendInfoFor2DC(mutableState.GetNextEventID()), nil
+	versionHistories := mutableState.GetVersionHistories()
+	if versionHistories == nil {
+		return nil, execution.ErrMissingVersionHistories
 	}
-
-	currentBranch, err := mutableState.GetVersionHistories().GetCurrentVersionHistory()
+	currentBranch, err := versionHistories.GetCurrentVersionHistory()
 	if err != nil {
 		return nil, err
 	}

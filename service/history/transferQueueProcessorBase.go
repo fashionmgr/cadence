@@ -21,8 +21,9 @@
 package history
 
 import (
+	"context"
+
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
@@ -69,7 +70,7 @@ func (t *transferQueueProcessorBase) readTasks(
 	readLevel int64,
 ) ([]task.Info, bool, error) {
 
-	response, err := t.executionManager.GetTransferTasks(&persistence.GetTransferTasksRequest{
+	response, err := t.executionManager.GetTransferTasks(context.Background(), &persistence.GetTransferTasksRequest{
 		ReadLevel:    readLevel,
 		MaxReadLevel: t.maxReadAckLevel(),
 		BatchSize:    t.options.BatchSize(),
@@ -96,62 +97,4 @@ func (t *transferQueueProcessorBase) updateAckLevel(
 
 func (t *transferQueueProcessorBase) queueShutdown() error {
 	return t.transferQueueShutdown()
-}
-
-func getTransferTaskMetricsScope(
-	taskType int,
-	isActive bool,
-) int {
-	switch taskType {
-	case persistence.TransferTaskTypeActivityTask:
-		if isActive {
-			return metrics.TransferActiveTaskActivityScope
-		}
-		return metrics.TransferStandbyTaskActivityScope
-	case persistence.TransferTaskTypeDecisionTask:
-		if isActive {
-			return metrics.TransferActiveTaskDecisionScope
-		}
-		return metrics.TransferStandbyTaskDecisionScope
-	case persistence.TransferTaskTypeCloseExecution:
-		if isActive {
-			return metrics.TransferActiveTaskCloseExecutionScope
-		}
-		return metrics.TransferStandbyTaskCloseExecutionScope
-	case persistence.TransferTaskTypeCancelExecution:
-		if isActive {
-			return metrics.TransferActiveTaskCancelExecutionScope
-		}
-		return metrics.TransferStandbyTaskCancelExecutionScope
-	case persistence.TransferTaskTypeSignalExecution:
-		if isActive {
-			return metrics.TransferActiveTaskSignalExecutionScope
-		}
-		return metrics.TransferStandbyTaskSignalExecutionScope
-	case persistence.TransferTaskTypeStartChildExecution:
-		if isActive {
-			return metrics.TransferActiveTaskStartChildExecutionScope
-		}
-		return metrics.TransferStandbyTaskStartChildExecutionScope
-	case persistence.TransferTaskTypeRecordWorkflowStarted:
-		if isActive {
-			return metrics.TransferActiveTaskRecordWorkflowStartedScope
-		}
-		return metrics.TransferStandbyTaskRecordWorkflowStartedScope
-	case persistence.TransferTaskTypeResetWorkflow:
-		if isActive {
-			return metrics.TransferActiveTaskResetWorkflowScope
-		}
-		return metrics.TransferStandbyTaskResetWorkflowScope
-	case persistence.TransferTaskTypeUpsertWorkflowSearchAttributes:
-		if isActive {
-			return metrics.TransferActiveTaskUpsertWorkflowSearchAttributesScope
-		}
-		return metrics.TransferStandbyTaskUpsertWorkflowSearchAttributesScope
-	default:
-		if isActive {
-			return metrics.TransferActiveQueueProcessorScope
-		}
-		return metrics.TransferStandbyQueueProcessorScope
-	}
 }

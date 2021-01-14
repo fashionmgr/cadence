@@ -21,16 +21,16 @@
 package task
 
 import (
+	"context"
 	"fmt"
 
-	m "github.com/uber/cadence/.gen/go/matching"
-	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
@@ -40,8 +40,6 @@ import (
 type (
 	timerActiveTaskExecutor struct {
 		*timerTaskExecutorBase
-
-		queueProcessor common.Daemon // use common.Daemon here to avoid cycle dependency of history package
 	}
 )
 
@@ -50,7 +48,6 @@ func NewTimerActiveTaskExecutor(
 	shard shard.Context,
 	archiverClient archiver.Client,
 	executionCache *execution.Cache,
-	queueProcessor common.Daemon,
 	logger log.Logger,
 	metricsClient metrics.Client,
 	config *config.Config,
@@ -64,7 +61,6 @@ func NewTimerActiveTaskExecutor(
 			metricsClient,
 			config,
 		),
-		queueProcessor: queueProcessor,
 	}
 }
 
@@ -81,39 +77,48 @@ func (t *timerActiveTaskExecutor) Execute(
 		return nil
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), taskDefaultTimeout)
+	defer cancel()
+
 	switch timerTask.TaskType {
 	case persistence.TaskTypeUserTimer:
-		return t.executeUserTimerTimeoutTask(timerTask)
+		return t.executeUserTimerTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeActivityTimeout:
-		return t.executeActivityTimeoutTask(timerTask)
+		return t.executeActivityTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeDecisionTimeout:
-		return t.executeDecisionTimeoutTask(timerTask)
+		return t.executeDecisionTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeWorkflowTimeout:
-		return t.executeWorkflowTimeoutTask(timerTask)
+		return t.executeWorkflowTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeActivityRetryTimer:
-		return t.executeActivityRetryTimerTask(timerTask)
+		return t.executeActivityRetryTimerTask(ctx, timerTask)
 	case persistence.TaskTypeWorkflowBackoffTimer:
-		return t.executeWorkflowBackoffTimerTask(timerTask)
+		return t.executeWorkflowBackoffTimerTask(ctx, timerTask)
 	case persistence.TaskTypeDeleteHistoryEvent:
-		return t.executeDeleteHistoryEventTask(timerTask)
+		return t.executeDeleteHistoryEventTask(ctx, timerTask)
 	default:
 		return errUnknownTimerTask
 	}
 }
 
 func (t *timerActiveTaskExecutor) executeUserTimerTimeoutTask(
+	ctx context.Context,
 	task *persistence.TimerTaskInfo,
 ) (retError error) {
 
-	context, release, err := t.executionCache.GetOrCreateWorkflowExecutionForBackground(
-		t.getDomainIDAndWorkflowExecution(task),
+	wfContext, release, err := t.executionCache.GetOrCreateWorkflowExecutionWithTimeout(
+		task.DomainID,
+		getWorkflowExecution(task),
+		taskGetExecutionContextTimeout,
 	)
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			return errWorkflowBusy
+		}
 		return err
 	}
 	defer func() { release(retError) }()
 
-	mutableState, err := loadMutableStateForTimerTask(context, task, t.metricsClient, t.logger)
+	mutableState, err := loadMutableStateForTimerTask(ctx, wfContext, task, t.metricsClient, t.logger)
 	if err != nil {
 		return err
 	}
@@ -131,7 +136,7 @@ Loop:
 		if !ok {
 			errString := fmt.Sprintf("failed to find in user timer event ID: %v", timerSequenceID.EventID)
 			t.logger.Error(errString)
-			return &workflow.InternalServiceError{Message: errString}
+			return &types.InternalServiceError{Message: errString}
 		}
 
 		if expired := timerSequence.IsExpired(referenceTime, timerSequenceID); !expired {
@@ -150,22 +155,28 @@ Loop:
 		return nil
 	}
 
-	return t.updateWorkflowExecution(context, mutableState, timerFired)
+	return t.updateWorkflowExecution(ctx, wfContext, mutableState, timerFired)
 }
 
 func (t *timerActiveTaskExecutor) executeActivityTimeoutTask(
+	ctx context.Context,
 	task *persistence.TimerTaskInfo,
 ) (retError error) {
 
-	context, release, err := t.executionCache.GetOrCreateWorkflowExecutionForBackground(
-		t.getDomainIDAndWorkflowExecution(task),
+	wfContext, release, err := t.executionCache.GetOrCreateWorkflowExecutionWithTimeout(
+		task.DomainID,
+		getWorkflowExecution(task),
+		taskGetExecutionContextTimeout,
 	)
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			return errWorkflowBusy
+		}
 		return err
 	}
 	defer func() { release(retError) }()
 
-	mutableState, err := loadMutableStateForTimerTask(context, task, t.metricsClient, t.logger)
+	mutableState, err := loadMutableStateForTimerTask(ctx, wfContext, task, t.metricsClient, t.logger)
 	if err != nil {
 		return err
 	}
@@ -183,7 +194,7 @@ func (t *timerActiveTaskExecutor) executeActivityTimeoutTask(
 	// one heartbeat task was persisted multiple times with different taskIDs due to the retry logic
 	// for updating workflow execution. In that case, only one new heartbeat timeout task should be
 	// created.
-	isHeartBeatTask := task.TimeoutType == int(workflow.TimeoutTypeHeartbeat)
+	isHeartBeatTask := task.TimeoutType == int(types.TimeoutTypeHeartbeat)
 	activityInfo, ok := mutableState.GetActivityInfo(task.EventID)
 	if isHeartBeatTask && ok && activityInfo.LastHeartbeatTimeoutVisibilityInSeconds <= task.VisibilityTimestamp.Unix() {
 		activityInfo.TimerTaskStatus = activityInfo.TimerTaskStatus &^ execution.TimerTaskStatusCreatedHeartbeat
@@ -212,19 +223,33 @@ Loop:
 			break Loop
 		}
 
-		if timerSequenceID.TimerType != execution.TimerTypeScheduleToStart {
-			// schedule to start timeout is not retriable
-			// customer should set larger schedule to start timeout if necessary
-			if ok, err := mutableState.RetryActivity(
-				activityInfo,
-				execution.TimerTypeToReason(timerSequenceID.TimerType),
-				nil,
-			); err != nil {
-				return err
-			} else if ok {
-				updateMutableState = true
-				continue Loop
+		// check if it's possible that the timeout is due to activity task lost
+		if timerSequenceID.TimerType == execution.TimerTypeScheduleToStart {
+			domainName, err := t.shard.GetDomainCache().GetDomainName(mutableState.GetExecutionInfo().DomainID)
+			if err == nil && activityInfo.ScheduleToStartTimeout >= int32(t.config.ActivityMaxScheduleToStartTimeoutForRetry(domainName).Seconds()) {
+				// note that we ignore the race condition for the dynamic config value change here as it's only for metric and logging purpose.
+				// theoratically the check only applies to activities with retry policy
+				// however for activities without retry policy, we also want to check the potential task lost and emit the metric
+				// so reuse the same config value as a threshold so that the metric only got emitted if the activity has been started after a long time.
+				t.metricsClient.Scope(metrics.TimerActiveTaskActivityTimeoutScope, metrics.DomainTag(domainName)).IncCounter(metrics.ActivityLostCounter)
+				t.logger.Warn("Potentially activity task lost",
+					tag.WorkflowDomainName(domainName),
+					tag.WorkflowID(task.WorkflowID),
+					tag.WorkflowRunID(task.RunID),
+					tag.WorkflowScheduleID(activityInfo.ScheduleID),
+				)
 			}
+		}
+
+		if ok, err := mutableState.RetryActivity(
+			activityInfo,
+			execution.TimerTypeToReason(timerSequenceID.TimerType),
+			nil,
+		); err != nil {
+			return err
+		} else if ok {
+			updateMutableState = true
+			continue Loop
 		}
 
 		t.emitTimeoutMetricScopeWithDomainTag(
@@ -235,7 +260,7 @@ Loop:
 		if _, err := mutableState.AddActivityTaskTimedOutEvent(
 			activityInfo.ScheduleID,
 			activityInfo.StartedID,
-			execution.TimerTypeToThrift(timerSequenceID.TimerType),
+			execution.TimerTypeToInternal(timerSequenceID.TimerType),
 			activityInfo.Details,
 		); err != nil {
 			return err
@@ -247,22 +272,28 @@ Loop:
 	if !updateMutableState {
 		return nil
 	}
-	return t.updateWorkflowExecution(context, mutableState, scheduleDecision)
+	return t.updateWorkflowExecution(ctx, wfContext, mutableState, scheduleDecision)
 }
 
 func (t *timerActiveTaskExecutor) executeDecisionTimeoutTask(
+	ctx context.Context,
 	task *persistence.TimerTaskInfo,
 ) (retError error) {
 
-	context, release, err := t.executionCache.GetOrCreateWorkflowExecutionForBackground(
-		t.getDomainIDAndWorkflowExecution(task),
+	wfContext, release, err := t.executionCache.GetOrCreateWorkflowExecutionWithTimeout(
+		task.DomainID,
+		getWorkflowExecution(task),
+		taskGetExecutionContextTimeout,
 	)
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			return errWorkflowBusy
+		}
 		return err
 	}
 	defer func() { release(retError) }()
 
-	mutableState, err := loadMutableStateForTimerTask(context, task, t.metricsClient, t.logger)
+	mutableState, err := loadMutableStateForTimerTask(ctx, wfContext, task, t.metricsClient, t.logger)
 	if err != nil {
 		return err
 	}
@@ -286,7 +317,7 @@ func (t *timerActiveTaskExecutor) executeDecisionTimeoutTask(
 	}
 
 	scheduleDecision := false
-	switch execution.TimerTypeFromThrift(workflow.TimeoutType(task.TimeoutType)) {
+	switch execution.TimerTypeFromInternal(types.TimeoutType(task.TimeoutType)) {
 	case execution.TimerTypeStartToClose:
 		t.emitTimeoutMetricScopeWithDomainTag(
 			mutableState.GetExecutionInfo().DomainID,
@@ -319,22 +350,28 @@ func (t *timerActiveTaskExecutor) executeDecisionTimeoutTask(
 		scheduleDecision = true
 	}
 
-	return t.updateWorkflowExecution(context, mutableState, scheduleDecision)
+	return t.updateWorkflowExecution(ctx, wfContext, mutableState, scheduleDecision)
 }
 
 func (t *timerActiveTaskExecutor) executeWorkflowBackoffTimerTask(
+	ctx context.Context,
 	task *persistence.TimerTaskInfo,
 ) (retError error) {
 
-	context, release, err := t.executionCache.GetOrCreateWorkflowExecutionForBackground(
-		t.getDomainIDAndWorkflowExecution(task),
+	wfContext, release, err := t.executionCache.GetOrCreateWorkflowExecutionWithTimeout(
+		task.DomainID,
+		getWorkflowExecution(task),
+		taskGetExecutionContextTimeout,
 	)
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			return errWorkflowBusy
+		}
 		return err
 	}
 	defer func() { release(retError) }()
 
-	mutableState, err := loadMutableStateForTimerTask(context, task, t.metricsClient, t.logger)
+	mutableState, err := loadMutableStateForTimerTask(ctx, wfContext, task, t.metricsClient, t.logger)
 	if err != nil {
 		return err
 	}
@@ -354,22 +391,28 @@ func (t *timerActiveTaskExecutor) executeWorkflowBackoffTimerTask(
 	}
 
 	// schedule first decision task
-	return t.updateWorkflowExecution(context, mutableState, true)
+	return t.updateWorkflowExecution(ctx, wfContext, mutableState, true)
 }
 
 func (t *timerActiveTaskExecutor) executeActivityRetryTimerTask(
+	ctx context.Context,
 	task *persistence.TimerTaskInfo,
 ) (retError error) {
 
-	context, release, err := t.executionCache.GetOrCreateWorkflowExecutionForBackground(
-		t.getDomainIDAndWorkflowExecution(task),
+	wfContext, release, err := t.executionCache.GetOrCreateWorkflowExecutionWithTimeout(
+		task.DomainID,
+		getWorkflowExecution(task),
+		taskGetExecutionContextTimeout,
 	)
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			return errWorkflowBusy
+		}
 		return err
 	}
 	defer func() { release(retError) }()
 
-	mutableState, err := loadMutableStateForTimerTask(context, task, t.metricsClient, t.logger)
+	mutableState, err := loadMutableStateForTimerTask(ctx, wfContext, task, t.metricsClient, t.logger)
 	if err != nil {
 		return err
 	}
@@ -408,52 +451,58 @@ func (t *timerActiveTaskExecutor) executeActivityRetryTimerTask(
 		//  previously, DomainID in activity info is not used, so need to get
 		//  schedule event from DB checking whether activity to be scheduled
 		//  belongs to this domain
-		scheduledEvent, err := mutableState.GetActivityScheduledEvent(scheduledID)
+		scheduledEvent, err := mutableState.GetActivityScheduledEvent(ctx, scheduledID)
 		if err != nil {
 			return err
 		}
 		if scheduledEvent.ActivityTaskScheduledEventAttributes.Domain != nil {
 			domainEntry, err := t.shard.GetDomainCache().GetDomain(scheduledEvent.ActivityTaskScheduledEventAttributes.GetDomain())
 			if err != nil {
-				return &workflow.InternalServiceError{Message: "unable to re-schedule activity across domain."}
+				return &types.InternalServiceError{Message: "unable to re-schedule activity across domain."}
 			}
 			targetDomainID = domainEntry.GetInfo().ID
 		}
 	}
 
-	execution := workflow.WorkflowExecution{
-		WorkflowId: common.StringPtr(task.WorkflowID),
-		RunId:      common.StringPtr(task.RunID)}
-	taskList := &workflow.TaskList{
+	execution := types.WorkflowExecution{
+		WorkflowID: common.StringPtr(task.WorkflowID),
+		RunID:      common.StringPtr(task.RunID)}
+	taskList := &types.TaskList{
 		Name: common.StringPtr(activityInfo.TaskList),
 	}
 	scheduleToStartTimeout := activityInfo.ScheduleToStartTimeout
 
 	release(nil) // release earlier as we don't need the lock anymore
 
-	return t.shard.GetService().GetMatchingClient().AddActivityTask(nil, &m.AddActivityTaskRequest{
+	return t.shard.GetService().GetMatchingClient().AddActivityTask(ctx, &types.AddActivityTaskRequest{
 		DomainUUID:                    common.StringPtr(targetDomainID),
 		SourceDomainUUID:              common.StringPtr(domainID),
 		Execution:                     &execution,
 		TaskList:                      taskList,
-		ScheduleId:                    common.Int64Ptr(scheduledID),
+		ScheduleID:                    common.Int64Ptr(scheduledID),
 		ScheduleToStartTimeoutSeconds: common.Int32Ptr(scheduleToStartTimeout),
 	})
 }
 
 func (t *timerActiveTaskExecutor) executeWorkflowTimeoutTask(
+	ctx context.Context,
 	task *persistence.TimerTaskInfo,
 ) (retError error) {
 
-	context, release, err := t.executionCache.GetOrCreateWorkflowExecutionForBackground(
-		t.getDomainIDAndWorkflowExecution(task),
+	wfContext, release, err := t.executionCache.GetOrCreateWorkflowExecutionWithTimeout(
+		task.DomainID,
+		getWorkflowExecution(task),
+		taskGetExecutionContextTimeout,
 	)
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			return errWorkflowBusy
+		}
 		return err
 	}
 	defer func() { release(retError) }()
 
-	mutableState, err := loadMutableStateForTimerTask(context, task, t.metricsClient, t.logger)
+	mutableState, err := loadMutableStateForTimerTask(ctx, wfContext, task, t.metricsClient, t.logger)
 	if err != nil {
 		return err
 	}
@@ -474,14 +523,14 @@ func (t *timerActiveTaskExecutor) executeWorkflowTimeoutTask(
 
 	timeoutReason := execution.TimerTypeToReason(execution.TimerTypeStartToClose)
 	backoffInterval := mutableState.GetRetryBackoffDuration(timeoutReason)
-	continueAsNewInitiator := workflow.ContinueAsNewInitiatorRetryPolicy
+	continueAsNewInitiator := types.ContinueAsNewInitiatorRetryPolicy
 	if backoffInterval == backoff.NoBackoff {
 		// check if a cron backoff is needed
-		backoffInterval, err = mutableState.GetCronBackoffDuration()
+		backoffInterval, err = mutableState.GetCronBackoffDuration(ctx)
 		if err != nil {
 			return err
 		}
-		continueAsNewInitiator = workflow.ContinueAsNewInitiatorCronSchedule
+		continueAsNewInitiator = types.ContinueAsNewInitiatorCronSchedule
 	}
 	if backoffInterval == backoff.NoBackoff {
 		if err := timeoutWorkflow(mutableState, eventBatchFirstEventID); err != nil {
@@ -490,17 +539,17 @@ func (t *timerActiveTaskExecutor) executeWorkflowTimeoutTask(
 
 		// We apply the update to execution using optimistic concurrency.  If it fails due to a conflict than reload
 		// the history and try the operation again.
-		return t.updateWorkflowExecution(context, mutableState, false)
+		return t.updateWorkflowExecution(ctx, wfContext, mutableState, false)
 	}
 
 	// workflow timeout, but a retry or cron is needed, so we do continue as new to retry or cron
-	startEvent, err := mutableState.GetStartEvent()
+	startEvent, err := mutableState.GetStartEvent(ctx)
 	if err != nil {
 		return err
 	}
 
 	startAttributes := startEvent.WorkflowExecutionStartedEventAttributes
-	continueAsnewAttributes := &workflow.ContinueAsNewWorkflowExecutionDecisionAttributes{
+	continueAsNewAttributes := &types.ContinueAsNewWorkflowExecutionDecisionAttributes{
 		WorkflowType:                        startAttributes.WorkflowType,
 		TaskList:                            startAttributes.TaskList,
 		Input:                               startAttributes.Input,
@@ -516,23 +565,25 @@ func (t *timerActiveTaskExecutor) executeWorkflowTimeoutTask(
 		SearchAttributes:                    startAttributes.SearchAttributes,
 	}
 	newMutableState, err := retryWorkflow(
+		ctx,
 		mutableState,
 		eventBatchFirstEventID,
 		startAttributes.GetParentWorkflowDomain(),
-		continueAsnewAttributes,
+		continueAsNewAttributes,
 	)
 	if err != nil {
 		return err
 	}
 
 	newExecutionInfo := newMutableState.GetExecutionInfo()
-	return context.UpdateWorkflowExecutionWithNewAsActive(
+	return wfContext.UpdateWorkflowExecutionWithNewAsActive(
+		ctx,
 		t.shard.GetTimeSource().Now(),
 		execution.NewContext(
 			newExecutionInfo.DomainID,
-			workflow.WorkflowExecution{
-				WorkflowId: common.StringPtr(newExecutionInfo.WorkflowID),
-				RunId:      common.StringPtr(newExecutionInfo.RunID),
+			types.WorkflowExecution{
+				WorkflowID: common.StringPtr(newExecutionInfo.WorkflowID),
+				RunID:      common.StringPtr(newExecutionInfo.RunID),
 			},
 			t.shard,
 			t.shard.GetExecutionManager(),
@@ -551,7 +602,8 @@ func (t *timerActiveTaskExecutor) getTimerSequence(
 }
 
 func (t *timerActiveTaskExecutor) updateWorkflowExecution(
-	context execution.Context,
+	ctx context.Context,
+	wfContext execution.Context,
 	mutableState execution.MutableState,
 	scheduleNewDecision bool,
 ) error {
@@ -566,13 +618,10 @@ func (t *timerActiveTaskExecutor) updateWorkflowExecution(
 	}
 
 	now := t.shard.GetTimeSource().Now()
-	err = context.UpdateWorkflowExecutionAsActive(now)
+	err = wfContext.UpdateWorkflowExecutionAsActive(ctx, now)
 	if err != nil {
-		if shard.IsShardOwnershiptLostError(err) {
-			// Shard is stolen.  Stop timer processing to reduce duplicates
-			t.queueProcessor.Stop()
-			return err
-		}
+		// if is shard ownership error, the shard context will stop the entire history engine
+		// we don't need to explicitly stop the queue processor here
 		return err
 	}
 
@@ -584,12 +633,12 @@ func (t *timerActiveTaskExecutor) emitTimeoutMetricScopeWithDomainTag(
 	scope int,
 	timerType execution.TimerType,
 ) {
-
-	domainEntry, err := t.shard.GetDomainCache().GetDomainByID(domainID)
+	domainTag, err := getDomainTagByID(t.shard.GetDomainCache(), domainID)
 	if err != nil {
 		return
 	}
-	metricsScope := t.metricsClient.Scope(scope).Tagged(metrics.DomainTag(domainEntry.GetInfo().Name))
+
+	metricsScope := t.metricsClient.Scope(scope, domainTag)
 	switch timerType {
 	case execution.TimerTypeScheduleToStart:
 		metricsScope.IncCounter(metrics.ScheduleToStartTimeoutCounter)

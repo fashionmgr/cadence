@@ -22,8 +22,12 @@
 
 package pagination
 
+import "context"
+
 type (
 	iterator struct {
+		ctx context.Context
+
 		page        Page
 		entityIndex int
 
@@ -36,10 +40,12 @@ type (
 
 // NewIterator constructs a new Iterator
 func NewIterator(
+	ctx context.Context,
 	startingPageToken PageToken,
 	fetchFn FetchFn,
 ) Iterator {
 	itr := &iterator{
+		ctx: ctx,
 		page: Page{
 			Entities:     nil,
 			CurrentToken: nil,
@@ -56,9 +62,9 @@ func NewIterator(
 // Returning nil, nil is valid if that is what the provided fetch function provided.
 func (i *iterator) Next() (Entity, error) {
 	entity := i.nextEntity
-	error := i.nextError
+	err := i.nextError
 	i.advance(false)
-	return entity, error
+	return entity, err
 }
 
 // HasNext returns true if there is a next element. There is considered to be a next element
@@ -86,7 +92,7 @@ func (i *iterator) advanceToNonEmptyPage(firstPage bool) error {
 	if i.page.NextToken == nil && !firstPage {
 		return ErrIteratorFinished
 	}
-	nextPage, err := i.fetchFn(i.page.NextToken)
+	nextPage, err := i.fetchFn(i.ctx, i.page.NextToken)
 	if err != nil {
 		return err
 	}

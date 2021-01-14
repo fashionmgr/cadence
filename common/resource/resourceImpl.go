@@ -42,6 +42,7 @@ import (
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
+	"github.com/uber/cadence/common/domain"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
@@ -78,14 +79,16 @@ type (
 
 		// other common resources
 
-		domainCache       cache.DomainCache
-		timeSource        clock.TimeSource
-		payloadSerializer persistence.PayloadSerializer
-		metricsClient     metrics.Client
-		messagingClient   messaging.Client
-		blobstoreClient   blobstore.Client
-		archivalMetadata  archiver.ArchivalMetadata
-		archiverProvider  provider.ArchiverProvider
+		domainCache             cache.DomainCache
+		domainMetricsScopeCache cache.DomainMetricsScopeCache
+		timeSource              clock.TimeSource
+		payloadSerializer       persistence.PayloadSerializer
+		metricsClient           metrics.Client
+		messagingClient         messaging.Client
+		blobstoreClient         blobstore.Client
+		archivalMetadata        archiver.ArchivalMetadata
+		archiverProvider        provider.ArchiverProvider
+		domainReplicationQueue  domain.ReplicationQueue
 
 		// membership infos
 
@@ -156,7 +159,11 @@ func New(
 		return nil, err
 	}
 
-	dynamicCollection := dynamicconfig.NewCollection(params.DynamicConfig, logger)
+	dynamicCollection := dynamicconfig.NewCollection(
+		params.DynamicConfig,
+		logger,
+		dynamicconfig.ClusterNameFilter(params.ClusterMetadata.GetCurrentClusterName()),
+	)
 	clientBean, err := client.NewClientBean(
 		client.NewRPCClientFactory(
 			params.RPCFactory,
@@ -205,7 +212,6 @@ func New(
 			}
 			return persistenceMaxQPS()
 		},
-		params.AbstractDatastoreFactory,
 		params.ClusterMetadata.GetCurrentClusterName(),
 		params.MetricsClient,
 		logger,
@@ -228,11 +234,19 @@ func New(
 		logger,
 	)
 
+	domainMetricsScopeCache := cache.NewDomainMetricsScopeCache()
+	domainReplicationQueue := domain.NewReplicationQueue(
+		persistenceBean.GetDomainReplicationQueueManager(),
+		params.ClusterMetadata.GetCurrentClusterName(),
+		params.MetricsClient,
+		logger,
+	)
+
 	frontendRawClient := clientBean.GetFrontendClient()
 	frontendClient := frontend.NewRetryableClient(
 		frontendRawClient,
 		common.CreateFrontendServiceRetryPolicy(),
-		common.IsWhitelistServiceTransientError,
+		common.IsServiceTransientError,
 	)
 
 	matchingRawClient, err := clientBean.GetMatchingClient(domainCache.GetDomainName)
@@ -242,14 +256,14 @@ func New(
 	matchingClient := matching.NewRetryableClient(
 		matchingRawClient,
 		common.CreateMatchingServiceRetryPolicy(),
-		common.IsWhitelistServiceTransientError,
+		common.IsServiceTransientError,
 	)
 
 	historyRawClient := clientBean.GetHistoryClient()
 	historyClient := history.NewRetryableClient(
 		historyRawClient,
 		common.CreateHistoryServiceRetryPolicy(),
-		common.IsWhitelistServiceTransientError,
+		common.IsServiceTransientError,
 	)
 
 	historyArchiverBootstrapContainer := &archiver.HistoryBootstrapContainer{
@@ -286,14 +300,16 @@ func New(
 
 		// other common resources
 
-		domainCache:       domainCache,
-		timeSource:        clock.NewRealTimeSource(),
-		payloadSerializer: persistence.NewPayloadSerializer(),
-		metricsClient:     params.MetricsClient,
-		messagingClient:   params.MessagingClient,
-		blobstoreClient:   params.BlobstoreClient,
-		archivalMetadata:  params.ArchivalMetadata,
-		archiverProvider:  params.ArchiverProvider,
+		domainCache:             domainCache,
+		domainMetricsScopeCache: domainMetricsScopeCache,
+		timeSource:              clock.NewRealTimeSource(),
+		payloadSerializer:       persistence.NewPayloadSerializer(),
+		metricsClient:           params.MetricsClient,
+		messagingClient:         params.MessagingClient,
+		blobstoreClient:         params.BlobstoreClient,
+		archivalMetadata:        params.ArchivalMetadata,
+		archiverProvider:        params.ArchiverProvider,
+		domainReplicationQueue:  domainReplicationQueue,
 
 		// membership infos
 
@@ -363,6 +379,7 @@ func (h *Impl) Start() {
 	}
 	h.membershipMonitor.Start()
 	h.domainCache.Start()
+	h.domainMetricsScopeCache.Start()
 
 	hostInfo, err := h.membershipMonitor.WhoAmI()
 	if err != nil {
@@ -388,6 +405,7 @@ func (h *Impl) Stop() {
 	}
 
 	h.domainCache.Stop()
+	h.domainMetricsScopeCache.Stop()
 	h.membershipMonitor.Stop()
 	if err := h.dispatcher.Stop(); err != nil {
 		h.logger.WithTags(tag.Error(err)).Error("failed to stop dispatcher")
@@ -424,6 +442,11 @@ func (h *Impl) GetDomainCache() cache.DomainCache {
 	return h.domainCache
 }
 
+// GetDomainMetricsScopeCache return domainMetricsScope cache
+func (h *Impl) GetDomainMetricsScopeCache() cache.DomainMetricsScopeCache {
+	return h.domainMetricsScopeCache
+}
+
 // GetTimeSource return time source
 func (h *Impl) GetTimeSource() clock.TimeSource {
 	return h.timeSource
@@ -457,6 +480,11 @@ func (h *Impl) GetArchivalMetadata() archiver.ArchivalMetadata {
 // GetArchiverProvider return archival provider
 func (h *Impl) GetArchiverProvider() provider.ArchiverProvider {
 	return h.archiverProvider
+}
+
+// GetDomainReplicationQueue return domain replication queue
+func (h *Impl) GetDomainReplicationQueue() domain.ReplicationQueue {
+	return h.domainReplicationQueue
 }
 
 // membership infos
@@ -559,11 +587,6 @@ func (h *Impl) GetTaskManager() persistence.TaskManager {
 // GetVisibilityManager return visibility manager
 func (h *Impl) GetVisibilityManager() persistence.VisibilityManager {
 	return h.visibilityMgr
-}
-
-// GetDomainReplicationQueue return domain replication queue
-func (h *Impl) GetDomainReplicationQueue() persistence.DomainReplicationQueue {
-	return h.persistenceBean.GetDomainReplicationQueue()
 }
 
 // GetShardManager return shard manager

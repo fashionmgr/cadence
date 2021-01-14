@@ -24,22 +24,14 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/uber/cadence/common/auth"
-
 	"github.com/uber-go/tally/m3"
 	"github.com/uber-go/tally/prometheus"
 	"github.com/uber/ringpop-go/discovery"
 
-	"github.com/uber/cadence/common/elasticsearch"
-	"github.com/uber/cadence/common/messaging"
+	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/auth"
+	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
 	"github.com/uber/cadence/common/service/dynamicconfig"
-)
-
-const (
-	// ReplicationConsumerTypeKafka means consuming replication tasks from kafka.
-	ReplicationConsumerTypeKafka = "kafka"
-	// ReplicationConsumerTypeRPC means pulling source DC for replication tasks.
-	ReplicationConsumerTypeRPC = "rpc"
 )
 
 type (
@@ -58,7 +50,7 @@ type (
 		// Services is a map of service name to service config items
 		Services map[string]Service `yaml:"services"`
 		// Kafka is the config for connecting to kafka
-		Kafka messaging.KafkaConfig `yaml:"kafka"`
+		Kafka KafkaConfig `yaml:"kafka"`
 		// Archival is the config for archival
 		Archival Archival `yaml:"archival"`
 		// PublicClient is config for connecting to cadence frontend
@@ -150,6 +142,8 @@ type (
 		VisibilityConfig *VisibilityConfig `yaml:"-" json:"-"`
 		// TransactionSizeLimit is the largest allowed transaction size
 		TransactionSizeLimit dynamicconfig.IntPropertyFn `yaml:"-" json:"-"`
+		// ErrorInjectionRate is the the rate for injecting random error
+		ErrorInjectionRate dynamicconfig.FloatPropertyFn `yaml:"-" json:"-"`
 	}
 
 	// DataStore is the configuration for a single datastore
@@ -158,13 +152,11 @@ type (
 		Cassandra *Cassandra `yaml:"cassandra"`
 		// SQL contains the config for a SQL based datastore
 		SQL *SQL `yaml:"sql"`
-		// Custom contains the config for custom datastore implementation
-		CustomDataStoreConfig *CustomDatastoreConfig `yaml:"customDatastore"`
 		// ElasticSearch contains the config for a ElasticSearch datastore
-		ElasticSearch *elasticsearch.Config `yaml:"elasticsearch"`
+		ElasticSearch *ElasticSearchConfig `yaml:"elasticsearch"`
 	}
 
-	// VisibilityConfig is config for visibility sampling
+	// VisibilityConfig is config for visibility
 	VisibilityConfig struct {
 		// EnableSampling for visibility
 		EnableSampling dynamicconfig.BoolPropertyFn `yaml:"-" json:"-"`
@@ -194,14 +186,18 @@ type (
 		User string `yaml:"user"`
 		// Password is the cassandra password used for authentication by gocql client
 		Password string `yaml:"password"`
-		// keyspace is the cassandra keyspace
+		// Keyspace is the cassandra keyspace
 		Keyspace string `yaml:"keyspace" validate:"nonzero"`
+		// Region is the region filter arg for cassandra
+		Region string `yaml:"region"`
 		// Datacenter is the data center filter arg for cassandra
 		Datacenter string `yaml:"datacenter"`
 		// MaxConns is the max number of connections to this datastore for a single keyspace
 		MaxConns int `yaml:"maxConns"`
 		// TLS configuration
 		TLS *auth.TLS `yaml:"tls"`
+		// CQLClient specifies a custom CQL client implementation, can not be specified through yaml
+		CQLClient gocql.Client `yaml:"-" json:"-"`
 	}
 
 	// SQL is the configuration for connecting to a SQL backed datastore
@@ -231,6 +227,11 @@ type (
 		NumShards int `yaml:"nShards"`
 		// TLS is the configuration for TLS connections
 		TLS *auth.TLS `yaml:"tls"`
+		// EncodingType is the configuration for the type of encoding used for sql blobs
+		EncodingType string `yaml:"encodingType"`
+		// DecodingTypes is the configuration for all the sql blob decoding types which need to be supported
+		// DecodingTypes should not be removed unless there are no blobs in database with the encoding type
+		DecodingTypes []string `yaml:"decodingTypes"`
 	}
 
 	// CustomDatastoreConfig is the configuration for connecting to a custom datastore that is not supported by cadence core
@@ -257,8 +258,6 @@ type (
 	// ClusterMetadata contains the all cluster which participated in cross DC
 	ClusterMetadata struct {
 		EnableGlobalDomain bool `yaml:"enableGlobalDomain"`
-		// ReplicationConsumerConfig determines how we consume replication tasks.
-		ReplicationConsumer *ReplicationConsumerConfig `yaml:"replicationConsumer"`
 		// FailoverVersionIncrement is the increment of each cluster version when failover happens
 		FailoverVersionIncrement int64 `yaml:"failoverVersionIncrement"`
 		// MasterClusterName is the master cluster name, only the master cluster can register / update domain
@@ -278,12 +277,6 @@ type (
 		RPCName string `yaml:"rpcName"`
 		// Address indicate the remote service address(Host:Port). Host can be DNS name.
 		RPCAddress string `yaml:"rpcAddress"`
-	}
-
-	// ReplicationConsumerConfig contains config for replication consumer
-	ReplicationConsumerConfig struct {
-		// Type determines how we consume replication tasks. It can be either kafka(default) or rpc.
-		Type string `yaml:"type"`
 	}
 
 	// ReplicationTaskProcessorConfig is the config for replication task processor.
@@ -431,12 +424,49 @@ type (
 	BootstrapMode int
 )
 
-// Validate validates this config
-func (c *Config) Validate() error {
+// ValidateAndFillDefaults validates this config and fills default values if needed
+func (c *Config) ValidateAndFillDefaults() error {
+	if err := c.validate(); err != nil {
+		return err
+	}
+	if err := c.fillDefaults(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) validate() error {
 	if err := c.Persistence.Validate(); err != nil {
 		return err
 	}
 	return c.Archival.Validate(&c.DomainDefaults.Archival)
+}
+
+func (c *Config) fillDefaults() error {
+	// filling default encodingType/decodingTypes for SQL persistence
+	for k, store := range c.Persistence.DataStores {
+		if store.SQL != nil {
+			if store.SQL.EncodingType == "" {
+				store.SQL.EncodingType = string(common.EncodingTypeThriftRW)
+			}
+			if len(store.SQL.DecodingTypes) == 0 {
+				store.SQL.DecodingTypes = []string{
+					string(common.EncodingTypeThriftRW),
+				}
+			}
+			c.Persistence.DataStores[k] = store
+		}
+	}
+	// filling RPCName with a default value if empty
+	if c.ClusterMetadata != nil {
+		for k, cluster := range c.ClusterMetadata.ClusterInformation {
+			if cluster.RPCName == "" {
+				cluster.RPCName = "cadence-frontend"
+				c.ClusterMetadata.ClusterInformation[k] = cluster
+			}
+		}
+	}
+	return nil
 }
 
 // String converts the config object into a string

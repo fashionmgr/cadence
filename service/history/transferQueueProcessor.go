@@ -18,44 +18,36 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../LICENSE -package $GOPACKAGE -source $GOFILE -destination transferQueueProcessor_mock.go
-
 package history
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 
-	h "github.com/uber/cadence/.gen/go/history"
 	"github.com/uber/cadence/client/history"
 	"github.com/uber/cadence/client/matching"
-	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
+	"github.com/uber/cadence/common/ndc"
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/xdc"
+	"github.com/uber/cadence/common/reconciliation/invariant"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
+	"github.com/uber/cadence/service/history/queue"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
 )
 
 type (
-	transferQueueProcessor interface {
-		common.Daemon
-		FailoverDomain(domainIDs map[string]struct{})
-		NotifyNewTask(clusterName string, transferTasks []persistence.Task)
-		LockTaskProcessing()
-		UnlockTaskProcessing()
-	}
-
 	transferQueueProcessorImpl struct {
 		isGlobalDomainEnabled bool
 		currentClusterName    string
 		shard                 shard.Context
-		taskAllocator         taskAllocator
+		taskAllocator         queue.TaskAllocator
 		config                *config.Config
 		metricsClient         metrics.Client
 		historyService        *historyEngineImpl
@@ -80,12 +72,15 @@ func newTransferQueueProcessor(
 	matchingClient matching.Client,
 	historyClient history.Client,
 	queueTaskProcessor task.Processor,
+	openExecutionCheck invariant.Invariant,
 	logger log.Logger,
-) *transferQueueProcessorImpl {
+) queue.Processor {
 
 	logger = logger.WithTags(tag.ComponentTransferQueue)
 	currentClusterName := shard.GetService().GetClusterMetadata().GetCurrentClusterName()
-	taskAllocator := newTaskAllocator(shard)
+	config := shard.GetConfig()
+	taskAllocator := queue.NewTaskAllocator(shard)
+
 	standbyTaskProcessors := make(map[string]*transferQueueStandbyProcessorImpl)
 	for clusterName, info := range shard.GetService().GetClusterMetadata().GetAllClusterInfo() {
 		if !info.Enabled {
@@ -93,27 +88,16 @@ func newTransferQueueProcessor(
 		}
 
 		if clusterName != currentClusterName {
-			historyRereplicator := xdc.NewHistoryRereplicator(
-				currentClusterName,
+			historyResender := ndc.NewHistoryResender(
 				shard.GetDomainCache(),
 				shard.GetService().GetClientBean().GetRemoteAdminClient(clusterName),
-				func(ctx context.Context, request *h.ReplicateRawEventsRequest) error {
-					return historyService.ReplicateRawEvents(ctx, request)
-				},
-				persistence.NewPayloadSerializer(),
-				historyRereplicationTimeout,
-				nil,
-				logger,
-			)
-			nDCHistoryResender := xdc.NewNDCHistoryResender(
-				shard.GetDomainCache(),
-				shard.GetService().GetClientBean().GetRemoteAdminClient(clusterName),
-				func(ctx context.Context, request *h.ReplicateEventsV2Request) error {
+				func(ctx context.Context, request *types.ReplicateEventsV2Request) error {
 					return historyService.ReplicateEventsV2(ctx, request)
 				},
 				shard.GetService().GetPayloadSerializer(),
-				nil,
-				logger,
+				config.StandbyTaskReReplicationContextTimeout,
+				openExecutionCheck,
+				shard.GetLogger().WithTags(tag.ComponentHistoryReplicator),
 			)
 			standbyTaskProcessors[clusterName] = newTransferQueueStandbyProcessor(
 				clusterName,
@@ -122,8 +106,7 @@ func newTransferQueueProcessor(
 				visibilityMgr,
 				matchingClient,
 				taskAllocator,
-				historyRereplicator,
-				nDCHistoryResender,
+				historyResender,
 				queueTaskProcessor,
 				logger,
 			)
@@ -135,7 +118,7 @@ func newTransferQueueProcessor(
 		currentClusterName:    currentClusterName,
 		shard:                 shard,
 		taskAllocator:         taskAllocator,
-		config:                shard.GetConfig(),
+		config:                config,
 		metricsClient:         historyService.metricsClient,
 		historyService:        historyService,
 		visibilityMgr:         visibilityMgr,
@@ -190,6 +173,7 @@ func (t *transferQueueProcessorImpl) Stop() {
 // This should be called each time new transfer task arrives, otherwise tasks maybe delayed.
 func (t *transferQueueProcessorImpl) NotifyNewTask(
 	clusterName string,
+	_ *persistence.WorkflowExecutionInfo,
 	transferTasks []persistence.Task,
 ) {
 
@@ -262,12 +246,19 @@ func (t *transferQueueProcessorImpl) FailoverDomain(
 	failoverTaskProcessor.Start()
 }
 
+func (t *transferQueueProcessorImpl) HandleAction(
+	clusterName string,
+	action *queue.Action,
+) (*queue.ActionResult, error) {
+	return nil, errors.New("action not supported in old queue processing logic")
+}
+
 func (t *transferQueueProcessorImpl) LockTaskProcessing() {
-	t.taskAllocator.lock()
+	t.taskAllocator.Lock()
 }
 
 func (t *transferQueueProcessorImpl) UnlockTaskProcessing() {
-	t.taskAllocator.unlock()
+	t.taskAllocator.Unlock()
 }
 
 func (t *transferQueueProcessorImpl) completeTransferLoop() {
@@ -332,7 +323,7 @@ func (t *transferQueueProcessorImpl) completeTransfer() error {
 	t.metricsClient.IncCounter(metrics.TransferQueueProcessorScope, metrics.TaskBatchCompleteCounter)
 
 	if lowerAckLevel < upperAckLevel {
-		err := t.shard.GetExecutionManager().RangeCompleteTransferTask(&persistence.RangeCompleteTransferTaskRequest{
+		err := t.shard.GetExecutionManager().RangeCompleteTransferTask(context.Background(), &persistence.RangeCompleteTransferTaskRequest{
 			ExclusiveBeginTaskID: lowerAckLevel,
 			InclusiveEndTaskID:   upperAckLevel,
 		})

@@ -18,19 +18,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination cache_mock.go
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination cache_mock.go
 
 package events
 
 import (
+	"context"
 	"time"
 
-	"github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 )
 
@@ -38,25 +40,21 @@ type (
 	// Cache caches workflow history event
 	Cache interface {
 		GetEvent(
+			ctx context.Context,
+			shardID int,
 			domainID string,
 			workflowID string,
 			runID string,
 			firstEventID int64,
 			eventID int64,
 			branchToken []byte,
-		) (*shared.HistoryEvent, error)
+		) (*types.HistoryEvent, error)
 		PutEvent(
 			domainID string,
 			workflowID string,
 			runID string,
 			eventID int64,
-			event *shared.HistoryEvent,
-		)
-		DeleteEvent(
-			domainID string,
-			workflowID string,
-			runID string,
-			eventID int64,
+			event *types.HistoryEvent,
 		)
 	}
 
@@ -78,10 +76,33 @@ type (
 )
 
 var (
-	errEventNotFoundInBatch = &shared.InternalServiceError{Message: "History event not found within expected batch"}
+	errEventNotFoundInBatch = &types.InternalServiceError{Message: "History event not found within expected batch"}
 )
 
 var _ Cache = (*cacheImpl)(nil)
+
+// NewGlobalCache creates a new global events cache
+func NewGlobalCache(
+	initialCount int,
+	maxCount int,
+	ttl time.Duration,
+	historyManager persistence.HistoryManager,
+	logger log.Logger,
+	metricsClient metrics.Client,
+	maxSize uint64,
+) Cache {
+	return newCacheWithOption(
+		nil,
+		initialCount,
+		maxCount,
+		ttl,
+		historyManager,
+		false,
+		logger,
+		metricsClient,
+		maxSize,
+	)
+}
 
 // NewCache creates a new events cache
 func NewCache(
@@ -92,33 +113,43 @@ func NewCache(
 	metricsClient metrics.Client,
 ) Cache {
 	return newCacheWithOption(
-		config.EventsCacheInitialSize(),
-		config.EventsCacheMaxSize(),
+		&shardID,
+		config.EventsCacheInitialCount(),
+		config.EventsCacheMaxCount(),
 		config.EventsCacheTTL(),
 		historyManager,
 		false,
 		logger,
 		metricsClient,
-		&shardID,
+		0,
 	)
 }
 
 func newCacheWithOption(
-	initialSize int,
-	maxSize int,
+	shardID *int,
+	initialCount int,
+	maxCount int,
 	ttl time.Duration,
 	historyManager persistence.HistoryManager,
 	disabled bool,
 	logger log.Logger,
 	metrics metrics.Client,
-	shardID *int,
+	maxSize uint64,
 ) *cacheImpl {
 	opts := &cache.Options{}
-	opts.InitialCapacity = initialSize
+	opts.InitialCapacity = initialCount
 	opts.TTL = ttl
+	opts.MaxCount = maxCount
+
+	if maxSize > 0 {
+		opts.MaxSize = maxSize
+		opts.GetCacheItemSizeFunc = func(event interface{}) uint64 {
+			return common.GetSizeOfHistoryEvent(event.(*types.HistoryEvent))
+		}
+	}
 
 	return &cacheImpl{
-		Cache:          cache.New(maxSize, opts),
+		Cache:          cache.New(opts),
 		historyManager: historyManager,
 		disabled:       disabled,
 		logger:         logger.WithTags(tag.ComponentEventsCache),
@@ -127,7 +158,12 @@ func newCacheWithOption(
 	}
 }
 
-func newEventKey(domainID, workflowID, runID string, eventID int64) eventKey {
+func newEventKey(
+	domainID,
+	workflowID,
+	runID string,
+	eventID int64,
+) eventKey {
 	return eventKey{
 		domainID:   domainID,
 		workflowID: workflowID,
@@ -137,10 +173,14 @@ func newEventKey(domainID, workflowID, runID string, eventID int64) eventKey {
 }
 
 func (e *cacheImpl) GetEvent(
-	domainID, workflowID, runID string,
-	firstEventID, eventID int64,
+	ctx context.Context,
+	shardID int,
+	domainID string,
+	workflowID string,
+	runID string, firstEventID int64,
+	eventID int64,
 	branchToken []byte,
-) (*shared.HistoryEvent, error) {
+) (*types.HistoryEvent, error) {
 	e.metricsClient.IncCounter(metrics.EventsCacheGetEventScope, metrics.CacheRequests)
 	sw := e.metricsClient.StartTimer(metrics.EventsCacheGetEventScope, metrics.CacheLatency)
 	defer sw.Stop()
@@ -148,14 +188,15 @@ func (e *cacheImpl) GetEvent(
 	key := newEventKey(domainID, workflowID, runID, eventID)
 	// Test hook for disabling cache
 	if !e.disabled {
-		event, cacheHit := e.Cache.Get(key).(*shared.HistoryEvent)
+		event, cacheHit := e.Cache.Get(key).(*types.HistoryEvent)
 		if cacheHit {
 			return event, nil
 		}
 	}
 
 	e.metricsClient.IncCounter(metrics.EventsCacheGetEventScope, metrics.CacheMissCounter)
-	event, err := e.getHistoryEventFromStore(firstEventID, eventID, branchToken)
+
+	event, err := e.getHistoryEventFromStore(ctx, firstEventID, eventID, branchToken, shardID)
 	if err != nil {
 		e.metricsClient.IncCounter(metrics.EventsCacheGetEventScope, metrics.CacheFailures)
 		e.logger.Error("EventsCache unable to retrieve event from store",
@@ -171,7 +212,12 @@ func (e *cacheImpl) GetEvent(
 	return event, nil
 }
 
-func (e *cacheImpl) PutEvent(domainID, workflowID, runID string, eventID int64, event *shared.HistoryEvent) {
+func (e *cacheImpl) PutEvent(
+	domainID, workflowID,
+	runID string,
+	eventID int64,
+	event *types.HistoryEvent,
+) {
 	e.metricsClient.IncCounter(metrics.EventsCachePutEventScope, metrics.CacheRequests)
 	sw := e.metricsClient.StartTimer(metrics.EventsCachePutEventScope, metrics.CacheLatency)
 	defer sw.Stop()
@@ -180,29 +226,26 @@ func (e *cacheImpl) PutEvent(domainID, workflowID, runID string, eventID int64, 
 	e.Put(key, event)
 }
 
-func (e *cacheImpl) DeleteEvent(domainID, workflowID, runID string, eventID int64) {
-	e.metricsClient.IncCounter(metrics.EventsCacheDeleteEventScope, metrics.CacheRequests)
-	sw := e.metricsClient.StartTimer(metrics.EventsCacheDeleteEventScope, metrics.CacheLatency)
-	defer sw.Stop()
-
-	key := newEventKey(domainID, workflowID, runID, eventID)
-	e.Delete(key)
-}
-
-func (e *cacheImpl) getHistoryEventFromStore(firstEventID, eventID int64, branchToken []byte) (*shared.HistoryEvent, error) {
+func (e *cacheImpl) getHistoryEventFromStore(
+	ctx context.Context,
+	firstEventID,
+	eventID int64,
+	branchToken []byte,
+	shardID int,
+) (*types.HistoryEvent, error) {
 	e.metricsClient.IncCounter(metrics.EventsCacheGetFromStoreScope, metrics.CacheRequests)
 	sw := e.metricsClient.StartTimer(metrics.EventsCacheGetFromStoreScope, metrics.CacheLatency)
 	defer sw.Stop()
 
-	var historyEvents []*shared.HistoryEvent
+	var historyEvents []*types.HistoryEvent
 
-	response, err := e.historyManager.ReadHistoryBranch(&persistence.ReadHistoryBranchRequest{
+	response, err := e.historyManager.ReadHistoryBranch(ctx, &persistence.ReadHistoryBranchRequest{
 		BranchToken:   branchToken,
 		MinEventID:    firstEventID,
 		MaxEventID:    eventID + 1,
 		PageSize:      1,
 		NextPageToken: nil,
-		ShardID:       e.shardID,
+		ShardID:       common.IntPtr(shardID),
 	})
 
 	if err != nil {
@@ -214,7 +257,7 @@ func (e *cacheImpl) getHistoryEventFromStore(firstEventID, eventID int64, branch
 
 	// find history event from batch and return back single event to caller
 	for _, e := range historyEvents {
-		if e.GetEventId() == eventID {
+		if e.GetEventID() == eventID {
 			return e, nil
 		}
 	}

@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination interface_mock.go -self_package github.com/uber/cadence/service/history/queue
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interface_mock.go -self_package github.com/uber/cadence/service/history/queue
 
 package queue
 
@@ -55,8 +55,8 @@ type (
 		State() ProcessingQueueState
 		Split(ProcessingQueueSplitPolicy) []ProcessingQueue
 		Merge(ProcessingQueue) []ProcessingQueue
-		AddTasks(map[task.Key]task.Task, bool)
-		UpdateAckLevel()
+		AddTasks(map[task.Key]task.Task, task.Key)
+		UpdateAckLevel() (task.Key, int) // return new ack level and number of pending tasks
 		// TODO: add Offload() method
 	}
 
@@ -72,19 +72,20 @@ type (
 		Level() int
 		Queues() []ProcessingQueue
 		ActiveQueue() ProcessingQueue
-		AddTasks(map[task.Key]task.Task, bool)
-		UpdateAckLevels()
+		AddTasks(map[task.Key]task.Task, task.Key)
+		UpdateAckLevels() (task.Key, int) // return min of all new ack levels and number of total pending tasks
 		Split(ProcessingQueueSplitPolicy) []ProcessingQueue
 		Merge([]ProcessingQueue)
 		// TODO: add Offload() method
 	}
 
-	// ProcessingQueueManager manages a set of ProcessingQueueCollection and
-	// controls the event loop for loading tasks, updating and persisting
-	// ProcessingQueueStates, spliting/merging ProcessingQueue, etc.
-	ProcessingQueueManager interface {
+	// Processor is the interface for task queue processor
+	Processor interface {
 		common.Daemon
-
-		NotifyNewTasks([]persistence.Task)
+		FailoverDomain(domainIDs map[string]struct{})
+		NotifyNewTask(clusterName string, executionInfo *persistence.WorkflowExecutionInfo, tasks []persistence.Task)
+		HandleAction(clusterName string, action *Action) (*ActionResult, error) // TODO: enforce context timeout for Actions
+		LockTaskProcessing()
+		UnlockTaskProcessing()
 	}
 )

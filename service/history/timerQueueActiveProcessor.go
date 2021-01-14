@@ -26,11 +26,11 @@ import (
 	"github.com/pborman/uuid"
 
 	"github.com/uber/cadence/client/matching"
-	"github.com/uber/cadence/common/collection"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/service/history/queue"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
 )
@@ -39,7 +39,6 @@ type (
 	timerQueueActiveProcessorImpl struct {
 		shard                   shard.Context
 		timerTaskFilter         task.Filter
-		now                     timeNow
 		logger                  log.Logger
 		metricsClient           metrics.Client
 		currentClusterName      string
@@ -52,7 +51,7 @@ func newTimerQueueActiveProcessor(
 	shard shard.Context,
 	historyService *historyEngineImpl,
 	matchingClient matching.Client,
-	taskAllocator taskAllocator,
+	taskAllocator queue.TaskAllocator,
 	queueTaskProcessor task.Processor,
 	logger log.Logger,
 ) *timerQueueActiveProcessorImpl {
@@ -70,7 +69,7 @@ func newTimerQueueActiveProcessor(
 		if !ok {
 			return false, errUnexpectedQueueTask
 		}
-		return taskAllocator.verifyActiveTask(timer.DomainID, timer)
+		return taskAllocator.VerifyActiveTask(timer.DomainID, timer)
 	}
 
 	timerQueueAckMgr := newTimerQueueAckMgr(
@@ -84,43 +83,22 @@ func newTimerQueueActiveProcessor(
 		currentClusterName,
 	)
 
-	timerGate := NewLocalTimerGate(shard.GetTimeSource())
-
-	redispatchQueue := collection.NewConcurrentQueue()
-
 	processor := &timerQueueActiveProcessorImpl{
 		shard:              shard,
 		timerTaskFilter:    timerTaskFilter,
-		now:                timeNow,
 		logger:             logger,
 		metricsClient:      historyService.metricsClient,
 		currentClusterName: currentClusterName,
-	}
-	processor.taskExecutor = task.NewTimerActiveTaskExecutor(
-		shard,
-		historyService.archivalClient,
-		historyService.executionCache,
-		processor,
-		logger,
-		historyService.metricsClient,
-		shard.GetConfig(),
-	)
-	timerQueueTaskInitializer := func(taskInfo task.Info) task.Task {
-		return task.NewTimerTask(
+		taskExecutor: task.NewTimerActiveTaskExecutor(
 			shard,
-			taskInfo,
-			historyService.metricsClient.Scope(
-				getTimerTaskMetricScope(taskInfo.GetTaskType(), true),
-			),
-			initializeLoggerForTask(shard.GetShardID(), taskInfo, logger),
-			timerTaskFilter,
-			processor.taskExecutor,
-			redispatchQueue,
-			shard.GetTimeSource(),
-			shard.GetConfig().TimerTaskMaxRetryCount,
-			timerQueueAckMgr,
-		)
+			historyService.archivalClient,
+			historyService.executionCache,
+			logger,
+			historyService.metricsClient,
+			shard.GetConfig(),
+		),
 	}
+
 	processor.timerQueueProcessorBase = newTimerQueueProcessorBase(
 		metrics.TimerActiveQueueProcessorScope,
 		shard,
@@ -128,9 +106,9 @@ func newTimerQueueActiveProcessor(
 		processor,
 		queueTaskProcessor,
 		timerQueueAckMgr,
-		redispatchQueue,
-		timerQueueTaskInitializer,
-		timerGate,
+		timerTaskFilter,
+		processor.taskExecutor,
+		queue.NewLocalTimerGate(shard.GetTimeSource()),
 		shard.GetConfig().TimerProcessorMaxPollRPS,
 		logger,
 		shard.GetMetricsClient().Scope(metrics.TimerActiveQueueProcessorScope),
@@ -147,7 +125,7 @@ func newTimerQueueFailoverProcessor(
 	minLevel time.Time,
 	maxLevel time.Time,
 	matchingClient matching.Client,
-	taskAllocator taskAllocator,
+	taskAllocator queue.TaskAllocator,
 	queueTaskProcessor task.Processor,
 	logger log.Logger,
 ) (func(ackLevel timerKey) error, *timerQueueActiveProcessorImpl) {
@@ -186,7 +164,7 @@ func newTimerQueueFailoverProcessor(
 		if !ok {
 			return false, errUnexpectedQueueTask
 		}
-		return taskAllocator.verifyFailoverActiveTask(domainIDs, timer.DomainID, timer)
+		return taskAllocator.VerifyFailoverActiveTask(domainIDs, timer.DomainID, timer)
 	}
 
 	timerQueueAckMgr := newTimerQueueFailoverAckMgr(
@@ -200,43 +178,22 @@ func newTimerQueueFailoverProcessor(
 		logger,
 	)
 
-	timerGate := NewLocalTimerGate(shard.GetTimeSource())
-
-	redispatchQueue := collection.NewConcurrentQueue()
-
 	processor := &timerQueueActiveProcessorImpl{
 		shard:              shard,
 		timerTaskFilter:    timerTaskFilter,
-		now:                timeNow,
 		logger:             logger,
 		metricsClient:      historyService.metricsClient,
 		currentClusterName: currentClusterName,
-	}
-	processor.taskExecutor = task.NewTimerActiveTaskExecutor(
-		shard,
-		historyService.archivalClient,
-		historyService.executionCache,
-		processor,
-		logger,
-		historyService.metricsClient,
-		shard.GetConfig(),
-	)
-	timerQueueTaskInitializer := func(taskInfo task.Info) task.Task {
-		return task.NewTimerTask(
+		taskExecutor: task.NewTimerActiveTaskExecutor(
 			shard,
-			taskInfo,
-			historyService.metricsClient.Scope(
-				getTimerTaskMetricScope(taskInfo.GetTaskType(), true),
-			),
-			initializeLoggerForTask(shard.GetShardID(), taskInfo, logger),
-			timerTaskFilter,
-			processor.taskExecutor,
-			redispatchQueue,
-			shard.GetTimeSource(),
-			shard.GetConfig().TimerTaskMaxRetryCount,
-			timerQueueAckMgr,
-		)
+			historyService.archivalClient,
+			historyService.executionCache,
+			logger,
+			historyService.metricsClient,
+			shard.GetConfig(),
+		),
 	}
+
 	processor.timerQueueProcessorBase = newTimerQueueProcessorBase(
 		metrics.TimerActiveQueueProcessorScope,
 		shard,
@@ -244,9 +201,9 @@ func newTimerQueueFailoverProcessor(
 		processor,
 		queueTaskProcessor,
 		timerQueueAckMgr,
-		redispatchQueue,
-		timerQueueTaskInitializer,
-		timerGate,
+		timerTaskFilter,
+		processor.taskExecutor,
+		queue.NewLocalTimerGate(shard.GetTimeSource()),
 		shard.GetConfig().TimerProcessorFailoverMaxPollRPS,
 		logger,
 		shard.GetMetricsClient().Scope(metrics.TimerActiveQueueProcessorScope),
@@ -297,6 +254,6 @@ func (t *timerQueueActiveProcessorImpl) process(
 	taskInfo *taskInfo,
 ) (int, error) {
 	// TODO: task metricScope should be determined when creating taskInfo
-	metricScope := getTimerTaskMetricScope(taskInfo.task.GetTaskType(), true)
+	metricScope := task.GetTimerTaskMetricScope(taskInfo.task.GetTaskType(), true)
 	return metricScope, t.taskExecutor.Execute(taskInfo.task, taskInfo.shouldProcessTask)
 }

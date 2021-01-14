@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination task_processor_mock.go -self_package github.com/uber/cadence/service/history/replication
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination task_processor_mock.go -self_package github.com/uber/cadence/service/history/replication
 
 package replication
 
@@ -32,30 +32,31 @@ import (
 
 	"go.uber.org/yarpc/yarpcerrors"
 
-	h "github.com/uber/cadence/.gen/go/history"
-	r "github.com/uber/cadence/.gen/go/replicator"
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/quotas"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/engine"
+	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
 )
 
 const (
-	dropSyncShardTaskTimeThreshold   = 10 * time.Minute
-	replicationTimeout               = 30 * time.Second
-	taskErrorRetryBackoffCoefficient = 1.2
-	dlqErrorRetryWait                = time.Second
+	dropSyncShardTaskTimeThreshold = 10 * time.Minute
+	replicationTimeout             = 30 * time.Second
+	dlqErrorRetryWait              = time.Second
+	dlqMetricsEmitTimerInterval    = 5 * time.Minute
+	dlqMetricsEmitTimerCoefficient = 0.05
 )
 
 var (
 	// ErrUnknownReplicationTask is the error to indicate unknown replication task type
-	ErrUnknownReplicationTask = &shared.BadRequestError{Message: "unknown replication task"}
+	ErrUnknownReplicationTask = &types.BadRequestError{Message: "unknown replication task"}
 )
 
 type (
@@ -76,6 +77,8 @@ type (
 		metricsClient     metrics.Client
 		logger            log.Logger
 		taskExecutor      TaskExecutor
+		hostRateLimiter   *quotas.DynamicRateLimiter
+		shardRateLimiter  *quotas.DynamicRateLimiter
 
 		taskRetryPolicy backoff.RetryPolicy
 		dlqRetryPolicy  backoff.RetryPolicy
@@ -85,13 +88,13 @@ type (
 		lastRetrievedMessageID int64
 
 		requestChan   chan<- *request
-		syncShardChan chan *r.SyncShardStatus
+		syncShardChan chan *types.SyncShardStatus
 		done          chan struct{}
 	}
 
 	request struct {
-		token    *r.ReplicationToken
-		respChan chan<- *r.ReplicationMessages
+		token    *types.ReplicationToken
+		respChan chan<- *types.ReplicationMessages
 	}
 )
 
@@ -107,9 +110,12 @@ func NewTaskProcessor(
 	taskExecutor TaskExecutor,
 ) TaskProcessor {
 	shardID := shard.GetShardID()
-	taskRetryPolicy := backoff.NewExponentialRetryPolicy(config.ReplicationTaskProcessorErrorRetryWait(shardID))
-	taskRetryPolicy.SetBackoffCoefficient(taskErrorRetryBackoffCoefficient)
-	taskRetryPolicy.SetMaximumAttempts(config.ReplicationTaskProcessorErrorRetryMaxAttempts(shardID))
+	firstRetryPolicy := backoff.NewExponentialRetryPolicy(config.ReplicationTaskProcessorErrorRetryWait(shardID))
+	firstRetryPolicy.SetMaximumAttempts(config.ReplicationTaskProcessorErrorRetryMaxAttempts(shardID))
+	secondRetryPolicy := backoff.NewExponentialRetryPolicy(config.ReplicationTaskProcessorErrorSecondRetryWait(shardID))
+	secondRetryPolicy.SetMaximumInterval(config.ReplicationTaskProcessorErrorSecondRetryMaxWait(shardID))
+	secondRetryPolicy.SetExpirationInterval(config.ReplicationTaskProcessorErrorSecondRetryExpiration(shardID))
+	taskRetryPolicy := backoff.NewMultiPhasesRetryPolicy(firstRetryPolicy, secondRetryPolicy)
 
 	dlqRetryPolicy := backoff.NewExponentialRetryPolicy(dlqErrorRetryWait)
 	dlqRetryPolicy.SetExpirationInterval(backoff.NoInterval)
@@ -119,20 +125,25 @@ func NewTaskProcessor(
 	noTaskBackoffPolicy.SetExpirationInterval(backoff.NoInterval)
 	noTaskRetrier := backoff.NewRetrier(noTaskBackoffPolicy, backoff.SystemClock)
 	return &taskProcessorImpl{
-		currentCluster:         shard.GetClusterMetadata().GetCurrentClusterName(),
-		sourceCluster:          taskFetcher.GetSourceCluster(),
-		status:                 common.DaemonStatusInitialized,
-		shard:                  shard,
-		historyEngine:          historyEngine,
-		historySerializer:      persistence.NewPayloadSerializer(),
-		config:                 config,
-		metricsClient:          metricsClient,
-		logger:                 shard.GetLogger(),
-		taskExecutor:           taskExecutor,
+		currentCluster:    shard.GetClusterMetadata().GetCurrentClusterName(),
+		sourceCluster:     taskFetcher.GetSourceCluster(),
+		status:            common.DaemonStatusInitialized,
+		shard:             shard,
+		historyEngine:     historyEngine,
+		historySerializer: persistence.NewPayloadSerializer(),
+		config:            config,
+		metricsClient:     metricsClient,
+		logger:            shard.GetLogger(),
+		taskExecutor:      taskExecutor,
+		hostRateLimiter:   taskFetcher.GetRateLimiter(),
+		shardRateLimiter: quotas.NewDynamicRateLimiter(func() float64 {
+			return config.ReplicationTaskProcessorShardQPS()
+		}),
 		taskRetryPolicy:        taskRetryPolicy,
+		dlqRetryPolicy:         dlqRetryPolicy,
 		noTaskRetrier:          noTaskRetrier,
 		requestChan:            taskFetcher.GetRequestChan(),
-		syncShardChan:          make(chan *r.SyncShardStatus),
+		syncShardChan:          make(chan *types.SyncShardStatus, 1),
 		done:                   make(chan struct{}),
 		lastProcessedMessageID: common.EmptyMessageID,
 		lastRetrievedMessageID: common.EmptyMessageID,
@@ -148,6 +159,7 @@ func (p *taskProcessorImpl) Start() {
 	go p.processorLoop()
 	go p.syncShardStatusLoop()
 	go p.cleanupReplicationTaskLoop()
+	go p.emitDLQSizeMetricsLoop()
 	p.logger.Info("ReplicationTaskProcessor started.")
 }
 
@@ -157,15 +169,13 @@ func (p *taskProcessorImpl) Stop() {
 		return
 	}
 
-	p.logger.Info("ReplicationTaskProcessor shutting down.")
+	p.logger.Debug("ReplicationTaskProcessor shutting down.")
 	close(p.done)
 }
 
 func (p *taskProcessorImpl) processorLoop() {
-	p.lastProcessedMessageID = p.shard.GetClusterReplicationLevel(p.sourceCluster)
-
 	defer func() {
-		p.logger.Info("Closing replication task processor.", tag.ReadLevel(p.lastRetrievedMessageID))
+		p.logger.Debug("Closing replication task processor.", tag.ReadLevel(p.lastRetrievedMessageID))
 	}()
 
 Loop:
@@ -173,7 +183,7 @@ Loop:
 		// for each iteration, do close check first
 		select {
 		case <-p.done:
-			p.logger.Info("ReplicationTaskProcessor shutting down.")
+			p.logger.Debug("ReplicationTaskProcessor shutting down.")
 			return
 		default:
 		}
@@ -188,11 +198,12 @@ Loop:
 			}
 
 			p.logger.Debug("Got fetch replication messages response.",
-				tag.ReadLevel(response.GetLastRetrievedMessageId()),
+				tag.ReadLevel(response.GetLastRetrievedMessageID()),
 				tag.Bool(response.GetHasMore()),
 				tag.Counter(len(response.GetReplicationTasks())),
 			)
 
+			p.taskProcessingStartWait()
 			p.processResponse(response)
 		case <-p.done:
 			return
@@ -213,12 +224,9 @@ func (p *taskProcessorImpl) cleanupReplicationTaskLoop() {
 			timer.Stop()
 			return
 		case <-timer.C:
-			if p.config.EnableCleanupReplicationTask() {
-				err := p.cleanupAckedReplicationTasks()
-				if err != nil {
-					p.logger.Error("Failed to clean up replication messages.", tag.Error(err))
-					p.metricsClient.Scope(metrics.ReplicationTaskCleanupScope).IncCounter(metrics.ReplicationTaskCleanupFailure)
-				}
+			if err := p.cleanupAckedReplicationTasks(); err != nil {
+				p.logger.Error("Failed to clean up replication messages.", tag.Error(err))
+				p.metricsClient.Scope(metrics.ReplicationTaskCleanupScope).IncCounter(metrics.ReplicationTaskCleanupFailure)
 			}
 			timer.Reset(backoff.JitDuration(
 				p.config.ReplicationTaskProcessorCleanupInterval(shardID),
@@ -245,8 +253,7 @@ func (p *taskProcessorImpl) cleanupAckedReplicationTasks() error {
 			}
 		}
 	}
-
-	p.logger.Info("Cleaning up replication task queue.", tag.ReadLevel(minAckLevel))
+	p.logger.Debug("Cleaning up replication task queue.", tag.ReadLevel(minAckLevel))
 	p.metricsClient.Scope(metrics.ReplicationTaskCleanupScope).IncCounter(metrics.ReplicationTaskCleanupCount)
 	p.metricsClient.Scope(metrics.ReplicationTaskFetcherScope,
 		metrics.TargetClusterTag(p.currentCluster),
@@ -255,49 +262,60 @@ func (p *taskProcessorImpl) cleanupAckedReplicationTasks() error {
 		time.Duration(p.shard.GetTransferMaxReadLevel()-minAckLevel),
 	)
 	return p.shard.GetExecutionManager().RangeCompleteReplicationTask(
+		context.Background(),
 		&persistence.RangeCompleteReplicationTaskRequest{
 			InclusiveEndTaskID: minAckLevel,
 		},
 	)
 }
 
-func (p *taskProcessorImpl) sendFetchMessageRequest() <-chan *r.ReplicationMessages {
-	respChan := make(chan *r.ReplicationMessages, 1)
-	// TODO: when we support prefetching, LastRetrievedMessageId can be different than LastProcessedMessageId
+func (p *taskProcessorImpl) sendFetchMessageRequest() <-chan *types.ReplicationMessages {
+	respChan := make(chan *types.ReplicationMessages, 1)
+	// TODO: when we support prefetching, LastRetrievedMessageID can be different than LastProcessedMessageID
 	p.requestChan <- &request{
-		token: &r.ReplicationToken{
+		token: &types.ReplicationToken{
 			ShardID:                common.Int32Ptr(int32(p.shard.GetShardID())),
-			LastRetrievedMessageId: common.Int64Ptr(p.lastRetrievedMessageID),
-			LastProcessedMessageId: common.Int64Ptr(p.lastProcessedMessageID),
+			LastRetrievedMessageID: common.Int64Ptr(p.lastRetrievedMessageID),
+			LastProcessedMessageID: common.Int64Ptr(p.lastProcessedMessageID),
 		},
 		respChan: respChan,
 	}
 	return respChan
 }
 
-func (p *taskProcessorImpl) processResponse(response *r.ReplicationMessages) {
+func (p *taskProcessorImpl) processResponse(response *types.ReplicationMessages) {
 
-	p.syncShardChan <- response.GetSyncShardStatus()
+	select {
+	case p.syncShardChan <- response.GetSyncShardStatus():
+	default:
+	}
+
+	scope := p.metricsClient.Scope(metrics.ReplicationTaskFetcherScope, metrics.TargetClusterTag(p.sourceCluster))
+	batchRequestStartTime := time.Now()
+	ctx := context.Background()
+	for _, replicationTask := range response.ReplicationTasks {
+		// TODO: move to MultiStageRateLimiter
+		_ = p.hostRateLimiter.Wait(ctx)
+		_ = p.shardRateLimiter.Wait(ctx)
+		err := p.processSingleTask(replicationTask)
+		if err != nil {
+			// Encounter error and skip updating ack levels
+			return
+		}
+	}
+
 	// Note here we check replication tasks instead of hasMore. The expectation is that in a steady state
 	// we will receive replication tasks but hasMore is false (meaning that we are always catching up).
 	// So hasMore might not be a good indicator for additional wait.
 	if len(response.ReplicationTasks) == 0 {
 		backoffDuration := p.noTaskRetrier.NextBackOff()
 		time.Sleep(backoffDuration)
-		return
+	} else {
+		scope.RecordTimer(metrics.ReplicationTasksAppliedLatency, time.Now().Sub(batchRequestStartTime))
 	}
 
-	for _, replicationTask := range response.ReplicationTasks {
-		err := p.processSingleTask(replicationTask)
-		if err != nil {
-			// Processor is shutdown. Exit without updating the checkpoint.
-			return
-		}
-	}
-
-	p.lastProcessedMessageID = response.GetLastRetrievedMessageId()
-	p.lastRetrievedMessageID = response.GetLastRetrievedMessageId()
-	scope := p.metricsClient.Scope(metrics.ReplicationTaskFetcherScope, metrics.TargetClusterTag(p.sourceCluster))
+	p.lastProcessedMessageID = response.GetLastRetrievedMessageID()
+	p.lastRetrievedMessageID = response.GetLastRetrievedMessageID()
 	scope.UpdateGauge(metrics.LastRetrievedMessageID, float64(p.lastRetrievedMessageID))
 	p.noTaskRetrier.Reset()
 }
@@ -308,7 +326,7 @@ func (p *taskProcessorImpl) syncShardStatusLoop() {
 		p.config.ShardSyncMinInterval(),
 		p.config.ShardSyncTimerJitterCoefficient(),
 	))
-	var syncShardTask *r.SyncShardStatus
+	var syncShardTask *types.SyncShardStatus
 	for {
 		select {
 		case syncShardRequest := <-p.syncShardChan:
@@ -332,7 +350,7 @@ func (p *taskProcessorImpl) syncShardStatusLoop() {
 }
 
 func (p *taskProcessorImpl) handleSyncShardStatus(
-	status *r.SyncShardStatus,
+	status *types.SyncShardStatus,
 ) error {
 
 	if status == nil ||
@@ -343,51 +361,92 @@ func (p *taskProcessorImpl) handleSyncShardStatus(
 	p.metricsClient.Scope(metrics.HistorySyncShardStatusScope).IncCounter(metrics.SyncShardFromRemoteCounter)
 	ctx, cancel := context.WithTimeout(context.Background(), replicationTimeout)
 	defer cancel()
-	return p.historyEngine.SyncShardStatus(ctx, &h.SyncShardStatusRequest{
+	return p.historyEngine.SyncShardStatus(ctx, &types.SyncShardStatusRequest{
 		SourceCluster: common.StringPtr(p.sourceCluster),
-		ShardId:       common.Int64Ptr(int64(p.shard.GetShardID())),
+		ShardID:       common.Int64Ptr(int64(p.shard.GetShardID())),
 		Timestamp:     status.Timestamp,
 	})
 }
 
-func (p *taskProcessorImpl) processSingleTask(replicationTask *r.ReplicationTask) error {
-	err := backoff.Retry(func() error {
-		return p.processTaskOnce(replicationTask)
-	}, p.taskRetryPolicy, isTransientRetryableError)
-
-	if err != nil {
-		p.logger.Error(
-			"Failed to apply replication task after retry. Putting task into DLQ.",
-			tag.TaskID(replicationTask.GetSourceTaskId()),
-			tag.Error(err),
-		)
-
-		return p.putReplicationTaskToDLQ(replicationTask)
+func (p *taskProcessorImpl) processSingleTask(replicationTask *types.ReplicationTask) error {
+	retryTransientError := func() error {
+		return backoff.Retry(
+			func() error {
+				select {
+				case <-p.done:
+					// if the processor is stopping, skip the task
+					// the ack level will not update and the new shard owner will retry the task.
+					return nil
+				default:
+					return p.processTaskOnce(replicationTask)
+				}
+			},
+			p.taskRetryPolicy,
+			isTransientRetryableError)
 	}
 
-	return nil
+	//Handle service busy error
+	err := backoff.Retry(
+		retryTransientError,
+		common.CreateReplicationServiceBusyRetryPolicy(),
+		common.IsServiceBusyError,
+	)
+
+	switch {
+	case err == nil:
+		return nil
+	case common.IsServiceBusyError(err):
+		return err
+	case err == execution.ErrMissingVersionHistories:
+		// skip the workflow without version histories
+		p.logger.Warn("Encounter workflow withour version histories")
+		return nil
+	default:
+		//handle error
+	}
+
+	// handle error to DLQ
+	select {
+	case <-p.done:
+		p.logger.Warn("Skip adding new messages to DLQ.", tag.Error(err))
+		return err
+	default:
+		p.logger.Error(
+			"Failed to apply replication task after retry. Putting task into DLQ.",
+			tag.TaskID(replicationTask.GetSourceTaskID()),
+			tag.Error(err),
+		)
+		return p.putReplicationTaskToDLQ(replicationTask)
+	}
 }
 
-func (p *taskProcessorImpl) processTaskOnce(replicationTask *r.ReplicationTask) error {
+func (p *taskProcessorImpl) processTaskOnce(replicationTask *types.ReplicationTask) error {
+	ts := p.shard.GetTimeSource()
+	startTime := ts.Now()
 	scope, err := p.taskExecutor.execute(
-		p.sourceCluster,
 		replicationTask,
 		false)
 
 	if err != nil {
 		p.updateFailureMetric(scope, err)
 	} else {
-		p.logger.Debug("Successfully applied replication task.", tag.TaskID(replicationTask.GetSourceTaskId()))
-		p.metricsClient.Scope(
-			metrics.ReplicationTaskFetcherScope,
-			metrics.TargetClusterTag(p.sourceCluster),
-		).IncCounter(metrics.ReplicationTasksApplied)
+		now := ts.Now()
+		mScope := p.metricsClient.Scope(scope, metrics.TargetClusterTag(p.sourceCluster))
+		// emit the number of replication tasks
+		mScope.IncCounter(metrics.ReplicationTasksApplied)
+		// emit single task processing latency
+		mScope.RecordTimer(metrics.TaskProcessingLatency, now.Sub(startTime))
+		// emit latency from task generated to task received
+		mScope.RecordTimer(
+			metrics.ReplicationTaskLatency,
+			now.Sub(time.Unix(0, replicationTask.GetCreationTime())),
+		)
 	}
 
 	return err
 }
 
-func (p *taskProcessorImpl) putReplicationTaskToDLQ(replicationTask *r.ReplicationTask) error {
+func (p *taskProcessorImpl) putReplicationTaskToDLQ(replicationTask *types.ReplicationTask) error {
 	request, err := p.generateDLQRequest(replicationTask)
 	if err != nil {
 		p.logger.Error("Failed to generate DLQ replication task.", tag.Error(err))
@@ -399,6 +458,7 @@ func (p *taskProcessorImpl) putReplicationTaskToDLQ(replicationTask *r.Replicati
 		tag.WorkflowID(request.TaskInfo.GetWorkflowID()),
 		tag.WorkflowRunID(request.TaskInfo.GetRunID()),
 		tag.TaskID(request.TaskInfo.GetTaskID()),
+		tag.ShardID(p.shard.GetShardID()),
 	)
 
 	p.metricsClient.Scope(
@@ -411,7 +471,7 @@ func (p *taskProcessorImpl) putReplicationTaskToDLQ(replicationTask *r.Replicati
 	)
 	// The following is guaranteed to success or retry forever until processor is shutdown.
 	return backoff.Retry(func() error {
-		err := p.shard.GetExecutionManager().PutReplicationTaskToDLQ(request)
+		err := p.shard.GetExecutionManager().PutReplicationTaskToDLQ(context.Background(), request)
 		if err != nil {
 			p.logger.Error("Failed to put replication task to DLQ.", tag.Error(err))
 			p.metricsClient.IncCounter(metrics.ReplicationTaskFetcherScope, metrics.ReplicationDLQFailed)
@@ -421,44 +481,26 @@ func (p *taskProcessorImpl) putReplicationTaskToDLQ(replicationTask *r.Replicati
 }
 
 func (p *taskProcessorImpl) generateDLQRequest(
-	replicationTask *r.ReplicationTask,
+	replicationTask *types.ReplicationTask,
 ) (*persistence.PutReplicationTaskToDLQRequest, error) {
 	switch *replicationTask.TaskType {
-	case r.ReplicationTaskTypeSyncActivity:
+	case types.ReplicationTaskTypeSyncActivity:
 		taskAttributes := replicationTask.GetSyncActivityTaskAttributes()
 		return &persistence.PutReplicationTaskToDLQRequest{
 			SourceClusterName: p.sourceCluster,
 			TaskInfo: &persistence.ReplicationTaskInfo{
-				DomainID:    taskAttributes.GetDomainId(),
-				WorkflowID:  taskAttributes.GetWorkflowId(),
-				RunID:       taskAttributes.GetRunId(),
-				TaskID:      replicationTask.GetSourceTaskId(),
+				DomainID:    taskAttributes.GetDomainID(),
+				WorkflowID:  taskAttributes.GetWorkflowID(),
+				RunID:       taskAttributes.GetRunID(),
+				TaskID:      replicationTask.GetSourceTaskID(),
 				TaskType:    persistence.ReplicationTaskTypeSyncActivity,
-				ScheduledID: taskAttributes.GetScheduledId(),
+				ScheduledID: taskAttributes.GetScheduledID(),
 			},
 		}, nil
 
-	case r.ReplicationTaskTypeHistory:
-		taskAttributes := replicationTask.GetHistoryTaskAttributes()
-		return &persistence.PutReplicationTaskToDLQRequest{
-			SourceClusterName: p.sourceCluster,
-			TaskInfo: &persistence.ReplicationTaskInfo{
-				DomainID:            taskAttributes.GetDomainId(),
-				WorkflowID:          taskAttributes.GetWorkflowId(),
-				RunID:               taskAttributes.GetRunId(),
-				TaskID:              replicationTask.GetSourceTaskId(),
-				TaskType:            persistence.ReplicationTaskTypeHistory,
-				FirstEventID:        taskAttributes.GetFirstEventId(),
-				NextEventID:         taskAttributes.GetNextEventId(),
-				Version:             taskAttributes.GetVersion(),
-				LastReplicationInfo: toPersistenceReplicationInfo(taskAttributes.GetReplicationInfo()),
-				ResetWorkflow:       taskAttributes.GetResetWorkflow(),
-			},
-		}, nil
-	case r.ReplicationTaskTypeHistoryV2:
+	case types.ReplicationTaskTypeHistoryV2:
 		taskAttributes := replicationTask.GetHistoryTaskV2Attributes()
-
-		eventsDataBlob := persistence.NewDataBlobFromThrift(taskAttributes.GetEvents())
+		eventsDataBlob := persistence.NewDataBlobFromInternal(taskAttributes.GetEvents())
 		events, err := p.historySerializer.DeserializeBatchEvents(eventsDataBlob)
 		if err != nil {
 			return nil, err
@@ -472,13 +514,13 @@ func (p *taskProcessorImpl) generateDLQRequest(
 		return &persistence.PutReplicationTaskToDLQRequest{
 			SourceClusterName: p.sourceCluster,
 			TaskInfo: &persistence.ReplicationTaskInfo{
-				DomainID:     taskAttributes.GetDomainId(),
-				WorkflowID:   taskAttributes.GetWorkflowId(),
-				RunID:        taskAttributes.GetRunId(),
-				TaskID:       replicationTask.GetSourceTaskId(),
+				DomainID:     taskAttributes.GetDomainID(),
+				WorkflowID:   taskAttributes.GetWorkflowID(),
+				RunID:        taskAttributes.GetRunID(),
+				TaskID:       replicationTask.GetSourceTaskID(),
 				TaskType:     persistence.ReplicationTaskTypeHistory,
-				FirstEventID: events[0].GetEventId(),
-				NextEventID:  events[len(events)-1].GetEventId(),
+				FirstEventID: events[0].GetEventID(),
+				NextEventID:  events[len(events)-1].GetEventID() + 1,
 				Version:      events[0].GetVersion(),
 			},
 		}, nil
@@ -487,9 +529,44 @@ func (p *taskProcessorImpl) generateDLQRequest(
 	}
 }
 
+func (p *taskProcessorImpl) emitDLQSizeMetricsLoop() {
+	timer := time.NewTimer(backoff.JitDuration(
+		dlqMetricsEmitTimerInterval,
+		dlqMetricsEmitTimerCoefficient,
+	))
+	staticRequest := &persistence.GetReplicationDLQSizeRequest{
+		SourceClusterName: p.sourceCluster,
+	}
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-timer.C:
+			resp, err := p.shard.GetExecutionManager().GetReplicationDLQSize(context.Background(), staticRequest)
+			timer.Reset(backoff.JitDuration(
+				dlqMetricsEmitTimerInterval,
+				dlqMetricsEmitTimerCoefficient,
+			))
+			if err != nil {
+				p.logger.Error("failed to get replication DLQ size", tag.Error(err))
+				p.metricsClient.Scope(metrics.ReplicationDLQStatsScope).IncCounter(metrics.ReplicationDLQProbeFailed)
+			} else {
+				p.metricsClient.Scope(
+					metrics.ReplicationDLQStatsScope,
+					metrics.InstanceTag(strconv.Itoa(p.shard.GetShardID())),
+				).UpdateGauge(metrics.ReplicationDLQSize, float64(resp.Size))
+			}
+		case <-p.done:
+			return
+		}
+	}
+}
+
 func isTransientRetryableError(err error) bool {
 	switch err.(type) {
-	case *shared.BadRequestError:
+	case *types.BadRequestError:
+		return false
+	case *types.ServiceBusyError:
 		return false
 	default:
 		return true
@@ -503,25 +580,11 @@ func (p *taskProcessorImpl) shouldRetryDLQ(err error) bool {
 
 	select {
 	case <-p.done:
-		p.logger.Info("ReplicationTaskProcessor shutting down.")
+		p.logger.Debug("ReplicationTaskProcessor shutting down.")
 		return false
 	default:
 		return true
 	}
-}
-
-func toPersistenceReplicationInfo(
-	info map[string]*shared.ReplicationInfo,
-) map[string]*persistence.ReplicationInfo {
-	replicationInfoMap := make(map[string]*persistence.ReplicationInfo)
-	for k, v := range info {
-		replicationInfoMap[k] = &persistence.ReplicationInfo{
-			Version:     v.GetVersion(),
-			LastEventID: v.GetLastEventId(),
-		}
-	}
-
-	return replicationInfoMap
 }
 
 func (p *taskProcessorImpl) updateFailureMetric(scope int, err error) {
@@ -530,23 +593,29 @@ func (p *taskProcessorImpl) updateFailureMetric(scope int, err error) {
 
 	// Also update counter to distinguish between type of failures
 	switch err := err.(type) {
-	case *h.ShardOwnershipLostError:
+	case *types.ShardOwnershipLostError:
 		p.metricsClient.IncCounter(scope, metrics.CadenceErrShardOwnershipLostCounter)
-	case *shared.BadRequestError:
+	case *types.BadRequestError:
 		p.metricsClient.IncCounter(scope, metrics.CadenceErrBadRequestCounter)
-	case *shared.DomainNotActiveError:
+	case *types.DomainNotActiveError:
 		p.metricsClient.IncCounter(scope, metrics.CadenceErrDomainNotActiveCounter)
-	case *shared.WorkflowExecutionAlreadyStartedError:
+	case *types.WorkflowExecutionAlreadyStartedError:
 		p.metricsClient.IncCounter(scope, metrics.CadenceErrExecutionAlreadyStartedCounter)
-	case *shared.EntityNotExistsError:
+	case *types.EntityNotExistsError:
 		p.metricsClient.IncCounter(scope, metrics.CadenceErrEntityNotExistsCounter)
-	case *shared.LimitExceededError:
+	case *types.LimitExceededError:
 		p.metricsClient.IncCounter(scope, metrics.CadenceErrLimitExceededCounter)
-	case *shared.RetryTaskError:
-		p.metricsClient.IncCounter(scope, metrics.CadenceErrRetryTaskCounter)
 	case *yarpcerrors.Status:
 		if err.Code() == yarpcerrors.CodeDeadlineExceeded {
 			p.metricsClient.IncCounter(scope, metrics.CadenceErrContextTimeoutCounter)
 		}
 	}
+}
+
+func (p *taskProcessorImpl) taskProcessingStartWait() {
+	shardID := p.shard.GetShardID()
+	time.Sleep(backoff.JitDuration(
+		p.config.ReplicationTaskProcessorStartWait(shardID),
+		p.config.ReplicationTaskProcessorStartWaitJitterCoefficient(shardID),
+	))
 }

@@ -29,14 +29,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/uber/cadence/.gen/go/cadence/workflowservicetest"
-	"github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/client/frontend"
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/client"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/common/types"
 )
 
 type (
@@ -47,7 +48,7 @@ type (
 		controller               *gomock.Controller
 		mockResource             *resource.Test
 		mockFrontendHandler      *MockHandler
-		mockRemoteFrontendClient *workflowservicetest.MockClient
+		mockRemoteFrontendClient *frontend.MockClient
 		mockClusterMetadata      *cluster.MockMetadata
 
 		mockDCRedirectionPolicy *MockDCRedirectionPolicy
@@ -91,11 +92,19 @@ func (s *dcRedirectionHandlerSuite) SetupTest() {
 	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(s.currentClusterName).AnyTimes()
 	s.mockClusterMetadata.EXPECT().IsGlobalDomainEnabled().Return(true).AnyTimes()
 
-	s.config = NewConfig(dynamicconfig.NewCollection(dynamicconfig.NewNopClient(), s.mockResource.GetLogger()), 0, false)
-	frontendHandler := NewWorkflowHandler(s.mockResource, s.config, nil)
+	s.config = NewConfig(
+		dynamicconfig.NewCollection(
+			dynamicconfig.NewNopClient(),
+			s.mockResource.GetLogger(),
+		),
+		0,
+		false,
+		false,
+	)
+	frontendHandler := NewWorkflowHandler(s.mockResource, s.config, nil, client.NewVersionChecker())
 
 	s.mockFrontendHandler = NewMockHandler(s.controller)
-	s.handler = NewDCRedirectionHandler(frontendHandler, config.DCRedirectionPolicy{})
+	s.handler = NewDCRedirectionHandler(frontendHandler, s.mockResource, s.config, config.DCRedirectionPolicy{})
 	s.handler.frontendHandler = s.mockFrontendHandler
 	s.handler.redirectionPolicy = s.mockDCRedirectionPolicy
 }
@@ -112,7 +121,7 @@ func (s *dcRedirectionHandlerSuite) TestDescribeTaskList() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.DescribeTaskListRequest{
+	req := &types.DescribeTaskListRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.DescribeTaskList(context.Background(), req)
@@ -121,10 +130,10 @@ func (s *dcRedirectionHandlerSuite) TestDescribeTaskList() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().DescribeTaskList(gomock.Any(), req).Return(&shared.DescribeTaskListResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().DescribeTaskList(gomock.Any(), req).Return(&types.DescribeTaskListResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().DescribeTaskList(gomock.Any(), req).Return(&shared.DescribeTaskListResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().DescribeTaskList(gomock.Any(), req).Return(&types.DescribeTaskListResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -135,7 +144,7 @@ func (s *dcRedirectionHandlerSuite) TestDescribeWorkflowExecution() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.DescribeWorkflowExecutionRequest{
+	req := &types.DescribeWorkflowExecutionRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.DescribeWorkflowExecution(context.Background(), req)
@@ -144,10 +153,10 @@ func (s *dcRedirectionHandlerSuite) TestDescribeWorkflowExecution() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().DescribeWorkflowExecution(gomock.Any(), req).Return(&shared.DescribeWorkflowExecutionResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().DescribeWorkflowExecution(gomock.Any(), req).Return(&types.DescribeWorkflowExecutionResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().DescribeWorkflowExecution(gomock.Any(), req).Return(&shared.DescribeWorkflowExecutionResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().DescribeWorkflowExecution(gomock.Any(), req).Return(&types.DescribeWorkflowExecutionResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -158,7 +167,7 @@ func (s *dcRedirectionHandlerSuite) TestGetWorkflowExecutionHistory() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.GetWorkflowExecutionHistoryRequest{
+	req := &types.GetWorkflowExecutionHistoryRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.GetWorkflowExecutionHistory(context.Background(), req)
@@ -167,10 +176,10 @@ func (s *dcRedirectionHandlerSuite) TestGetWorkflowExecutionHistory() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().GetWorkflowExecutionHistory(gomock.Any(), req).Return(&shared.GetWorkflowExecutionHistoryResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().GetWorkflowExecutionHistory(gomock.Any(), req).Return(&types.GetWorkflowExecutionHistoryResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().GetWorkflowExecutionHistory(gomock.Any(), req).Return(&shared.GetWorkflowExecutionHistoryResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().GetWorkflowExecutionHistory(gomock.Any(), req).Return(&types.GetWorkflowExecutionHistoryResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -181,7 +190,7 @@ func (s *dcRedirectionHandlerSuite) TestListArchivedWorkflowExecutions() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.ListArchivedWorkflowExecutionsRequest{
+	req := &types.ListArchivedWorkflowExecutionsRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.ListArchivedWorkflowExecutions(context.Background(), req)
@@ -190,10 +199,10 @@ func (s *dcRedirectionHandlerSuite) TestListArchivedWorkflowExecutions() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().ListArchivedWorkflowExecutions(gomock.Any(), req).Return(&shared.ListArchivedWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().ListArchivedWorkflowExecutions(gomock.Any(), req).Return(&types.ListArchivedWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().ListArchivedWorkflowExecutions(gomock.Any(), req).Return(&shared.ListArchivedWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().ListArchivedWorkflowExecutions(gomock.Any(), req).Return(&types.ListArchivedWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -204,7 +213,7 @@ func (s *dcRedirectionHandlerSuite) TestListClosedWorkflowExecutions() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.ListClosedWorkflowExecutionsRequest{
+	req := &types.ListClosedWorkflowExecutionsRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.ListClosedWorkflowExecutions(context.Background(), req)
@@ -213,10 +222,10 @@ func (s *dcRedirectionHandlerSuite) TestListClosedWorkflowExecutions() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().ListClosedWorkflowExecutions(gomock.Any(), req).Return(&shared.ListClosedWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().ListClosedWorkflowExecutions(gomock.Any(), req).Return(&types.ListClosedWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().ListClosedWorkflowExecutions(gomock.Any(), req).Return(&shared.ListClosedWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().ListClosedWorkflowExecutions(gomock.Any(), req).Return(&types.ListClosedWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -227,7 +236,7 @@ func (s *dcRedirectionHandlerSuite) TestListOpenWorkflowExecutions() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.ListOpenWorkflowExecutionsRequest{
+	req := &types.ListOpenWorkflowExecutionsRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.ListOpenWorkflowExecutions(context.Background(), req)
@@ -236,10 +245,10 @@ func (s *dcRedirectionHandlerSuite) TestListOpenWorkflowExecutions() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().ListOpenWorkflowExecutions(gomock.Any(), req).Return(&shared.ListOpenWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().ListOpenWorkflowExecutions(gomock.Any(), req).Return(&types.ListOpenWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().ListOpenWorkflowExecutions(gomock.Any(), req).Return(&shared.ListOpenWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().ListOpenWorkflowExecutions(gomock.Any(), req).Return(&types.ListOpenWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -250,7 +259,7 @@ func (s *dcRedirectionHandlerSuite) TestListWorkflowExecutions() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.ListWorkflowExecutionsRequest{
+	req := &types.ListWorkflowExecutionsRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.ListWorkflowExecutions(context.Background(), req)
@@ -259,10 +268,10 @@ func (s *dcRedirectionHandlerSuite) TestListWorkflowExecutions() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().ListWorkflowExecutions(gomock.Any(), req).Return(&shared.ListWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().ListWorkflowExecutions(gomock.Any(), req).Return(&types.ListWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().ListWorkflowExecutions(gomock.Any(), req).Return(&shared.ListWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().ListWorkflowExecutions(gomock.Any(), req).Return(&types.ListWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -273,7 +282,7 @@ func (s *dcRedirectionHandlerSuite) TestScanWorkflowExecutions() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.ListWorkflowExecutionsRequest{
+	req := &types.ListWorkflowExecutionsRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.ScanWorkflowExecutions(context.Background(), req)
@@ -282,10 +291,10 @@ func (s *dcRedirectionHandlerSuite) TestScanWorkflowExecutions() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().ScanWorkflowExecutions(gomock.Any(), req).Return(&shared.ListWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().ScanWorkflowExecutions(gomock.Any(), req).Return(&types.ListWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().ScanWorkflowExecutions(gomock.Any(), req).Return(&shared.ListWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().ScanWorkflowExecutions(gomock.Any(), req).Return(&types.ListWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -296,7 +305,7 @@ func (s *dcRedirectionHandlerSuite) TestCountWorkflowExecutions() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.CountWorkflowExecutionsRequest{
+	req := &types.CountWorkflowExecutionsRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.CountWorkflowExecutions(context.Background(), req)
@@ -305,10 +314,10 @@ func (s *dcRedirectionHandlerSuite) TestCountWorkflowExecutions() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().CountWorkflowExecutions(gomock.Any(), req).Return(&shared.CountWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().CountWorkflowExecutions(gomock.Any(), req).Return(&types.CountWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().CountWorkflowExecutions(gomock.Any(), req).Return(&shared.CountWorkflowExecutionsResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().CountWorkflowExecutions(gomock.Any(), req).Return(&types.CountWorkflowExecutionsResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -319,7 +328,7 @@ func (s *dcRedirectionHandlerSuite) TestPollForActivityTask() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.PollForActivityTaskRequest{
+	req := &types.PollForActivityTaskRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.PollForActivityTask(context.Background(), req)
@@ -328,10 +337,10 @@ func (s *dcRedirectionHandlerSuite) TestPollForActivityTask() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().PollForActivityTask(gomock.Any(), req).Return(&shared.PollForActivityTaskResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().PollForActivityTask(gomock.Any(), req).Return(&types.PollForActivityTaskResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().PollForActivityTask(gomock.Any(), req).Return(&shared.PollForActivityTaskResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().PollForActivityTask(gomock.Any(), req).Return(&types.PollForActivityTaskResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -342,7 +351,7 @@ func (s *dcRedirectionHandlerSuite) TestPollForDecisionTask() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.PollForDecisionTaskRequest{
+	req := &types.PollForDecisionTaskRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.PollForDecisionTask(context.Background(), req)
@@ -351,10 +360,10 @@ func (s *dcRedirectionHandlerSuite) TestPollForDecisionTask() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().PollForDecisionTask(gomock.Any(), req).Return(&shared.PollForDecisionTaskResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().PollForDecisionTask(gomock.Any(), req).Return(&types.PollForDecisionTaskResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().PollForDecisionTask(gomock.Any(), req).Return(&shared.PollForDecisionTaskResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().PollForDecisionTask(gomock.Any(), req).Return(&types.PollForDecisionTaskResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -365,9 +374,9 @@ func (s *dcRedirectionHandlerSuite) TestQueryWorkflow() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.QueryWorkflowRequest{
+	req := &types.QueryWorkflowRequest{
 		Domain:                common.StringPtr(s.domainName),
-		QueryConsistencyLevel: shared.QueryConsistencyLevelStrong.Ptr(),
+		QueryConsistencyLevel: types.QueryConsistencyLevelStrong.Ptr(),
 	}
 	resp, err := s.handler.QueryWorkflow(context.Background(), req)
 	s.Nil(err)
@@ -375,10 +384,10 @@ func (s *dcRedirectionHandlerSuite) TestQueryWorkflow() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().QueryWorkflow(gomock.Any(), req).Return(&shared.QueryWorkflowResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().QueryWorkflow(gomock.Any(), req).Return(&types.QueryWorkflowResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().QueryWorkflow(gomock.Any(), req).Return(&shared.QueryWorkflowResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().QueryWorkflow(gomock.Any(), req).Return(&types.QueryWorkflowResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -393,7 +402,7 @@ func (s *dcRedirectionHandlerSuite) TestRecordActivityTaskHeartbeat() {
 		DomainID: s.domainID,
 	})
 	s.Nil(err)
-	req := &shared.RecordActivityTaskHeartbeatRequest{
+	req := &types.RecordActivityTaskHeartbeatRequest{
 		TaskToken: token,
 	}
 	resp, err := s.handler.RecordActivityTaskHeartbeat(context.Background(), req)
@@ -402,10 +411,10 @@ func (s *dcRedirectionHandlerSuite) TestRecordActivityTaskHeartbeat() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().RecordActivityTaskHeartbeat(gomock.Any(), req).Return(&shared.RecordActivityTaskHeartbeatResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().RecordActivityTaskHeartbeat(gomock.Any(), req).Return(&types.RecordActivityTaskHeartbeatResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().RecordActivityTaskHeartbeat(gomock.Any(), req).Return(&shared.RecordActivityTaskHeartbeatResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().RecordActivityTaskHeartbeat(gomock.Any(), req).Return(&types.RecordActivityTaskHeartbeatResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -416,7 +425,7 @@ func (s *dcRedirectionHandlerSuite) TestRecordActivityTaskHeartbeatByID() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.RecordActivityTaskHeartbeatByIDRequest{
+	req := &types.RecordActivityTaskHeartbeatByIDRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.RecordActivityTaskHeartbeatByID(context.Background(), req)
@@ -425,10 +434,10 @@ func (s *dcRedirectionHandlerSuite) TestRecordActivityTaskHeartbeatByID() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().RecordActivityTaskHeartbeatByID(gomock.Any(), req).Return(&shared.RecordActivityTaskHeartbeatResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().RecordActivityTaskHeartbeatByID(gomock.Any(), req).Return(&types.RecordActivityTaskHeartbeatResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().RecordActivityTaskHeartbeatByID(gomock.Any(), req).Return(&shared.RecordActivityTaskHeartbeatResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().RecordActivityTaskHeartbeatByID(gomock.Any(), req).Return(&types.RecordActivityTaskHeartbeatResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -439,7 +448,7 @@ func (s *dcRedirectionHandlerSuite) TestRequestCancelWorkflowExecution() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.RequestCancelWorkflowExecutionRequest{
+	req := &types.RequestCancelWorkflowExecutionRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	err := s.handler.RequestCancelWorkflowExecution(context.Background(), req)
@@ -460,7 +469,7 @@ func (s *dcRedirectionHandlerSuite) TestResetStickyTaskList() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.ResetStickyTaskListRequest{
+	req := &types.ResetStickyTaskListRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.ResetStickyTaskList(context.Background(), req)
@@ -469,10 +478,10 @@ func (s *dcRedirectionHandlerSuite) TestResetStickyTaskList() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().ResetStickyTaskList(gomock.Any(), req).Return(&shared.ResetStickyTaskListResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().ResetStickyTaskList(gomock.Any(), req).Return(&types.ResetStickyTaskListResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().ResetStickyTaskList(gomock.Any(), req).Return(&shared.ResetStickyTaskListResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().ResetStickyTaskList(gomock.Any(), req).Return(&types.ResetStickyTaskListResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -483,7 +492,7 @@ func (s *dcRedirectionHandlerSuite) TestResetWorkflowExecution() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.ResetWorkflowExecutionRequest{
+	req := &types.ResetWorkflowExecutionRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.ResetWorkflowExecution(context.Background(), req)
@@ -492,10 +501,10 @@ func (s *dcRedirectionHandlerSuite) TestResetWorkflowExecution() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().ResetWorkflowExecution(gomock.Any(), req).Return(&shared.ResetWorkflowExecutionResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().ResetWorkflowExecution(gomock.Any(), req).Return(&types.ResetWorkflowExecutionResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().ResetWorkflowExecution(gomock.Any(), req).Return(&shared.ResetWorkflowExecutionResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().ResetWorkflowExecution(gomock.Any(), req).Return(&types.ResetWorkflowExecutionResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -510,7 +519,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondActivityTaskCanceled() {
 		DomainID: s.domainID,
 	})
 	s.Nil(err)
-	req := &shared.RespondActivityTaskCanceledRequest{
+	req := &types.RespondActivityTaskCanceledRequest{
 		TaskToken: token,
 	}
 	err = s.handler.RespondActivityTaskCanceled(context.Background(), req)
@@ -531,7 +540,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondActivityTaskCanceledByID() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.RespondActivityTaskCanceledByIDRequest{
+	req := &types.RespondActivityTaskCanceledByIDRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	err := s.handler.RespondActivityTaskCanceledByID(context.Background(), req)
@@ -556,7 +565,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondActivityTaskCompleted() {
 		DomainID: s.domainID,
 	})
 	s.Nil(err)
-	req := &shared.RespondActivityTaskCompletedRequest{
+	req := &types.RespondActivityTaskCompletedRequest{
 		TaskToken: token,
 	}
 	err = s.handler.RespondActivityTaskCompleted(context.Background(), req)
@@ -577,7 +586,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondActivityTaskCompletedByID() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.RespondActivityTaskCompletedByIDRequest{
+	req := &types.RespondActivityTaskCompletedByIDRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	err := s.handler.RespondActivityTaskCompletedByID(context.Background(), req)
@@ -602,7 +611,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondActivityTaskFailed() {
 		DomainID: s.domainID,
 	})
 	s.Nil(err)
-	req := &shared.RespondActivityTaskFailedRequest{
+	req := &types.RespondActivityTaskFailedRequest{
 		TaskToken: token,
 	}
 	err = s.handler.RespondActivityTaskFailed(context.Background(), req)
@@ -623,7 +632,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondActivityTaskFailedByID() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.RespondActivityTaskFailedByIDRequest{
+	req := &types.RespondActivityTaskFailedByIDRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	err := s.handler.RespondActivityTaskFailedByID(context.Background(), req)
@@ -648,7 +657,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondDecisionTaskCompleted() {
 		DomainID: s.domainID,
 	})
 	s.Nil(err)
-	req := &shared.RespondDecisionTaskCompletedRequest{
+	req := &types.RespondDecisionTaskCompletedRequest{
 		TaskToken: token,
 	}
 	resp, err := s.handler.RespondDecisionTaskCompleted(context.Background(), req)
@@ -657,10 +666,10 @@ func (s *dcRedirectionHandlerSuite) TestRespondDecisionTaskCompleted() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().RespondDecisionTaskCompleted(gomock.Any(), req).Return(&shared.RespondDecisionTaskCompletedResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().RespondDecisionTaskCompleted(gomock.Any(), req).Return(&types.RespondDecisionTaskCompletedResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().RespondDecisionTaskCompleted(gomock.Any(), req).Return(&shared.RespondDecisionTaskCompletedResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().RespondDecisionTaskCompleted(gomock.Any(), req).Return(&types.RespondDecisionTaskCompletedResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -675,7 +684,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondDecisionTaskFailed() {
 		DomainID: s.domainID,
 	})
 	s.Nil(err)
-	req := &shared.RespondDecisionTaskFailedRequest{
+	req := &types.RespondDecisionTaskFailedRequest{
 		TaskToken: token,
 	}
 	err = s.handler.RespondDecisionTaskFailed(context.Background(), req)
@@ -699,7 +708,7 @@ func (s *dcRedirectionHandlerSuite) TestRespondQueryTaskCompleted() {
 	token, err := s.handler.tokenSerializer.SerializeQueryTaskToken(&common.QueryTaskToken{
 		DomainID: s.domainID,
 	})
-	req := &shared.RespondQueryTaskCompletedRequest{
+	req := &types.RespondQueryTaskCompletedRequest{
 		TaskToken: token,
 	}
 	err = s.handler.RespondQueryTaskCompleted(context.Background(), req)
@@ -720,7 +729,7 @@ func (s *dcRedirectionHandlerSuite) TestSignalWithStartWorkflowExecution() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.SignalWithStartWorkflowExecutionRequest{
+	req := &types.SignalWithStartWorkflowExecutionRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.SignalWithStartWorkflowExecution(context.Background(), req)
@@ -729,10 +738,10 @@ func (s *dcRedirectionHandlerSuite) TestSignalWithStartWorkflowExecution() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().SignalWithStartWorkflowExecution(gomock.Any(), req).Return(&shared.StartWorkflowExecutionResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().SignalWithStartWorkflowExecution(gomock.Any(), req).Return(&types.StartWorkflowExecutionResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().SignalWithStartWorkflowExecution(gomock.Any(), req).Return(&shared.StartWorkflowExecutionResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().SignalWithStartWorkflowExecution(gomock.Any(), req).Return(&types.StartWorkflowExecutionResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -743,7 +752,7 @@ func (s *dcRedirectionHandlerSuite) TestSignalWorkflowExecution() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.SignalWorkflowExecutionRequest{
+	req := &types.SignalWorkflowExecutionRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	err := s.handler.SignalWorkflowExecution(context.Background(), req)
@@ -764,7 +773,7 @@ func (s *dcRedirectionHandlerSuite) TestStartWorkflowExecution() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.StartWorkflowExecutionRequest{
+	req := &types.StartWorkflowExecutionRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	resp, err := s.handler.StartWorkflowExecution(context.Background(), req)
@@ -773,10 +782,10 @@ func (s *dcRedirectionHandlerSuite) TestStartWorkflowExecution() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().StartWorkflowExecution(gomock.Any(), req).Return(&shared.StartWorkflowExecutionResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().StartWorkflowExecution(gomock.Any(), req).Return(&types.StartWorkflowExecutionResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().StartWorkflowExecution(gomock.Any(), req).Return(&shared.StartWorkflowExecutionResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().StartWorkflowExecution(gomock.Any(), req).Return(&types.StartWorkflowExecutionResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }
@@ -787,7 +796,7 @@ func (s *dcRedirectionHandlerSuite) TestTerminateWorkflowExecution() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.TerminateWorkflowExecutionRequest{
+	req := &types.TerminateWorkflowExecutionRequest{
 		Domain: common.StringPtr(s.domainName),
 	}
 	err := s.handler.TerminateWorkflowExecution(context.Background(), req)
@@ -808,11 +817,11 @@ func (s *dcRedirectionHandlerSuite) TestListTaskListPartitions() {
 	s.mockDCRedirectionPolicy.On("WithDomainNameRedirect",
 		s.domainName, apiName, mock.Anything).Return(nil).Times(1)
 
-	req := &shared.ListTaskListPartitionsRequest{
+	req := &types.ListTaskListPartitionsRequest{
 		Domain: common.StringPtr(s.domainName),
-		TaskList: &shared.TaskList{
+		TaskList: &types.TaskList{
 			Name: common.StringPtr("test_tesk_list"),
-			Kind: common.TaskListKindPtr(0),
+			Kind: types.TaskListKind(0).Ptr(),
 		},
 	}
 	resp, err := s.handler.ListTaskListPartitions(context.Background(), req)
@@ -821,10 +830,10 @@ func (s *dcRedirectionHandlerSuite) TestListTaskListPartitions() {
 	s.Nil(resp)
 
 	callFn := s.mockDCRedirectionPolicy.Calls[0].Arguments[2].(func(string) error)
-	s.mockFrontendHandler.EXPECT().ListTaskListPartitions(gomock.Any(), req).Return(&shared.ListTaskListPartitionsResponse{}, nil).Times(1)
+	s.mockFrontendHandler.EXPECT().ListTaskListPartitions(gomock.Any(), req).Return(&types.ListTaskListPartitionsResponse{}, nil).Times(1)
 	err = callFn(s.currentClusterName)
 	s.Nil(err)
-	s.mockRemoteFrontendClient.EXPECT().ListTaskListPartitions(gomock.Any(), req).Return(&shared.ListTaskListPartitionsResponse{}, nil).Times(1)
+	s.mockRemoteFrontendClient.EXPECT().ListTaskListPartitions(gomock.Any(), req).Return(&types.ListTaskListPartitionsResponse{}, nil).Times(1)
 	err = callFn(s.alternativeClusterName)
 	s.Nil(err)
 }

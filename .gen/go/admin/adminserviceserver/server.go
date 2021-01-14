@@ -1,7 +1,7 @@
 // The MIT License (MIT)
-// 
+
 // Copyright (c) 2017-2020 Uber Technologies Inc.
-// 
+
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -56,6 +56,11 @@ type Interface interface {
 		Request *shared.DescribeHistoryHostRequest,
 	) (*shared.DescribeHistoryHostResponse, error)
 
+	DescribeQueue(
+		ctx context.Context,
+		Request *shared.DescribeQueueRequest,
+	) (*shared.DescribeQueueResponse, error)
+
 	DescribeWorkflowExecution(
 		ctx context.Context,
 		Request *admin.DescribeWorkflowExecutionRequest,
@@ -75,11 +80,6 @@ type Interface interface {
 		ctx context.Context,
 		Request *replicator.GetReplicationMessagesRequest,
 	) (*replicator.GetReplicationMessagesResponse, error)
-
-	GetWorkflowExecutionRawHistory(
-		ctx context.Context,
-		GetRequest *admin.GetWorkflowExecutionRawHistoryRequest,
-	) (*admin.GetWorkflowExecutionRawHistoryResponse, error)
 
 	GetWorkflowExecutionRawHistoryV2(
 		ctx context.Context,
@@ -119,6 +119,11 @@ type Interface interface {
 	ResendReplicationTasks(
 		ctx context.Context,
 		Request *admin.ResendReplicationTasksRequest,
+	) error
+
+	ResetQueue(
+		ctx context.Context,
+		Request *shared.ResetQueueRequest,
 	) error
 }
 
@@ -178,6 +183,17 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
+				Name: "DescribeQueue",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:  transport.Unary,
+					Unary: thrift.UnaryHandler(h.DescribeQueue),
+				},
+				Signature:    "DescribeQueue(Request *shared.DescribeQueueRequest) (*shared.DescribeQueueResponse)",
+				ThriftModule: admin.ThriftModule,
+			},
+
+			thrift.Method{
 				Name: "DescribeWorkflowExecution",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -218,17 +234,6 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 					Unary: thrift.UnaryHandler(h.GetReplicationMessages),
 				},
 				Signature:    "GetReplicationMessages(Request *replicator.GetReplicationMessagesRequest) (*replicator.GetReplicationMessagesResponse)",
-				ThriftModule: admin.ThriftModule,
-			},
-
-			thrift.Method{
-				Name: "GetWorkflowExecutionRawHistory",
-				HandlerSpec: thrift.HandlerSpec{
-
-					Type:  transport.Unary,
-					Unary: thrift.UnaryHandler(h.GetWorkflowExecutionRawHistory),
-				},
-				Signature:    "GetWorkflowExecutionRawHistory(GetRequest *admin.GetWorkflowExecutionRawHistoryRequest) (*admin.GetWorkflowExecutionRawHistoryResponse)",
 				ThriftModule: admin.ThriftModule,
 			},
 
@@ -319,10 +324,21 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 				Signature:    "ResendReplicationTasks(Request *admin.ResendReplicationTasksRequest)",
 				ThriftModule: admin.ThriftModule,
 			},
+
+			thrift.Method{
+				Name: "ResetQueue",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:  transport.Unary,
+					Unary: thrift.UnaryHandler(h.ResetQueue),
+				},
+				Signature:    "ResetQueue(Request *shared.ResetQueueRequest)",
+				ThriftModule: admin.ThriftModule,
+			},
 		},
 	}
 
-	procedures := make([]transport.Procedure, 0, 17)
+	procedures := make([]transport.Procedure, 0, 18)
 	procedures = append(procedures, thrift.BuildProcedures(service, opts...)...)
 	return procedures
 }
@@ -405,6 +421,25 @@ func (h handler) DescribeHistoryHost(ctx context.Context, body wire.Value) (thri
 	return response, err
 }
 
+func (h handler) DescribeQueue(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_DescribeQueue_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, err
+	}
+
+	success, err := h.impl.DescribeQueue(ctx, args.Request)
+
+	hadError := err != nil
+	result, err := admin.AdminService_DescribeQueue_Helper.WrapResponse(success, err)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+	}
+	return response, err
+}
+
 func (h handler) DescribeWorkflowExecution(ctx context.Context, body wire.Value) (thrift.Response, error) {
 	var args admin.AdminService_DescribeWorkflowExecution_Args
 	if err := args.FromWire(body); err != nil {
@@ -472,25 +507,6 @@ func (h handler) GetReplicationMessages(ctx context.Context, body wire.Value) (t
 
 	hadError := err != nil
 	result, err := admin.AdminService_GetReplicationMessages_Helper.WrapResponse(success, err)
-
-	var response thrift.Response
-	if err == nil {
-		response.IsApplicationError = hadError
-		response.Body = result
-	}
-	return response, err
-}
-
-func (h handler) GetWorkflowExecutionRawHistory(ctx context.Context, body wire.Value) (thrift.Response, error) {
-	var args admin.AdminService_GetWorkflowExecutionRawHistory_Args
-	if err := args.FromWire(body); err != nil {
-		return thrift.Response{}, err
-	}
-
-	success, err := h.impl.GetWorkflowExecutionRawHistory(ctx, args.GetRequest)
-
-	hadError := err != nil
-	result, err := admin.AdminService_GetWorkflowExecutionRawHistory_Helper.WrapResponse(success, err)
 
 	var response thrift.Response
 	if err == nil {
@@ -643,6 +659,25 @@ func (h handler) ResendReplicationTasks(ctx context.Context, body wire.Value) (t
 
 	hadError := err != nil
 	result, err := admin.AdminService_ResendReplicationTasks_Helper.WrapResponse(err)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+	}
+	return response, err
+}
+
+func (h handler) ResetQueue(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_ResetQueue_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, err
+	}
+
+	err := h.impl.ResetQueue(ctx, args.Request)
+
+	hadError := err != nil
+	result, err := admin.AdminService_ResetQueue_Helper.WrapResponse(err)
 
 	var response thrift.Response
 	if err == nil {

@@ -30,19 +30,16 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
 
-	"github.com/uber/cadence/.gen/go/admin/adminservicetest"
-	"github.com/uber/cadence/.gen/go/history"
-	"github.com/uber/cadence/.gen/go/history/historyservicetest"
-	"github.com/uber/cadence/.gen/go/replicator"
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/client"
+	"github.com/uber/cadence/client/admin"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/mocks"
+	"github.com/uber/cadence/common/ndc"
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/xdc"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/engine"
 	"github.com/uber/cadence/service/history/shard"
@@ -54,18 +51,15 @@ type (
 		*require.Assertions
 		controller *gomock.Controller
 
-		currentCluster      string
-		mockShard           *shard.TestContext
-		mockEngine          *engine.MockEngine
-		config              *config.Config
-		historyClient       *historyservicetest.MockClient
-		mockDomainCache     *cache.MockDomainCache
-		mockClientBean      *client.MockBean
-		adminClient         *adminservicetest.MockClient
-		clusterMetadata     *cluster.MockMetadata
-		executionManager    *mocks.ExecutionManager
-		nDCHistoryResender  *xdc.MockNDCHistoryResender
-		historyRereplicator *xdc.MockHistoryRereplicator
+		mockShard          *shard.TestContext
+		mockEngine         *engine.MockEngine
+		config             *config.Config
+		mockDomainCache    *cache.MockDomainCache
+		mockClientBean     *client.MockBean
+		adminClient        *admin.MockClient
+		clusterMetadata    *cluster.MockMetadata
+		executionManager   *mocks.ExecutionManager
+		nDCHistoryResender *ndc.MockHistoryResender
 
 		taskHandler *taskExecutorImpl
 	}
@@ -86,10 +80,7 @@ func (s *taskExecutorSuite) TearDownSuite() {
 
 func (s *taskExecutorSuite) SetupTest() {
 	s.Assertions = require.New(s.T())
-
-	s.currentCluster = "test"
 	s.config = config.NewForTest()
-
 	s.controller = gomock.NewController(s.T())
 	s.mockShard = shard.NewTestContext(
 		s.controller,
@@ -107,20 +98,17 @@ func (s *taskExecutorSuite) SetupTest() {
 	s.adminClient = s.mockShard.Resource.RemoteAdminClient
 	s.clusterMetadata = s.mockShard.Resource.ClusterMetadata
 	s.executionManager = s.mockShard.Resource.ExecutionMgr
-	s.nDCHistoryResender = xdc.NewMockNDCHistoryResender(s.controller)
-	s.historyRereplicator = &xdc.MockHistoryRereplicator{}
+	s.nDCHistoryResender = ndc.NewMockHistoryResender(s.controller)
 
 	s.mockEngine = engine.NewMockEngine(s.controller)
 
-	s.historyClient = historyservicetest.NewMockClient(s.controller)
 	metricsClient := metrics.NewClient(tally.NoopScope, metrics.History)
 	s.clusterMetadata.EXPECT().GetCurrentClusterName().Return("active").AnyTimes()
 
 	s.taskHandler = NewTaskExecutor(
-		s.currentCluster,
+		s.mockShard,
 		s.mockDomainCache,
 		s.nDCHistoryResender,
-		s.historyRereplicator,
 		s.mockEngine,
 		metricsClient,
 		s.mockShard.GetLogger(),
@@ -132,26 +120,14 @@ func (s *taskExecutorSuite) TearDownTest() {
 	s.mockShard.Finish(s.T())
 }
 
-func (s *taskExecutorSuite) TestConvertRetryTaskError_OK() {
-	err := &shared.RetryTaskError{}
-	_, ok := s.taskHandler.convertRetryTaskError(err)
-	s.True(ok)
-}
-
-func (s *taskExecutorSuite) TestConvertRetryTaskError_NotOK() {
-	err := &shared.RetryTaskV2Error{}
-	_, ok := s.taskHandler.convertRetryTaskError(err)
-	s.False(ok)
-}
-
 func (s *taskExecutorSuite) TestConvertRetryTaskV2Error_OK() {
-	err := &shared.RetryTaskV2Error{}
+	err := &types.RetryTaskV2Error{}
 	_, ok := s.taskHandler.convertRetryTaskV2Error(err)
 	s.True(ok)
 }
 
 func (s *taskExecutorSuite) TestConvertRetryTaskV2Error_NotOK() {
-	err := &shared.RetryTaskError{}
+	err := &types.BadRequestError{}
 	_, ok := s.taskHandler.convertRetryTaskV2Error(err)
 	s.False(ok)
 }
@@ -166,7 +142,7 @@ func (s *taskExecutorSuite) TestFilterTask() {
 			&persistence.DomainReplicationConfig{
 				Clusters: []*persistence.ClusterReplicationConfig{
 					{
-						ClusterName: "test",
+						ClusterName: "active",
 					},
 				}},
 			0,
@@ -198,49 +174,22 @@ func (s *taskExecutorSuite) TestProcessTaskOnce_SyncActivityReplicationTask() {
 	domainID := uuid.New()
 	workflowID := uuid.New()
 	runID := uuid.New()
-	task := &replicator.ReplicationTask{
-		TaskType: replicator.ReplicationTaskTypeSyncActivity.Ptr(),
-		SyncActivityTaskAttributes: &replicator.SyncActivityTaskAttributes{
-			DomainId:   common.StringPtr(domainID),
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(runID),
+	task := &types.ReplicationTask{
+		TaskType: types.ReplicationTaskTypeSyncActivity.Ptr(),
+		SyncActivityTaskAttributes: &types.SyncActivityTaskAttributes{
+			DomainID:   common.StringPtr(domainID),
+			WorkflowID: common.StringPtr(workflowID),
+			RunID:      common.StringPtr(runID),
 		},
 	}
-	request := &history.SyncActivityRequest{
-		DomainId:   common.StringPtr(domainID),
-		WorkflowId: common.StringPtr(workflowID),
-		RunId:      common.StringPtr(runID),
+	request := &types.SyncActivityRequest{
+		DomainID:   common.StringPtr(domainID),
+		WorkflowID: common.StringPtr(workflowID),
+		RunID:      common.StringPtr(runID),
 	}
 
-	s.mockEngine.EXPECT().SyncActivity(gomock.Any(), request).Return(nil).Times(1)
-	_, err := s.taskHandler.execute(s.currentCluster, task, true)
-	s.NoError(err)
-}
-
-func (s *taskExecutorSuite) TestProcessTaskOnce_HistoryReplicationTask() {
-	domainID := uuid.New()
-	workflowID := uuid.New()
-	runID := uuid.New()
-	task := &replicator.ReplicationTask{
-		TaskType: replicator.ReplicationTaskTypeHistory.Ptr(),
-		HistoryTaskAttributes: &replicator.HistoryTaskAttributes{
-			DomainId:   common.StringPtr(domainID),
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(runID),
-		},
-	}
-	request := &history.ReplicateEventsRequest{
-		DomainUUID: common.StringPtr(domainID),
-		WorkflowExecution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(runID),
-		},
-		SourceCluster:     common.StringPtr("test"),
-		ForceBufferEvents: common.BoolPtr(false),
-	}
-
-	s.mockEngine.EXPECT().ReplicateEvents(gomock.Any(), request).Return(nil).Times(1)
-	_, err := s.taskHandler.execute(s.currentCluster, task, true)
+	s.mockEngine.EXPECT().SyncActivity(gomock.Any(), request).Return(nil).Times(2)
+	_, err := s.taskHandler.execute(task, true)
 	s.NoError(err)
 }
 
@@ -248,23 +197,23 @@ func (s *taskExecutorSuite) TestProcess_HistoryV2ReplicationTask() {
 	domainID := uuid.New()
 	workflowID := uuid.New()
 	runID := uuid.New()
-	task := &replicator.ReplicationTask{
-		TaskType: replicator.ReplicationTaskTypeHistoryV2.Ptr(),
-		HistoryTaskV2Attributes: &replicator.HistoryTaskV2Attributes{
-			DomainId:   common.StringPtr(domainID),
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(runID),
+	task := &types.ReplicationTask{
+		TaskType: types.ReplicationTaskTypeHistoryV2.Ptr(),
+		HistoryTaskV2Attributes: &types.HistoryTaskV2Attributes{
+			DomainID:   common.StringPtr(domainID),
+			WorkflowID: common.StringPtr(workflowID),
+			RunID:      common.StringPtr(runID),
 		},
 	}
-	request := &history.ReplicateEventsV2Request{
+	request := &types.ReplicateEventsV2Request{
 		DomainUUID: common.StringPtr(domainID),
-		WorkflowExecution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(runID),
+		WorkflowExecution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr(workflowID),
+			RunID:      common.StringPtr(runID),
 		},
 	}
 
 	s.mockEngine.EXPECT().ReplicateEventsV2(gomock.Any(), request).Return(nil).Times(1)
-	_, err := s.taskHandler.execute(s.currentCluster, task, true)
+	_, err := s.taskHandler.execute(task, true)
 	s.NoError(err)
 }

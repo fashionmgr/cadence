@@ -26,10 +26,13 @@ import (
 	"testing"
 	"time"
 
+	es "github.com/uber/cadence/common/elasticsearch"
+
 	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/definition"
 	p "github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types/mapper/thrift"
 )
 
 var (
@@ -56,9 +59,9 @@ BenchmarkJSONDecodeToMap-8        100000             12878 ns/op
 func BenchmarkJSONDecodeToType(b *testing.B) {
 	bytes := (*json.RawMessage)(&data)
 	for i := 0; i < b.N; i++ {
-		var source *visibilityRecord
+		var source *es.VisibilityRecord
 		json.Unmarshal(*bytes, &source)
-		record := &p.VisibilityWorkflowExecutionInfo{
+		record := &p.InternalVisibilityWorkflowExecutionInfo{
 			WorkflowID:    source.WorkflowID,
 			RunID:         source.RunID,
 			TypeName:      source.WorkflowType,
@@ -68,7 +71,7 @@ func BenchmarkJSONDecodeToType(b *testing.B) {
 			TaskList:      source.TaskList,
 		}
 		record.CloseTime = time.Unix(0, source.CloseTime)
-		record.Status = &source.CloseStatus
+		record.Status = thrift.ToWorkflowExecutionCloseStatus(&source.CloseStatus)
 		record.HistoryLength = source.HistoryLength
 	}
 }
@@ -87,7 +90,7 @@ func BenchmarkJSONDecodeToMap(b *testing.B) {
 		closeStatus, _ := source[definition.CloseStatus].(json.Number).Int64()
 		historyLen, _ := source[definition.HistoryLength].(json.Number).Int64()
 
-		record := &p.VisibilityWorkflowExecutionInfo{
+		record := &p.InternalVisibilityWorkflowExecutionInfo{
 			WorkflowID:    source[definition.WorkflowID].(string),
 			RunID:         source[definition.RunID].(string),
 			TypeName:      source[definition.WorkflowType].(string),
@@ -98,7 +101,7 @@ func BenchmarkJSONDecodeToMap(b *testing.B) {
 		}
 		record.CloseTime = time.Unix(0, closeTime)
 		status := (shared.WorkflowExecutionCloseStatus)(int32(closeStatus))
-		record.Status = &status
+		record.Status = thrift.ToWorkflowExecutionCloseStatus(&status)
 		record.HistoryLength = historyLen
 	}
 }

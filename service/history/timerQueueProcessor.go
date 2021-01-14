@@ -18,38 +18,30 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../LICENSE -package $GOPACKAGE -source $GOFILE -destination timerQueueProcessor_mock.go
-
 package history
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 
-	h "github.com/uber/cadence/.gen/go/history"
 	"github.com/uber/cadence/client/matching"
-	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
+	"github.com/uber/cadence/common/ndc"
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/xdc"
+	"github.com/uber/cadence/common/reconciliation/invariant"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
+	"github.com/uber/cadence/service/history/queue"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
 )
 
 type (
-	timerQueueProcessor interface {
-		common.Daemon
-		FailoverDomain(domainIDs map[string]struct{})
-		NotifyNewTimers(clusterName string, timerTask []persistence.Task)
-		LockTaskProcessing()
-		UnlockTaskProcessing()
-	}
-
 	timeNow                 func() time.Time
 	updateTimerAckLevel     func(timerKey) error
 	timerQueueShutdown      func() error
@@ -57,7 +49,7 @@ type (
 		isGlobalDomainEnabled  bool
 		currentClusterName     string
 		shard                  shard.Context
-		taskAllocator          taskAllocator
+		taskAllocator          queue.TaskAllocator
 		config                 *config.Config
 		metricsClient          metrics.Client
 		historyService         *historyEngineImpl
@@ -78,12 +70,14 @@ func newTimerQueueProcessor(
 	historyService *historyEngineImpl,
 	matchingClient matching.Client,
 	queueTaskProcessor task.Processor,
+	openExecutionCheck invariant.Invariant,
 	logger log.Logger,
-) timerQueueProcessor {
+) queue.Processor {
 
 	currentClusterName := shard.GetService().GetClusterMetadata().GetCurrentClusterName()
 	logger = logger.WithTags(tag.ComponentTimerQueue)
-	taskAllocator := newTaskAllocator(shard)
+	config := shard.GetConfig()
+	taskAllocator := queue.NewTaskAllocator(shard)
 
 	standbyTimerProcessors := make(map[string]*timerQueueStandbyProcessorImpl)
 	for clusterName, info := range shard.GetService().GetClusterMetadata().GetAllClusterInfo() {
@@ -92,26 +86,15 @@ func newTimerQueueProcessor(
 		}
 
 		if clusterName != shard.GetService().GetClusterMetadata().GetCurrentClusterName() {
-			historyRereplicator := xdc.NewHistoryRereplicator(
-				currentClusterName,
+			historyResender := ndc.NewHistoryResender(
 				shard.GetDomainCache(),
 				shard.GetService().GetClientBean().GetRemoteAdminClient(clusterName),
-				func(ctx context.Context, request *h.ReplicateRawEventsRequest) error {
-					return historyService.ReplicateRawEvents(ctx, request)
-				},
-				shard.GetService().GetPayloadSerializer(),
-				historyRereplicationTimeout,
-				nil,
-				logger,
-			)
-			nDCHistoryResender := xdc.NewNDCHistoryResender(
-				shard.GetDomainCache(),
-				shard.GetService().GetClientBean().GetRemoteAdminClient(clusterName),
-				func(ctx context.Context, request *h.ReplicateEventsV2Request) error {
+				func(ctx context.Context, request *types.ReplicateEventsV2Request) error {
 					return historyService.ReplicateEventsV2(ctx, request)
 				},
 				shard.GetService().GetPayloadSerializer(),
-				nil,
+				config.StandbyTaskReReplicationContextTimeout,
+				openExecutionCheck,
 				logger,
 			)
 			standbyTimerProcessors[clusterName] = newTimerQueueStandbyProcessor(
@@ -119,8 +102,7 @@ func newTimerQueueProcessor(
 				historyService,
 				clusterName,
 				taskAllocator,
-				historyRereplicator,
-				nDCHistoryResender,
+				historyResender,
 				queueTaskProcessor,
 				logger,
 			)
@@ -132,7 +114,7 @@ func newTimerQueueProcessor(
 		currentClusterName:    currentClusterName,
 		shard:                 shard,
 		taskAllocator:         taskAllocator,
-		config:                shard.GetConfig(),
+		config:                config,
 		metricsClient:         historyService.metricsClient,
 		historyService:        historyService,
 		ackLevel:              timerKey{VisibilityTimestamp: shard.GetTimerAckLevel()},
@@ -180,8 +162,9 @@ func (t *timerQueueProcessorImpl) Stop() {
 
 // NotifyNewTimers - Notify the processor about the new active / standby timer arrival.
 // This should be called each time new timer arrives, otherwise timers maybe fired unexpected.
-func (t *timerQueueProcessorImpl) NotifyNewTimers(
+func (t *timerQueueProcessorImpl) NotifyNewTask(
 	clusterName string,
+	_ *persistence.WorkflowExecutionInfo,
 	timerTasks []persistence.Task,
 ) {
 
@@ -249,12 +232,19 @@ func (t *timerQueueProcessorImpl) FailoverDomain(
 	failoverTimerProcessor.Start()
 }
 
+func (t *timerQueueProcessorImpl) HandleAction(
+	clusterName string,
+	action *queue.Action,
+) (*queue.ActionResult, error) {
+	return nil, errors.New("action not supported in old queue processing logic")
+}
+
 func (t *timerQueueProcessorImpl) LockTaskProcessing() {
-	t.taskAllocator.lock()
+	t.taskAllocator.Lock()
 }
 
 func (t *timerQueueProcessorImpl) UnlockTaskProcessing() {
-	t.taskAllocator.unlock()
+	t.taskAllocator.Unlock()
 }
 
 func (t *timerQueueProcessorImpl) completeTimersLoop() {
@@ -315,7 +305,7 @@ func (t *timerQueueProcessorImpl) completeTimers() error {
 	t.metricsClient.IncCounter(metrics.TimerQueueProcessorScope, metrics.TaskBatchCompleteCounter)
 
 	if lowerAckLevel.VisibilityTimestamp.Before(upperAckLevel.VisibilityTimestamp) {
-		err := t.shard.GetExecutionManager().RangeCompleteTimerTask(&persistence.RangeCompleteTimerTaskRequest{
+		err := t.shard.GetExecutionManager().RangeCompleteTimerTask(context.Background(), &persistence.RangeCompleteTimerTaskRequest{
 			InclusiveBeginTimestamp: lowerAckLevel.VisibilityTimestamp,
 			ExclusiveEndTimestamp:   upperAckLevel.VisibilityTimestamp,
 		})

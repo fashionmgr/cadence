@@ -27,19 +27,19 @@ import (
 	"time"
 
 	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	"github.com/uber/cadence/.gen/go/history"
-	"github.com/uber/cadence/.gen/go/history/historyservicetest"
-	"github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/client/history"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/mocks"
 	p "github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 )
 
 type (
@@ -63,10 +63,10 @@ func (s *ScavengerTestSuite) SetupTest() {
 	s.metric = metrics.NewClient(tally.NoopScope, metrics.Worker)
 }
 
-func (s *ScavengerTestSuite) createTestScavenger(rps int) (*mocks.HistoryV2Manager, *historyservicetest.MockClient, *Scavenger, *gomock.Controller) {
+func (s *ScavengerTestSuite) createTestScavenger(rps int) (*mocks.HistoryV2Manager, *history.MockClient, *Scavenger, *gomock.Controller) {
 	db := &mocks.HistoryV2Manager{}
 	controller := gomock.NewController(s.T())
-	workflowClient := historyservicetest.NewMockClient(controller)
+	workflowClient := history.NewMockClient(controller)
 	scvgr := NewScavenger(db, 100, workflowClient, ScavengerHeartbeatDetails{}, s.metric, s.logger)
 	scvgr.isInTest = true
 	return db, workflowClient, scvgr, controller
@@ -75,7 +75,7 @@ func (s *ScavengerTestSuite) createTestScavenger(rps int) (*mocks.HistoryV2Manag
 func (s *ScavengerTestSuite) TestAllSkipTasksTwoPages() {
 	db, _, scvgr, controller := s.createTestScavenger(100)
 	defer controller.Finish()
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize: pageSize,
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
 		NextPageToken: []byte("page1"),
@@ -95,7 +95,7 @@ func (s *ScavengerTestSuite) TestAllSkipTasksTwoPages() {
 		},
 	}, nil).Once()
 
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize:      pageSize,
 		NextPageToken: []byte("page1"),
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
@@ -127,7 +127,7 @@ func (s *ScavengerTestSuite) TestAllSkipTasksTwoPages() {
 func (s *ScavengerTestSuite) TestAllErrorSplittingTasksTwoPages() {
 	db, _, scvgr, controller := s.createTestScavenger(100)
 	defer controller.Finish()
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize: pageSize,
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
 		NextPageToken: []byte("page1"),
@@ -147,7 +147,7 @@ func (s *ScavengerTestSuite) TestAllErrorSplittingTasksTwoPages() {
 		},
 	}, nil).Once()
 
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize:      pageSize,
 		NextPageToken: []byte("page1"),
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
@@ -179,7 +179,7 @@ func (s *ScavengerTestSuite) TestAllErrorSplittingTasksTwoPages() {
 func (s *ScavengerTestSuite) TestNoGarbageTwoPages() {
 	db, client, scvgr, controller := s.createTestScavenger(100)
 	defer controller.Finish()
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize: pageSize,
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
 		NextPageToken: []byte("page1"),
@@ -199,7 +199,7 @@ func (s *ScavengerTestSuite) TestNoGarbageTwoPages() {
 		},
 	}, nil).Once()
 
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize:      pageSize,
 		NextPageToken: []byte("page1"),
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
@@ -219,32 +219,32 @@ func (s *ScavengerTestSuite) TestNoGarbageTwoPages() {
 		},
 	}, nil).Once()
 
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID1"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID1"),
-			RunId:      common.StringPtr("runID1"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID1"),
+			RunID:      common.StringPtr("runID1"),
 		},
 	}).Return(nil, nil)
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID2"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID2"),
-			RunId:      common.StringPtr("runID2"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID2"),
+			RunID:      common.StringPtr("runID2"),
 		},
 	}).Return(nil, nil)
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID3"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID3"),
-			RunId:      common.StringPtr("runID3"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID3"),
+			RunID:      common.StringPtr("runID3"),
 		},
 	}).Return(nil, nil)
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID4"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID4"),
-			RunId:      common.StringPtr("runID4"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID4"),
+			RunID:      common.StringPtr("runID4"),
 		},
 	}).Return(nil, nil)
 
@@ -260,7 +260,7 @@ func (s *ScavengerTestSuite) TestNoGarbageTwoPages() {
 func (s *ScavengerTestSuite) TestDeletingBranchesTwoPages() {
 	db, client, scvgr, controller := s.createTestScavenger(100)
 	defer controller.Finish()
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize: pageSize,
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
 		NextPageToken: []byte("page1"),
@@ -279,7 +279,7 @@ func (s *ScavengerTestSuite) TestDeletingBranchesTwoPages() {
 			},
 		},
 	}, nil).Once()
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize:      pageSize,
 		NextPageToken: []byte("page1"),
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
@@ -299,56 +299,56 @@ func (s *ScavengerTestSuite) TestDeletingBranchesTwoPages() {
 		},
 	}, nil).Once()
 
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID1"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID1"),
-			RunId:      common.StringPtr("runID1"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID1"),
+			RunID:      common.StringPtr("runID1"),
 		},
-	}).Return(nil, &shared.EntityNotExistsError{})
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	}).Return(nil, &types.EntityNotExistsError{})
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID2"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID2"),
-			RunId:      common.StringPtr("runID2"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID2"),
+			RunID:      common.StringPtr("runID2"),
 		},
-	}).Return(nil, &shared.EntityNotExistsError{})
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	}).Return(nil, &types.EntityNotExistsError{})
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID3"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID3"),
-			RunId:      common.StringPtr("runID3"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID3"),
+			RunID:      common.StringPtr("runID3"),
 		},
-	}).Return(nil, &shared.EntityNotExistsError{})
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	}).Return(nil, &types.EntityNotExistsError{})
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID4"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID4"),
-			RunId:      common.StringPtr("runID4"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID4"),
+			RunID:      common.StringPtr("runID4"),
 		},
-	}).Return(nil, &shared.EntityNotExistsError{})
+	}).Return(nil, &types.EntityNotExistsError{})
 
 	branchToken1, err := p.NewHistoryBranchTokenByBranchID("treeID1", "branchID1")
 	s.Nil(err)
-	db.On("DeleteHistoryBranch", &p.DeleteHistoryBranchRequest{
+	db.On("DeleteHistoryBranch", mock.Anything, &p.DeleteHistoryBranchRequest{
 		BranchToken: branchToken1,
 		ShardID:     common.IntPtr(1),
 	}).Return(nil).Once()
 	branchToken2, err := p.NewHistoryBranchTokenByBranchID("treeID2", "branchID2")
 	s.Nil(err)
-	db.On("DeleteHistoryBranch", &p.DeleteHistoryBranchRequest{
+	db.On("DeleteHistoryBranch", mock.Anything, &p.DeleteHistoryBranchRequest{
 		BranchToken: branchToken2,
 		ShardID:     common.IntPtr(1),
 	}).Return(nil).Once()
 	branchToken3, err := p.NewHistoryBranchTokenByBranchID("treeID3", "branchID3")
 	s.Nil(err)
-	db.On("DeleteHistoryBranch", &p.DeleteHistoryBranchRequest{
+	db.On("DeleteHistoryBranch", mock.Anything, &p.DeleteHistoryBranchRequest{
 		BranchToken: branchToken3,
 		ShardID:     common.IntPtr(1),
 	}).Return(nil).Once()
 	branchToken4, err := p.NewHistoryBranchTokenByBranchID("treeID4", "branchID4")
 	s.Nil(err)
-	db.On("DeleteHistoryBranch", &p.DeleteHistoryBranchRequest{
+	db.On("DeleteHistoryBranch", mock.Anything, &p.DeleteHistoryBranchRequest{
 		BranchToken: branchToken4,
 		ShardID:     common.IntPtr(1),
 	}).Return(nil).Once()
@@ -365,7 +365,7 @@ func (s *ScavengerTestSuite) TestDeletingBranchesTwoPages() {
 func (s *ScavengerTestSuite) TestMixesTwoPages() {
 	db, client, scvgr, controller := s.createTestScavenger(100)
 	defer controller.Finish()
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize: pageSize,
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
 		NextPageToken: []byte("page1"),
@@ -386,7 +386,7 @@ func (s *ScavengerTestSuite) TestMixesTwoPages() {
 			},
 		},
 	}, nil).Once()
-	db.On("GetAllHistoryTreeBranches", &p.GetAllHistoryTreeBranchesRequest{
+	db.On("GetAllHistoryTreeBranches", mock.Anything, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize:      pageSize,
 		NextPageToken: []byte("page1"),
 	}).Return(&p.GetAllHistoryTreeBranchesResponse{
@@ -415,39 +415,39 @@ func (s *ScavengerTestSuite) TestMixesTwoPages() {
 		},
 	}, nil).Once()
 
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID3"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID3"),
-			RunId:      common.StringPtr("runID3"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID3"),
+			RunID:      common.StringPtr("runID3"),
 		},
-	}).Return(nil, &shared.EntityNotExistsError{})
+	}).Return(nil, &types.EntityNotExistsError{})
 
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID4"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID4"),
-			RunId:      common.StringPtr("runID4"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID4"),
+			RunID:      common.StringPtr("runID4"),
 		},
-	}).Return(nil, &shared.EntityNotExistsError{})
-	client.EXPECT().DescribeMutableState(gomock.Any(), &history.DescribeMutableStateRequest{
+	}).Return(nil, &types.EntityNotExistsError{})
+	client.EXPECT().DescribeMutableState(gomock.Any(), &types.DescribeMutableStateRequest{
 		DomainUUID: common.StringPtr("domainID5"),
-		Execution: &shared.WorkflowExecution{
-			WorkflowId: common.StringPtr("workflowID5"),
-			RunId:      common.StringPtr("runID5"),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr("workflowID5"),
+			RunID:      common.StringPtr("runID5"),
 		},
 	}).Return(nil, nil)
 
 	branchToken3, err := p.NewHistoryBranchTokenByBranchID("treeID3", "branchID3")
 	s.Nil(err)
-	db.On("DeleteHistoryBranch", &p.DeleteHistoryBranchRequest{
+	db.On("DeleteHistoryBranch", mock.Anything, &p.DeleteHistoryBranchRequest{
 		BranchToken: branchToken3,
 		ShardID:     common.IntPtr(1),
 	}).Return(nil).Once()
 
 	branchToken4, err := p.NewHistoryBranchTokenByBranchID("treeID4", "branchID4")
 	s.Nil(err)
-	db.On("DeleteHistoryBranch", &p.DeleteHistoryBranchRequest{
+	db.On("DeleteHistoryBranch", mock.Anything, &p.DeleteHistoryBranchRequest{
 		BranchToken: branchToken4,
 		ShardID:     common.IntPtr(1),
 	}).Return(fmt.Errorf("failed to delete history")).Once()

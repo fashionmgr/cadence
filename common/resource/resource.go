@@ -37,6 +37,7 @@ import (
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
+	"github.com/uber/cadence/common/domain"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/membership"
 	"github.com/uber/cadence/common/messaging"
@@ -61,12 +62,14 @@ type (
 		// other common resources
 
 		GetDomainCache() cache.DomainCache
+		GetDomainMetricsScopeCache() cache.DomainMetricsScopeCache
 		GetTimeSource() clock.TimeSource
 		GetPayloadSerializer() persistence.PayloadSerializer
 		GetMetricsClient() metrics.Client
 		GetArchiverProvider() provider.ArchiverProvider
 		GetMessagingClient() messaging.Client
 		GetBlobstoreClient() blobstore.Client
+		GetDomainReplicationQueue() domain.ReplicationQueue
 
 		// membership infos
 
@@ -94,7 +97,6 @@ type (
 		GetMetadataManager() persistence.MetadataManager
 		GetTaskManager() persistence.TaskManager
 		GetVisibilityManager() persistence.VisibilityManager
-		GetDomainReplicationQueue() persistence.DomainReplicationQueue
 		GetShardManager() persistence.ShardManager
 		GetHistoryManager() persistence.HistoryManager
 		GetExecutionManager(int) (persistence.ExecutionManager, error)

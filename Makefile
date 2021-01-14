@@ -44,6 +44,9 @@ INTEG_TEST_NDC_DIR=hostndc
 GO_BUILD_LDFLAGS_CMD      := $(abspath ./scripts/go-build-ldflags.sh)
 GO_BUILD_LDFLAGS          := $(shell $(GO_BUILD_LDFLAGS_CMD) LDFLAG)
 
+# TODO to be consistent, use nosql as PERSISTENCE_TYPE and cassandra PERSISTENCE_PLUGIN
+# file names like integ_cassandra__cover should become integ_nosql_cassandra_cover
+# for https://github.com/uber/cadence/issues/3514
 ifndef PERSISTENCE_TYPE
 override PERSISTENCE_TYPE = cassandra
 endif
@@ -81,21 +84,22 @@ TOOLS_SRC += $(TOOLS_CMD_ROOT)
 # all directories with *_test.go files in them (exclude host/xdc)
 TEST_DIRS := $(filter-out $(INTEG_TEST_XDC_ROOT)%, $(sort $(dir $(filter %_test.go,$(ALL_SRC)))))
 
-# all tests other than integration test fall into the pkg_test category
+# all tests other than end-to-end integration test fall into the pkg_test category
 PKG_TEST_DIRS := $(filter-out $(INTEG_TEST_ROOT)%,$(TEST_DIRS))
 
 # Code coverage output files
-COVER_ROOT                 := $(BUILD)/coverage
-UNIT_COVER_FILE            := $(COVER_ROOT)/unit_cover.out
-INTEG_COVER_FILE           := $(COVER_ROOT)/integ_$(PERSISTENCE_TYPE)_cover.out
-INTEG_XDC_COVER_FILE       := $(COVER_ROOT)/integ_xdc_$(PERSISTENCE_TYPE)_cover.out
-INTEG_CASS_COVER_FILE      := $(COVER_ROOT)/integ_cassandra_cover.out
-INTEG_XDC_CASS_COVER_FILE  := $(COVER_ROOT)/integ_xdc_cassandra_cover.out
-INTEG_SQL_COVER_FILE       := $(COVER_ROOT)/integ_sql_cover.out
-INTEG_XDC_SQL_COVER_FILE   := $(COVER_ROOT)/integ_xdc_sql_cover.out
-INTEG_NDC_COVER_FILE       := $(COVER_ROOT)/integ_ndc_$(PERSISTENCE_TYPE)_cover.out
-INTEG_NDC_CASS_COVER_FILE  := $(COVER_ROOT)/integ_ndc_cassandra_cover.out
-INTEG_NDC_SQL_COVER_FILE   := $(COVER_ROOT)/integ_ndc_sql_cover.out
+COVER_ROOT                      := $(BUILD)/coverage
+UNIT_COVER_FILE                 := $(COVER_ROOT)/unit_cover.out
+
+INTEG_COVER_FILE                := $(COVER_ROOT)/integ_$(PERSISTENCE_TYPE)_$(PERSISTENCE_PLUGIN)_cover.out
+INTEG_COVER_FILE_CASS           := $(COVER_ROOT)/integ_cassandra__cover.out
+INTEG_COVER_FILE_MYSQL          := $(COVER_ROOT)/integ_sql_mysql_cover.out
+INTEG_COVER_FILE_POSTGRES       := $(COVER_ROOT)/integ_sql_postgres_cover.out
+
+INTEG_NDC_COVER_FILE            := $(COVER_ROOT)/integ_ndc_$(PERSISTENCE_TYPE)_$(PERSISTENCE_PLUGIN)_cover.out
+INTEG_NDC_COVER_FILE_CASS       := $(COVER_ROOT)/integ_ndc_cassandra__cover.out
+INTEG_NDC_COVER_FILE_MYSQL      := $(COVER_ROOT)/integ_ndc_sql_mysql_cover.out
+INTEG_NDC_COVER_FILE_POSTGRES   := $(COVER_ROOT)/integ_ndc_sql_postgres_cover.out
 
 # Need the following option to have integration tests
 # count towards coverage. godoc below:
@@ -123,29 +127,34 @@ copyright: cmd/tools/copyright/licensegen.go
 
 cadence-cassandra-tool: $(TOOLS_SRC)
 	@echo "compiling cadence-cassandra-tool with OS: $(GOOS), ARCH: $(GOARCH)"
-	go build -i -o cadence-cassandra-tool cmd/tools/cassandra/main.go
+	go build -o cadence-cassandra-tool cmd/tools/cassandra/main.go
 
 cadence-sql-tool: $(TOOLS_SRC)
 	@echo "compiling cadence-sql-tool with OS: $(GOOS), ARCH: $(GOARCH)"
-	go build -i -o cadence-sql-tool cmd/tools/sql/main.go
+	go build -o cadence-sql-tool cmd/tools/sql/main.go
 
 cadence: $(TOOLS_SRC)
 	@echo "compiling cadence with OS: $(GOOS), ARCH: $(GOARCH)"
-	go build -i -o cadence cmd/tools/cli/main.go
+	go build -o cadence cmd/tools/cli/main.go
 
 cadence-server: $(ALL_SRC)
 	@echo "compiling cadence-server with OS: $(GOOS), ARCH: $(GOARCH)"
-	go build -ldflags '$(GO_BUILD_LDFLAGS)' -i -o cadence-server cmd/server/main.go
+	go build -ldflags '$(GO_BUILD_LDFLAGS)' -o cadence-server cmd/server/main.go
 
 cadence-canary: $(ALL_SRC)
 	@echo "compiling cadence-canary with OS: $(GOOS), ARCH: $(GOARCH)"
-	go build -i -o cadence-canary cmd/canary/main.go
+	go build -o cadence-canary cmd/canary/main.go
+
+go-generate-format: go-generate fmt
 
 go-generate:
 	GO111MODULE=off go get -u github.com/myitcv/gobin
 	GOOS= GOARCH= gobin -mod=readonly github.com/golang/mock/mockgen
+	GOOS= GOARCH= gobin -mod=readonly github.com/dmarkham/enumer
 	@echo "running go generate ./..."
 	@go generate ./...
+	@echo "running go run cmd/tools/copyright/licensegen.go"
+	@go run cmd/tools/copyright/licensegen.go 
 
 lint:
 	@echo "running linter"
@@ -171,17 +180,26 @@ bins_nothrift: fmt lint copyright cadence-cassandra-tool cadence-sql-tool cadenc
 
 bins: thriftc bins_nothrift
 
+tools: cadence-cassandra-tool cadence-sql-tool cadence
+
 test: bins
 	@rm -f test
 	@rm -f test.log
-	@for dir in $(TEST_DIRS); do \
+	@for dir in $(PKG_TEST_DIRS); do \
 		go test -timeout $(TEST_TIMEOUT) -race -coverprofile=$@ "$$dir" $(TEST_TAG) | tee -a test.log; \
 	done;
 
 release: go-generate test
 
-# need to run xdc tests with race detector off because of ringpop bug causing data race issue
-test_xdc: bins
+test_e2e: bins
+	@rm -f test
+	@rm -f test.log
+	@for dir in $(INTEG_TEST_ROOT); do \
+		go test -timeout $(TEST_TIMEOUT) -coverprofile=$@ "$$dir" $(TEST_TAG) | tee -a test.log; \
+	done;
+
+# need to run end-to-end xdc tests with race detector off because of ringpop bug causing data race issue
+test_e2e_xdc: bins
 	@rm -f test
 	@rm -f test.log
 	@for dir in $(INTEG_TEST_XDC_ROOT); do \
@@ -205,38 +223,30 @@ cover_integration_profile: clean bins_nothrift
 	@mkdir -p $(COVER_ROOT)
 	@echo "mode: atomic" > $(INTEG_COVER_FILE)
 
-	@echo Running integration test with $(PERSISTENCE_TYPE)
+	@echo Running integration test with $(PERSISTENCE_TYPE) $(PERSISTENCE_PLUGIN)
 	@mkdir -p $(BUILD)/$(INTEG_TEST_DIR)
-	@time go test $(INTEG_TEST_ROOT) $(TEST_ARG) $(TEST_TAG) -persistenceType=$(PERSISTENCE_TYPE) $(GOCOVERPKG_ARG) -coverprofile=$(BUILD)/$(INTEG_TEST_DIR)/coverage.out || exit 1;
+	@time go test $(INTEG_TEST_ROOT) $(TEST_ARG) $(TEST_TAG) -persistenceType=$(PERSISTENCE_TYPE) -sqlPluginName=$(PERSISTENCE_PLUGIN) $(GOCOVERPKG_ARG) -coverprofile=$(BUILD)/$(INTEG_TEST_DIR)/coverage.out || exit 1;
 	@cat $(BUILD)/$(INTEG_TEST_DIR)/coverage.out | grep -v "^mode: \w\+" >> $(INTEG_COVER_FILE)
-
-cover_xdc_profile: clean bins_nothrift
-	@mkdir -p $(BUILD)
-	@mkdir -p $(COVER_ROOT)
-	@echo "mode: atomic" > $(INTEG_XDC_COVER_FILE)
-
-	@echo Running integration test for cross dc with $(PERSISTENCE_TYPE)
-	@mkdir -p $(BUILD)/$(INTEG_TEST_XDC_DIR)
-	@time go test -v -timeout $(TEST_TIMEOUT) $(INTEG_TEST_XDC_ROOT) $(TEST_TAG) -persistenceType=$(PERSISTENCE_TYPE) $(GOCOVERPKG_ARG) -coverprofile=$(BUILD)/$(INTEG_TEST_XDC_DIR)/coverage.out || exit 1;
-	@cat $(BUILD)/$(INTEG_TEST_XDC_DIR)/coverage.out | grep -v "^mode: \w\+" | grep -v "mode: set" >> $(INTEG_XDC_COVER_FILE)
 
 cover_ndc_profile: clean bins_nothrift
 	@mkdir -p $(BUILD)
 	@mkdir -p $(COVER_ROOT)
 	@echo "mode: atomic" > $(INTEG_NDC_COVER_FILE)
 
-	@echo Running integration test for 3+ dc with $(PERSISTENCE_TYPE)
+	@echo Running integration test for 3+ dc with $(PERSISTENCE_TYPE) $(PERSISTENCE_PLUGIN)
 	@mkdir -p $(BUILD)/$(INTEG_TEST_NDC_DIR)
-	@time go test -v -timeout $(TEST_TIMEOUT) $(INTEG_TEST_NDC_ROOT) $(TEST_TAG) -persistenceType=$(PERSISTENCE_TYPE) $(GOCOVERPKG_ARG) -coverprofile=$(BUILD)/$(INTEG_TEST_NDC_DIR)/coverage.out -count=$(TEST_RUN_COUNT) || exit 1;
+	@time go test -v -timeout $(TEST_TIMEOUT) $(INTEG_TEST_NDC_ROOT) $(TEST_TAG) -persistenceType=$(PERSISTENCE_TYPE) -sqlPluginName=$(PERSISTENCE_PLUGIN) $(GOCOVERPKG_ARG) -coverprofile=$(BUILD)/$(INTEG_TEST_NDC_DIR)/coverage.out -count=$(TEST_RUN_COUNT) || exit 1;
 	@cat $(BUILD)/$(INTEG_TEST_NDC_DIR)/coverage.out | grep -v "^mode: \w\+" | grep -v "mode: set" >> $(INTEG_NDC_COVER_FILE)
 
-$(COVER_ROOT)/cover.out: $(UNIT_COVER_FILE) $(INTEG_CASS_COVER_FILE) $(INTEG_XDC_CASS_COVER_FILE) $(INTEG_SQL_COVER_FILE) $(INTEG_XDC_SQL_COVER_FILE)
+$(COVER_ROOT)/cover.out: $(UNIT_COVER_FILE) $(INTEG_COVER_FILE_CASS) $(INTEG_COVER_FILE_MYSQL) $(INTEG_COVER_FILE_POSTGRES) $(INTEG_NDC_COVER_FILE_CASS) $(INTEG_NDC_COVER_FILE_MYSQL) $(INTEG_NDC_COVER_FILE_POSTGRES)
 	@echo "mode: atomic" > $(COVER_ROOT)/cover.out
 	cat $(UNIT_COVER_FILE) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
-	cat $(INTEG_CASS_COVER_FILE) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
-	cat $(INTEG_XDC_CASS_COVER_FILE) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
-	cat $(INTEG_SQL_COVER_FILE) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
-	cat $(INTEG_XDC_SQL_COVER_FILE) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
+	cat $(INTEG_COVER_FILE_CASS) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
+	cat $(INTEG_COVER_FILE_MYSQL) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
+	cat $(INTEG_COVER_FILE_POSTGRES) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
+	cat $(INTEG_NDC_COVER_FILE_CASS) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
+	cat $(INTEG_NDC_COVER_FILE_MYSQL) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
+	cat $(INTEG_NDC_COVER_FILE_POSTGRES) | grep -v "^mode: \w\+" | grep -vP ".gen|[Mm]ock[s]?" >> $(COVER_ROOT)/cover.out
 
 cover: $(COVER_ROOT)/cover.out
 	go tool cover -html=$(COVER_ROOT)/cover.out;
@@ -252,7 +262,7 @@ clean:
 	rm -f cadence-cassandra-tool
 	rm -Rf $(BUILD)
 
-install-schema: bins
+install-schema: cadence-cassandra-tool
 	./cadence-cassandra-tool --ep 127.0.0.1 create -k cadence --rf 1
 	./cadence-cassandra-tool --ep 127.0.0.1 -k cadence setup-schema -v 0.0
 	./cadence-cassandra-tool --ep 127.0.0.1 -k cadence update-schema -d ./schema/cassandra/cadence/versioned
@@ -260,7 +270,7 @@ install-schema: bins
 	./cadence-cassandra-tool --ep 127.0.0.1 -k cadence_visibility setup-schema -v 0.0
 	./cadence-cassandra-tool --ep 127.0.0.1 -k cadence_visibility update-schema -d ./schema/cassandra/visibility/versioned
 
-install-schema-mysql: bins
+install-schema-mysql: cadence-sql-tool
 	./cadence-sql-tool --ep 127.0.0.1 create --db cadence
 	./cadence-sql-tool --ep 127.0.0.1 --db cadence setup-schema -v 0.0
 	./cadence-sql-tool --ep 127.0.0.1 --db cadence update-schema -d ./schema/mysql/v57/cadence/versioned
@@ -268,7 +278,7 @@ install-schema-mysql: bins
 	./cadence-sql-tool --ep 127.0.0.1 --db cadence_visibility setup-schema -v 0.0
 	./cadence-sql-tool --ep 127.0.0.1 --db cadence_visibility update-schema -d ./schema/mysql/v57/visibility/versioned
 
-install-schema-postgres: bins
+install-schema-postgres: cadence-sql-tool
 	./cadence-sql-tool --ep 127.0.0.1 -p 5432 -u postgres -pw cadence --pl postgres create --db cadence
 	./cadence-sql-tool --ep 127.0.0.1 -p 5432 -u postgres -pw cadence --pl postgres --db cadence setup -v 0.0
 	./cadence-sql-tool --ep 127.0.0.1 -p 5432 -u postgres -pw cadence --pl postgres --db cadence update-schema -d ./schema/postgres/cadence/versioned
@@ -279,7 +289,7 @@ install-schema-postgres: bins
 start: bins
 	./cadence-server start
 
-install-schema-cdc: bins
+install-schema-cdc: cadence-cassandra-tool
 	@echo Setting up cadence_active key space
 	./cadence-cassandra-tool --ep 127.0.0.1 create -k cadence_active --rf 1
 	./cadence-cassandra-tool --ep 127.0.0.1 -k cadence_active setup-schema -v 0.0
@@ -315,3 +325,14 @@ start-cdc-other: bins
 
 start-canary: bins
 	./cadence-canary start
+
+gen-internal-types:
+	go run common/types/generator/main.go
+
+internal-types: gen-internal-types fmt copyright
+
+start-mysql: bins
+	./cadence-server --zone mysql start
+
+start-postgres: bins
+	./cadence-server --zone postgres start

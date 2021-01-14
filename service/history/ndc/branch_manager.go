@@ -18,21 +18,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination branch_manager_mock.go
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination branch_manager_mock.go
 
 package ndc
 
 import (
-	ctx "context"
+	"context"
 
 	"github.com/pborman/uuid"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
 )
@@ -44,7 +44,7 @@ const (
 type (
 	branchManager interface {
 		prepareVersionHistory(
-			ctx ctx.Context,
+			ctx context.Context,
 			incomingVersionHistory *persistence.VersionHistory,
 			incomingFirstEventID int64,
 			incomingFirstEventVersion int64,
@@ -85,7 +85,7 @@ func newBranchManager(
 }
 
 func (r *branchManagerImpl) prepareVersionHistory(
-	ctx ctx.Context,
+	ctx context.Context,
 	incomingVersionHistory *persistence.VersionHistory,
 	incomingFirstEventID int64,
 	incomingFirstEventVersion int64,
@@ -97,6 +97,9 @@ func (r *branchManagerImpl) prepareVersionHistory(
 	}
 
 	localVersionHistories := r.mutableState.GetVersionHistories()
+	if localVersionHistories == nil {
+		return false, 0, execution.ErrMissingVersionHistories
+	}
 	versionHistory, err := localVersionHistories.GetVersionHistory(versionHistoryIndex)
 	if err != nil {
 		return false, 0, err
@@ -146,12 +149,14 @@ func (r *branchManagerImpl) prepareVersionHistory(
 }
 
 func (r *branchManagerImpl) flushBufferedEvents(
-	ctx ctx.Context,
+	ctx context.Context,
 	incomingVersionHistory *persistence.VersionHistory,
 ) (int, *persistence.VersionHistoryItem, error) {
 
 	localVersionHistories := r.mutableState.GetVersionHistories()
-
+	if localVersionHistories == nil {
+		return 0, nil, execution.ErrMissingVersionHistories
+	}
 	versionHistoryIndex, lcaVersionHistoryItem, err := localVersionHistories.FindLCAVersionHistoryIndexAndItem(
 		incomingVersionHistory,
 	)
@@ -178,6 +183,7 @@ func (r *branchManagerImpl) flushBufferedEvents(
 	}
 	// the workflow must be updated as active, to send out replication tasks
 	if err := targetWorkflow.GetContext().UpdateWorkflowExecutionAsActive(
+		ctx,
 		r.shard.GetTimeSource().Now(),
 	); err != nil {
 		return 0, nil, err
@@ -191,7 +197,7 @@ func (r *branchManagerImpl) flushBufferedEvents(
 }
 
 func (r *branchManagerImpl) verifyEventsOrder(
-	ctx ctx.Context,
+	ctx context.Context,
 	localVersionHistory *persistence.VersionHistory,
 	incomingFirstEventID int64,
 	incomingFirstEventVersion int64,
@@ -224,7 +230,7 @@ func (r *branchManagerImpl) verifyEventsOrder(
 }
 
 func (r *branchManagerImpl) createNewBranch(
-	ctx ctx.Context,
+	ctx context.Context,
 	baseBranchToken []byte,
 	baseBranchLastEventID int64,
 	newVersionHistory *persistence.VersionHistory,
@@ -235,7 +241,7 @@ func (r *branchManagerImpl) createNewBranch(
 	domainID := executionInfo.DomainID
 	workflowID := executionInfo.WorkflowID
 
-	resp, err := r.historyV2Mgr.ForkHistoryBranch(&persistence.ForkHistoryBranchRequest{
+	resp, err := r.historyV2Mgr.ForkHistoryBranch(ctx, &persistence.ForkHistoryBranchRequest{
 		ForkBranchToken: baseBranchToken,
 		ForkNodeID:      baseBranchLastEventID + 1,
 		Info:            persistence.BuildHistoryGarbageCleanupInfo(domainID, workflowID, uuid.New()),
@@ -248,14 +254,18 @@ func (r *branchManagerImpl) createNewBranch(
 	if err := newVersionHistory.SetBranchToken(resp.NewBranchToken); err != nil {
 		return 0, err
 	}
-	branchChanged, newIndex, err := r.mutableState.GetVersionHistories().AddVersionHistory(
+	versionHistory := r.mutableState.GetVersionHistories()
+	if versionHistory == nil {
+		return 0, execution.ErrMissingVersionHistories
+	}
+	branchChanged, newIndex, err := versionHistory.AddVersionHistory(
 		newVersionHistory,
 	)
 	if err != nil {
 		return 0, err
 	}
 	if branchChanged {
-		return 0, &shared.BadRequestError{
+		return 0, &types.BadRequestError{
 			Message: "nDCBranchMgr encounter branch change during conflict resolution",
 		}
 	}

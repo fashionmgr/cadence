@@ -24,14 +24,13 @@ import (
 	"context"
 	"time"
 
-	m "github.com/uber/cadence/.gen/go/matching"
-	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/client/matching"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
@@ -39,9 +38,12 @@ import (
 )
 
 const (
-	transferActiveTaskDefaultTimeout = 30 * time.Second
-	secondsInDay                     = int32(24 * time.Hour / time.Second)
-	defaultDomainName                = "defaultDomainName"
+	taskDefaultTimeout             = 3 * time.Second
+	taskGetExecutionContextTimeout = 500 * time.Millisecond
+	taskRPCCallTimeout             = 2 * time.Second
+
+	secondsInDay      = int32(24 * time.Hour / time.Second)
+	defaultDomainName = "defaultDomainName"
 )
 
 type (
@@ -77,70 +79,60 @@ func newTransferTaskExecutorBase(
 	}
 }
 
-func (t *transferTaskExecutorBase) getDomainIDAndWorkflowExecution(
-	task *persistence.TransferTaskInfo,
-) (string, workflow.WorkflowExecution) {
-
-	return task.DomainID, workflow.WorkflowExecution{
-		WorkflowId: common.StringPtr(task.WorkflowID),
-		RunId:      common.StringPtr(task.RunID),
-	}
-}
-
 func (t *transferTaskExecutorBase) pushActivity(
+	ctx context.Context,
 	task *persistence.TransferTaskInfo,
 	activityScheduleToStartTimeout int32,
 ) error {
 
-	ctx, cancel := context.WithTimeout(context.Background(), transferActiveTaskDefaultTimeout)
+	ctx, cancel := context.WithTimeout(ctx, taskRPCCallTimeout)
 	defer cancel()
 
 	if task.TaskType != persistence.TransferTaskTypeActivityTask {
 		t.logger.Fatal("Cannot process non activity task", tag.TaskType(task.GetTaskType()))
 	}
 
-	err := t.matchingClient.AddActivityTask(ctx, &m.AddActivityTaskRequest{
+	return t.matchingClient.AddActivityTask(ctx, &types.AddActivityTaskRequest{
 		DomainUUID:       common.StringPtr(task.TargetDomainID),
 		SourceDomainUUID: common.StringPtr(task.DomainID),
-		Execution: &workflow.WorkflowExecution{
-			WorkflowId: common.StringPtr(task.WorkflowID),
-			RunId:      common.StringPtr(task.RunID),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr(task.WorkflowID),
+			RunID:      common.StringPtr(task.RunID),
 		},
-		TaskList:                      &workflow.TaskList{Name: &task.TaskList},
-		ScheduleId:                    &task.ScheduleID,
+		TaskList:                      &types.TaskList{Name: &task.TaskList},
+		ScheduleID:                    &task.ScheduleID,
 		ScheduleToStartTimeoutSeconds: common.Int32Ptr(activityScheduleToStartTimeout),
 	})
-
-	return err
 }
 
 func (t *transferTaskExecutorBase) pushDecision(
+	ctx context.Context,
 	task *persistence.TransferTaskInfo,
-	tasklist *workflow.TaskList,
+	tasklist *types.TaskList,
 	decisionScheduleToStartTimeout int32,
 ) error {
 
-	ctx, cancel := context.WithTimeout(context.Background(), transferActiveTaskDefaultTimeout)
+	ctx, cancel := context.WithTimeout(ctx, taskRPCCallTimeout)
 	defer cancel()
 
 	if task.TaskType != persistence.TransferTaskTypeDecisionTask {
 		t.logger.Fatal("Cannot process non decision task", tag.TaskType(task.GetTaskType()))
 	}
 
-	err := t.matchingClient.AddDecisionTask(ctx, &m.AddDecisionTaskRequest{
+	return t.matchingClient.AddDecisionTask(ctx, &types.AddDecisionTaskRequest{
 		DomainUUID: common.StringPtr(task.DomainID),
-		Execution: &workflow.WorkflowExecution{
-			WorkflowId: common.StringPtr(task.WorkflowID),
-			RunId:      common.StringPtr(task.RunID),
+		Execution: &types.WorkflowExecution{
+			WorkflowID: common.StringPtr(task.WorkflowID),
+			RunID:      common.StringPtr(task.RunID),
 		},
 		TaskList:                      tasklist,
-		ScheduleId:                    common.Int64Ptr(task.ScheduleID),
+		ScheduleID:                    common.Int64Ptr(task.ScheduleID),
 		ScheduleToStartTimeoutSeconds: common.Int32Ptr(decisionScheduleToStartTimeout),
 	})
-	return err
 }
 
 func (t *transferTaskExecutorBase) recordWorkflowStarted(
+	ctx context.Context,
 	domainID string,
 	workflowID string,
 	runID string,
@@ -150,14 +142,14 @@ func (t *transferTaskExecutorBase) recordWorkflowStarted(
 	workflowTimeout int32,
 	taskID int64,
 	taskList string,
-	visibilityMemo *workflow.Memo,
+	visibilityMemo *types.Memo,
 	searchAttributes map[string][]byte,
 ) error {
 
 	domain := defaultDomainName
 
 	if domainEntry, err := t.shard.GetDomainCache().GetDomainByID(domainID); err != nil {
-		if _, ok := err.(*workflow.EntityNotExistsError); !ok {
+		if _, ok := err.(*types.EntityNotExistsError); !ok {
 			return err
 		}
 	} else {
@@ -172,9 +164,9 @@ func (t *transferTaskExecutorBase) recordWorkflowStarted(
 	request := &persistence.RecordWorkflowExecutionStartedRequest{
 		DomainUUID: domainID,
 		Domain:     domain,
-		Execution: workflow.WorkflowExecution{
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(runID),
+		Execution: types.WorkflowExecution{
+			WorkflowID: common.StringPtr(workflowID),
+			RunID:      common.StringPtr(runID),
 		},
 		WorkflowTypeName:   workflowTypeName,
 		StartTimestamp:     startTimeUnixNano,
@@ -186,10 +178,11 @@ func (t *transferTaskExecutorBase) recordWorkflowStarted(
 		SearchAttributes:   searchAttributes,
 	}
 
-	return t.visibilityMgr.RecordWorkflowExecutionStarted(request)
+	return t.visibilityMgr.RecordWorkflowExecutionStarted(ctx, request)
 }
 
 func (t *transferTaskExecutorBase) upsertWorkflowExecution(
+	ctx context.Context,
 	domainID string,
 	workflowID string,
 	runID string,
@@ -199,14 +192,14 @@ func (t *transferTaskExecutorBase) upsertWorkflowExecution(
 	workflowTimeout int32,
 	taskID int64,
 	taskList string,
-	visibilityMemo *workflow.Memo,
+	visibilityMemo *types.Memo,
 	searchAttributes map[string][]byte,
 ) error {
 
 	domain := defaultDomainName
 	domainEntry, err := t.shard.GetDomainCache().GetDomainByID(domainID)
 	if err != nil {
-		if _, ok := err.(*workflow.EntityNotExistsError); !ok {
+		if _, ok := err.(*types.EntityNotExistsError); !ok {
 			return err
 		}
 	} else {
@@ -216,9 +209,9 @@ func (t *transferTaskExecutorBase) upsertWorkflowExecution(
 	request := &persistence.UpsertWorkflowExecutionRequest{
 		DomainUUID: domainID,
 		Domain:     domain,
-		Execution: workflow.WorkflowExecution{
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(runID),
+		Execution: types.WorkflowExecution{
+			WorkflowID: common.StringPtr(workflowID),
+			RunID:      common.StringPtr(runID),
 		},
 		WorkflowTypeName:   workflowTypeName,
 		StartTimestamp:     startTimeUnixNano,
@@ -230,10 +223,11 @@ func (t *transferTaskExecutorBase) upsertWorkflowExecution(
 		SearchAttributes:   searchAttributes,
 	}
 
-	return t.visibilityMgr.UpsertWorkflowExecution(request)
+	return t.visibilityMgr.UpsertWorkflowExecution(ctx, request)
 }
 
 func (t *transferTaskExecutorBase) recordWorkflowClosed(
+	ctx context.Context,
 	domainID string,
 	workflowID string,
 	runID string,
@@ -241,10 +235,10 @@ func (t *transferTaskExecutorBase) recordWorkflowClosed(
 	startTimeUnixNano int64,
 	executionTimeUnixNano int64,
 	endTimeUnixNano int64,
-	closeStatus workflow.WorkflowExecutionCloseStatus,
+	closeStatus types.WorkflowExecutionCloseStatus,
 	historyLength int64,
 	taskID int64,
-	visibilityMemo *workflow.Memo,
+	visibilityMemo *types.Memo,
 	taskList string,
 	searchAttributes map[string][]byte,
 ) error {
@@ -271,17 +265,17 @@ func (t *transferTaskExecutorBase) recordWorkflowClosed(
 		}
 
 		clusterConfiguredForVisibilityArchival := t.shard.GetService().GetArchivalMetadata().GetVisibilityConfig().ClusterConfiguredForArchival()
-		domainConfiguredForVisibilityArchival := domainEntry.GetConfig().VisibilityArchivalStatus == workflow.ArchivalStatusEnabled
+		domainConfiguredForVisibilityArchival := domainEntry.GetConfig().VisibilityArchivalStatus == types.ArchivalStatusEnabled
 		archiveVisibility = clusterConfiguredForVisibilityArchival && domainConfiguredForVisibilityArchival
 	}
 
 	if recordWorkflowClose {
-		if err := t.visibilityMgr.RecordWorkflowExecutionClosed(&persistence.RecordWorkflowExecutionClosedRequest{
+		if err := t.visibilityMgr.RecordWorkflowExecutionClosed(ctx, &persistence.RecordWorkflowExecutionClosedRequest{
 			DomainUUID: domainID,
 			Domain:     domain,
-			Execution: workflow.WorkflowExecution{
-				WorkflowId: common.StringPtr(workflowID),
-				RunId:      common.StringPtr(runID),
+			Execution: types.WorkflowExecution{
+				WorkflowID: common.StringPtr(workflowID),
+				RunID:      common.StringPtr(runID),
 			},
 			WorkflowTypeName:   workflowTypeName,
 			StartTimestamp:     startTimeUnixNano,
@@ -300,9 +294,9 @@ func (t *transferTaskExecutorBase) recordWorkflowClosed(
 	}
 
 	if archiveVisibility {
-		ctx, cancel := context.WithTimeout(context.Background(), t.config.TransferProcessorVisibilityArchivalTimeLimit())
+		archiveCtx, cancel := context.WithTimeout(ctx, t.config.TransferProcessorVisibilityArchivalTimeLimit())
 		defer cancel()
-		_, err := t.archiverClient.Archive(ctx, &archiver.ClientRequest{
+		_, err := t.archiverClient.Archive(archiveCtx, &archiver.ClientRequest{
 			ArchiveRequest: &archiver.ArchiveRequest{
 				DomainID:           domainID,
 				DomainName:         domain,
@@ -331,7 +325,7 @@ func (t *transferTaskExecutorBase) recordWorkflowClosed(
 // Argument startEvent is to save additional call of msBuilder.GetStartEvent
 func getWorkflowExecutionTimestamp(
 	msBuilder execution.MutableState,
-	startEvent *workflow.HistoryEvent,
+	startEvent *types.HistoryEvent,
 ) time.Time {
 	// Use value 0 to represent workflows that don't need backoff. Since ES doesn't support
 	// comparison between two field, we need a value to differentiate them from cron workflows
@@ -350,12 +344,12 @@ func getWorkflowExecutionTimestamp(
 
 func getWorkflowMemo(
 	memo map[string][]byte,
-) *workflow.Memo {
+) *types.Memo {
 
 	if memo == nil {
 		return nil
 	}
-	return &workflow.Memo{Fields: memo}
+	return &types.Memo{Fields: memo}
 }
 
 func copySearchAttributes(
@@ -376,6 +370,6 @@ func copySearchAttributes(
 }
 
 func isWorkflowNotExistError(err error) bool {
-	_, ok := err.(*workflow.EntityNotExistsError)
+	_, ok := err.(*types.EntityNotExistsError)
 	return ok
 }

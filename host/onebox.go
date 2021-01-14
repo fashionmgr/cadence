@@ -25,10 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-
-	adminClient "github.com/uber/cadence/client/admin"
-	"github.com/uber/cadence/common/authorization"
-	"github.com/uber/cadence/common/domain"
+	"time"
 
 	"github.com/pborman/uuid"
 	"github.com/uber-go/tally"
@@ -38,17 +35,18 @@ import (
 	"go.uber.org/yarpc/api/transport"
 	"go.uber.org/yarpc/transport/tchannel"
 
-	"github.com/uber/cadence/.gen/go/admin/adminserviceclient"
-	"github.com/uber/cadence/.gen/go/cadence/workflowserviceclient"
-	"github.com/uber/cadence/.gen/go/history/historyserviceclient"
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/client"
+	adminClient "github.com/uber/cadence/client/admin"
+	frontendClient "github.com/uber/cadence/client/frontend"
+	historyClient "github.com/uber/cadence/client/history"
 	"github.com/uber/cadence/common"
 	carchiver "github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/provider"
+	"github.com/uber/cadence/common/authorization"
 	"github.com/uber/cadence/common/cache"
 	cc "github.com/uber/cadence/common/client"
 	"github.com/uber/cadence/common/cluster"
+	"github.com/uber/cadence/common/domain"
 	"github.com/uber/cadence/common/elasticsearch"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
@@ -59,6 +57,7 @@ import (
 	"github.com/uber/cadence/common/service"
 	"github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/frontend"
 	"github.com/uber/cadence/service/history"
 	"github.com/uber/cadence/service/matching"
@@ -72,10 +71,10 @@ import (
 type Cadence interface {
 	Start() error
 	Stop()
-	GetAdminClient() adminserviceclient.Interface
-	GetFrontendClient() workflowserviceclient.Interface
+	GetAdminClient() adminClient.Client
+	GetFrontendClient() frontendClient.Client
 	FrontendAddress() string
-	GetHistoryClient() historyserviceclient.Interface
+	GetHistoryClient() historyClient.Client
 	GetExecutionManagerFactory() persistence.ExecutionManagerFactory
 }
 
@@ -85,9 +84,9 @@ type (
 		matchingService common.Daemon
 		historyServices []common.Daemon
 
-		adminClient                   adminserviceclient.Interface
-		frontendClient                workflowserviceclient.Interface
-		historyClient                 historyserviceclient.Interface
+		adminClient                   adminClient.Client
+		frontendClient                frontendClient.Client
+		historyClient                 historyClient.Client
 		logger                        log.Logger
 		clusterMetadata               cluster.Metadata
 		persistenceConfig             config.Persistence
@@ -99,19 +98,18 @@ type (
 		taskMgr                       persistence.TaskManager
 		visibilityMgr                 persistence.VisibilityManager
 		executionMgrFactory           persistence.ExecutionManagerFactory
-		domainReplicationQueue        persistence.DomainReplicationQueue
+		domainReplicationQueue        domain.ReplicationQueue
 		shutdownCh                    chan struct{}
 		shutdownWG                    sync.WaitGroup
 		clusterNo                     int // cluster number
 		replicator                    *replicator.Replicator
 		clientWorker                  archiver.ClientWorker
 		indexer                       *indexer.Indexer
-		enableNDC                     bool
 		archiverMetadata              carchiver.ArchivalMetadata
 		archiverProvider              provider.ArchiverProvider
 		historyConfig                 *HistoryConfig
-		esConfig                      *elasticsearch.Config
-		esClient                      elasticsearch.Client
+		esConfig                      *config.ElasticSearchConfig
+		esClient                      elasticsearch.GenericClient
 		workerConfig                  *WorkerConfig
 		mockAdminClient               map[string]adminClient.Client
 		domainReplicationTaskExecutor domain.ReplicationTaskExecutor
@@ -137,16 +135,15 @@ type (
 		ExecutionMgrFactory           persistence.ExecutionManagerFactory
 		TaskMgr                       persistence.TaskManager
 		VisibilityMgr                 persistence.VisibilityManager
-		DomainReplicationQueue        persistence.DomainReplicationQueue
+		DomainReplicationQueue        domain.ReplicationQueue
 		Logger                        log.Logger
 		ClusterNo                     int
-		EnableNDC                     bool
 		ArchiverMetadata              carchiver.ArchivalMetadata
 		ArchiverProvider              provider.ArchiverProvider
 		EnableReadHistoryFromArchival bool
 		HistoryConfig                 *HistoryConfig
-		ESConfig                      *elasticsearch.Config
-		ESClient                      elasticsearch.Client
+		ESConfig                      *config.ElasticSearchConfig
+		ESClient                      elasticsearch.GenericClient
 		WorkerConfig                  *WorkerConfig
 		MockAdminClient               map[string]adminClient.Client
 		DomainReplicationTaskExecutor domain.ReplicationTaskExecutor
@@ -175,7 +172,6 @@ func NewCadence(params *CadenceParams) Cadence {
 		domainReplicationQueue:        params.DomainReplicationQueue,
 		shutdownCh:                    make(chan struct{}),
 		clusterNo:                     params.ClusterNo,
-		enableNDC:                     params.EnableNDC,
 		esConfig:                      params.ESConfig,
 		esClient:                      params.ESClient,
 		archiverMetadata:              params.ArchiverMetadata,
@@ -384,15 +380,15 @@ func (c *cadenceImpl) WorkerPProfPort() int {
 	}
 }
 
-func (c *cadenceImpl) GetAdminClient() adminserviceclient.Interface {
+func (c *cadenceImpl) GetAdminClient() adminClient.Client {
 	return c.adminClient
 }
 
-func (c *cadenceImpl) GetFrontendClient() workflowserviceclient.Interface {
+func (c *cadenceImpl) GetFrontendClient() frontendClient.Client {
 	return c.frontendClient
 }
 
-func (c *cadenceImpl) GetHistoryClient() historyserviceclient.Interface {
+func (c *cadenceImpl) GetHistoryClient() historyClient.Client {
 	return c.historyClient
 }
 
@@ -633,26 +629,20 @@ func (c *cadenceImpl) startWorker(hosts map[string][]string, startWG *sync.WaitG
 }
 
 func (c *cadenceImpl) startWorkerReplicator(params *service.BootstrapParams, service service.Service, domainCache cache.DomainCache) {
-	metadataManager := persistence.NewMetadataPersistenceMetricsClient(c.metadataMgr, service.GetMetricsClient(), c.logger)
-	workerConfig := worker.NewConfig(params)
-	workerConfig.ReplicationCfg.ReplicatorMessageConcurrency = dynamicconfig.GetIntPropertyFn(10)
 	serviceResolver, err := service.GetMembershipMonitor().GetResolver(common.WorkerServiceName)
 	if err != nil {
 		c.logger.Fatal("Fail to start replicator when start worker", tag.Error(err))
 	}
 	c.replicator = replicator.NewReplicator(
 		c.clusterMetadata,
-		metadataManager,
-		domainCache,
 		service.GetClientBean(),
-		workerConfig.ReplicationCfg,
-		c.messagingClient,
 		c.logger,
 		service.GetMetricsClient(),
 		service.GetHostInfo(),
 		serviceResolver,
 		c.domainReplicationQueue,
 		c.domainReplicationTaskExecutor,
+		time.Millisecond,
 	)
 	if err := c.replicator.Start(); err != nil {
 		c.replicator.Stop()
@@ -708,8 +698,10 @@ func (c *cadenceImpl) startWorkerIndexer(params *service.BootstrapParams, servic
 }
 
 func (c *cadenceImpl) createSystemDomain() error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestPersistenceTimeout)
+	defer cancel()
 
-	_, err := c.metadataMgr.CreateDomain(&persistence.CreateDomainRequest{
+	_, err := c.metadataMgr.CreateDomain(ctx, &persistence.CreateDomainRequest{
 		Info: &persistence.DomainInfo{
 			ID:          uuid.New(),
 			Name:        "cadence-system",
@@ -718,14 +710,14 @@ func (c *cadenceImpl) createSystemDomain() error {
 		},
 		Config: &persistence.DomainConfig{
 			Retention:                1,
-			HistoryArchivalStatus:    shared.ArchivalStatusDisabled,
-			VisibilityArchivalStatus: shared.ArchivalStatusDisabled,
+			HistoryArchivalStatus:    types.ArchivalStatusDisabled,
+			VisibilityArchivalStatus: types.ArchivalStatusDisabled,
 		},
 		ReplicationConfig: &persistence.DomainReplicationConfig{},
 		FailoverVersion:   common.EmptyVersion,
 	})
 	if err != nil {
-		if _, ok := err.(*shared.DomainAlreadyExistsError); ok {
+		if _, ok := err.(*types.DomainAlreadyExistsError); ok {
 			return nil
 		}
 		return fmt.Errorf("failed to create cadence-system domain: %v", err)
@@ -740,7 +732,7 @@ func (c *cadenceImpl) GetExecutionManagerFactory() persistence.ExecutionManagerF
 func (c *cadenceImpl) overrideHistoryDynamicConfig(client *dynamicClient) {
 	client.OverrideValue(dynamicconfig.HistoryMgrNumConns, c.historyConfig.NumHistoryShards)
 	client.OverrideValue(dynamicconfig.ExecutionMgrNumConns, c.historyConfig.NumHistoryShards)
-	client.OverrideValue(dynamicconfig.EnableNDC, c.enableNDC)
+	client.OverrideValue(dynamicconfig.ReplicationTaskProcessorStartWait, time.Nanosecond)
 
 	if c.workerConfig.EnableIndexer {
 		client.OverrideValue(dynamicconfig.AdvancedVisibilityWritingMode, common.AdvancedVisibilityWritingModeDual)

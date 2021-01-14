@@ -1,7 +1,7 @@
 // The MIT License (MIT)
-// 
+
 // Copyright (c) 2017-2020 Uber Technologies Inc.
-// 
+
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -62,6 +62,12 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) (*shared.DescribeHistoryHostResponse, error)
 
+	DescribeQueue(
+		ctx context.Context,
+		Request *shared.DescribeQueueRequest,
+		opts ...yarpc.CallOption,
+	) (*shared.DescribeQueueResponse, error)
+
 	DescribeWorkflowExecution(
 		ctx context.Context,
 		Request *admin.DescribeWorkflowExecutionRequest,
@@ -85,12 +91,6 @@ type Interface interface {
 		Request *replicator.GetReplicationMessagesRequest,
 		opts ...yarpc.CallOption,
 	) (*replicator.GetReplicationMessagesResponse, error)
-
-	GetWorkflowExecutionRawHistory(
-		ctx context.Context,
-		GetRequest *admin.GetWorkflowExecutionRawHistoryRequest,
-		opts ...yarpc.CallOption,
-	) (*admin.GetWorkflowExecutionRawHistoryResponse, error)
 
 	GetWorkflowExecutionRawHistoryV2(
 		ctx context.Context,
@@ -137,6 +137,12 @@ type Interface interface {
 	ResendReplicationTasks(
 		ctx context.Context,
 		Request *admin.ResendReplicationTasksRequest,
+		opts ...yarpc.CallOption,
+	) error
+
+	ResetQueue(
+		ctx context.Context,
+		Request *shared.ResetQueueRequest,
 		opts ...yarpc.CallOption,
 	) error
 }
@@ -256,6 +262,29 @@ func (c client) DescribeHistoryHost(
 	return
 }
 
+func (c client) DescribeQueue(
+	ctx context.Context,
+	_Request *shared.DescribeQueueRequest,
+	opts ...yarpc.CallOption,
+) (success *shared.DescribeQueueResponse, err error) {
+
+	args := admin.AdminService_DescribeQueue_Helper.Args(_Request)
+
+	var body wire.Value
+	body, err = c.c.Call(ctx, args, opts...)
+	if err != nil {
+		return
+	}
+
+	var result admin.AdminService_DescribeQueue_Result
+	if err = result.FromWire(body); err != nil {
+		return
+	}
+
+	success, err = admin.AdminService_DescribeQueue_Helper.UnwrapResponse(&result)
+	return
+}
+
 func (c client) DescribeWorkflowExecution(
 	ctx context.Context,
 	_Request *admin.DescribeWorkflowExecutionRequest,
@@ -345,29 +374,6 @@ func (c client) GetReplicationMessages(
 	}
 
 	success, err = admin.AdminService_GetReplicationMessages_Helper.UnwrapResponse(&result)
-	return
-}
-
-func (c client) GetWorkflowExecutionRawHistory(
-	ctx context.Context,
-	_GetRequest *admin.GetWorkflowExecutionRawHistoryRequest,
-	opts ...yarpc.CallOption,
-) (success *admin.GetWorkflowExecutionRawHistoryResponse, err error) {
-
-	args := admin.AdminService_GetWorkflowExecutionRawHistory_Helper.Args(_GetRequest)
-
-	var body wire.Value
-	body, err = c.c.Call(ctx, args, opts...)
-	if err != nil {
-		return
-	}
-
-	var result admin.AdminService_GetWorkflowExecutionRawHistory_Result
-	if err = result.FromWire(body); err != nil {
-		return
-	}
-
-	success, err = admin.AdminService_GetWorkflowExecutionRawHistory_Helper.UnwrapResponse(&result)
 	return
 }
 
@@ -552,5 +558,28 @@ func (c client) ResendReplicationTasks(
 	}
 
 	err = admin.AdminService_ResendReplicationTasks_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) ResetQueue(
+	ctx context.Context,
+	_Request *shared.ResetQueueRequest,
+	opts ...yarpc.CallOption,
+) (err error) {
+
+	args := admin.AdminService_ResetQueue_Helper.Args(_Request)
+
+	var body wire.Value
+	body, err = c.c.Call(ctx, args, opts...)
+	if err != nil {
+		return
+	}
+
+	var result admin.AdminService_ResetQueue_Result
+	if err = result.FromWire(body); err != nil {
+		return
+	}
+
+	err = admin.AdminService_ResetQueue_Helper.UnwrapResponse(&result)
 	return
 }

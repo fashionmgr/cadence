@@ -18,38 +18,45 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../LICENSE -package $GOPACKAGE -source $GOFILE -destination replicationTaskHandler_mock.go
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination replicationTaskHandler_mock.go
 
 package domain
 
 import (
-	"github.com/uber/cadence/.gen/go/replicator"
-	"github.com/uber/cadence/.gen/go/shared"
+	"context"
+	"time"
+
+	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 )
 
 var (
 	// ErrEmptyDomainReplicationTask is the error to indicate empty replication task
-	ErrEmptyDomainReplicationTask = &shared.BadRequestError{Message: "empty domain replication task"}
+	ErrEmptyDomainReplicationTask = &types.BadRequestError{Message: "empty domain replication task"}
 	// ErrInvalidDomainOperation is the error to indicate empty domain operation attribute
-	ErrInvalidDomainOperation = &shared.BadRequestError{Message: "invalid domain operation attribute"}
+	ErrInvalidDomainOperation = &types.BadRequestError{Message: "invalid domain operation attribute"}
 	// ErrInvalidDomainID is the error to indicate empty rID attribute
-	ErrInvalidDomainID = &shared.BadRequestError{Message: "invalid domain ID attribute"}
+	ErrInvalidDomainID = &types.BadRequestError{Message: "invalid domain ID attribute"}
 	// ErrInvalidDomainInfo is the error to indicate empty info attribute
-	ErrInvalidDomainInfo = &shared.BadRequestError{Message: "invalid domain info attribute"}
+	ErrInvalidDomainInfo = &types.BadRequestError{Message: "invalid domain info attribute"}
 	// ErrInvalidDomainConfig is the error to indicate empty config attribute
-	ErrInvalidDomainConfig = &shared.BadRequestError{Message: "invalid domain config attribute"}
+	ErrInvalidDomainConfig = &types.BadRequestError{Message: "invalid domain config attribute"}
 	// ErrInvalidDomainReplicationConfig is the error to indicate empty replication config attribute
-	ErrInvalidDomainReplicationConfig = &shared.BadRequestError{Message: "invalid domain replication config attribute"}
+	ErrInvalidDomainReplicationConfig = &types.BadRequestError{Message: "invalid domain replication config attribute"}
 	// ErrInvalidDomainConfigVersion is the error to indicate empty config version attribute
-	ErrInvalidDomainConfigVersion = &shared.BadRequestError{Message: "invalid domain config version attribute"}
+	ErrInvalidDomainConfigVersion = &types.BadRequestError{Message: "invalid domain config version attribute"}
 	// ErrInvalidDomainFailoverVersion is the error to indicate empty failover version attribute
-	ErrInvalidDomainFailoverVersion = &shared.BadRequestError{Message: "invalid domain failover version attribute"}
+	ErrInvalidDomainFailoverVersion = &types.BadRequestError{Message: "invalid domain failover version attribute"}
 	// ErrInvalidDomainStatus is the error to indicate invalid domain status
-	ErrInvalidDomainStatus = &shared.BadRequestError{Message: "invalid domain status attribute"}
+	ErrInvalidDomainStatus = &types.BadRequestError{Message: "invalid domain status attribute"}
 	// ErrNameUUIDCollision is the error to indicate domain name / UUID collision
-	ErrNameUUIDCollision = &shared.BadRequestError{Message: "domain replication encounter name / UUID collision"}
+	ErrNameUUIDCollision = &types.BadRequestError{Message: "domain replication encounter name / UUID collision"}
+)
+
+const (
+	defaultDomainRepliationTaskContextTimeout = 5 * time.Second
 )
 
 // NOTE: the counterpart of domain replication transmission logic is in service/fropntend package
@@ -57,45 +64,51 @@ var (
 type (
 	// ReplicationTaskExecutor is the interface which is to execute domain replication task
 	ReplicationTaskExecutor interface {
-		Execute(task *replicator.DomainTaskAttributes) error
+		Execute(task *types.DomainTaskAttributes) error
 	}
 
 	domainReplicationTaskExecutorImpl struct {
-		metadataManagerV2 persistence.MetadataManager
-		logger            log.Logger
+		metadataManager persistence.MetadataManager
+		timeSource      clock.TimeSource
+		logger          log.Logger
 	}
 )
 
 // NewReplicationTaskExecutor create a new instance of domain replicator
 func NewReplicationTaskExecutor(
-	metadataManagerV2 persistence.MetadataManager,
+	metadataMgr persistence.MetadataManager,
+	timeSource clock.TimeSource,
 	logger log.Logger,
 ) ReplicationTaskExecutor {
 
 	return &domainReplicationTaskExecutorImpl{
-		metadataManagerV2: metadataManagerV2,
-		logger:            logger,
+		metadataManager: metadataMgr,
+		timeSource:      timeSource,
+		logger:          logger,
 	}
 }
 
 // Execute handles receiving of the domain replication task
-func (h *domainReplicationTaskExecutorImpl) Execute(task *replicator.DomainTaskAttributes) error {
+func (h *domainReplicationTaskExecutorImpl) Execute(task *types.DomainTaskAttributes) error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDomainRepliationTaskContextTimeout)
+	defer cancel()
+
 	if err := h.validateDomainReplicationTask(task); err != nil {
 		return err
 	}
 
 	switch task.GetDomainOperation() {
-	case replicator.DomainOperationCreate:
-		return h.handleDomainCreationReplicationTask(task)
-	case replicator.DomainOperationUpdate:
-		return h.handleDomainUpdateReplicationTask(task)
+	case types.DomainOperationCreate:
+		return h.handleDomainCreationReplicationTask(ctx, task)
+	case types.DomainOperationUpdate:
+		return h.handleDomainUpdateReplicationTask(ctx, task)
 	default:
 		return ErrInvalidDomainOperation
 	}
 }
 
 // handleDomainCreationReplicationTask handles the domain creation replication task
-func (h *domainReplicationTaskExecutorImpl) handleDomainCreationReplicationTask(task *replicator.DomainTaskAttributes) error {
+func (h *domainReplicationTaskExecutorImpl) handleDomainCreationReplicationTask(ctx context.Context, task *types.DomainTaskAttributes) error {
 	// task already validated
 	status, err := h.convertDomainStatusFromThrift(task.Info.Status)
 	if err != nil {
@@ -126,16 +139,17 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainCreationReplicationTask(
 		IsGlobalDomain:  true, // local domain will not be replicated
 		ConfigVersion:   task.GetConfigVersion(),
 		FailoverVersion: task.GetFailoverVersion(),
+		LastUpdatedTime: h.timeSource.Now().UnixNano(),
 	}
 
-	_, err = h.metadataManagerV2.CreateDomain(request)
+	_, err = h.metadataManager.CreateDomain(ctx, request)
 	if err != nil {
 		// SQL and Cassandra handle domain UUID collision differently
 		// here, whenever seeing a error replicating a domain
 		// do a check if there is a name / UUID collision
 
 		recordExists := true
-		resp, getErr := h.metadataManagerV2.GetDomain(&persistence.GetDomainRequest{
+		resp, getErr := h.metadataManager.GetDomain(ctx, &persistence.GetDomainRequest{
 			Name: task.Info.GetName(),
 		})
 		switch getErr.(type) {
@@ -143,7 +157,7 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainCreationReplicationTask(
 			if resp.Info.ID != task.GetID() {
 				return ErrNameUUIDCollision
 			}
-		case *shared.EntityNotExistsError:
+		case *types.EntityNotExistsError:
 			// no check is necessary
 			recordExists = false
 		default:
@@ -151,7 +165,7 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainCreationReplicationTask(
 			return err
 		}
 
-		resp, getErr = h.metadataManagerV2.GetDomain(&persistence.GetDomainRequest{
+		resp, getErr = h.metadataManager.GetDomain(ctx, &persistence.GetDomainRequest{
 			ID: task.GetID(),
 		})
 		switch getErr.(type) {
@@ -159,7 +173,7 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainCreationReplicationTask(
 			if resp.Info.Name != task.Info.GetName() {
 				return ErrNameUUIDCollision
 			}
-		case *shared.EntityNotExistsError:
+		case *types.EntityNotExistsError:
 			// no check is necessary
 			recordExists = false
 		default:
@@ -178,7 +192,7 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainCreationReplicationTask(
 }
 
 // handleDomainUpdateReplicationTask handles the domain update replication task
-func (h *domainReplicationTaskExecutorImpl) handleDomainUpdateReplicationTask(task *replicator.DomainTaskAttributes) error {
+func (h *domainReplicationTaskExecutorImpl) handleDomainUpdateReplicationTask(ctx context.Context, task *types.DomainTaskAttributes) error {
 	// task already validated
 	status, err := h.convertDomainStatusFromThrift(task.Info.Status)
 	if err != nil {
@@ -186,7 +200,7 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainUpdateReplicationTask(ta
 	}
 
 	// first we need to get the current notification version since we need to it for conditional update
-	metadata, err := h.metadataManagerV2.GetMetadata()
+	metadata, err := h.metadataManager.GetMetadata(ctx)
 	if err != nil {
 		return err
 	}
@@ -194,14 +208,14 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainUpdateReplicationTask(ta
 
 	// plus, we need to check whether the config version is <= the config version set in the input
 	// plus, we need to check whether the failover version is <= the failover version set in the input
-	resp, err := h.metadataManagerV2.GetDomain(&persistence.GetDomainRequest{
+	resp, err := h.metadataManager.GetDomain(ctx, &persistence.GetDomainRequest{
 		Name: task.Info.GetName(),
 	})
 	if err != nil {
-		if _, ok := err.(*shared.EntityNotExistsError); ok {
+		if _, ok := err.(*types.EntityNotExistsError); ok {
 			// this can happen if the create domain replication task is to processed.
 			// e.g. new cluster which does not have anything
-			return h.handleDomainCreationReplicationTask(task)
+			return h.handleDomainCreationReplicationTask(ctx, task)
 		}
 		return err
 	}
@@ -214,7 +228,9 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainUpdateReplicationTask(ta
 		ConfigVersion:               resp.ConfigVersion,
 		FailoverVersion:             resp.FailoverVersion,
 		FailoverNotificationVersion: resp.FailoverNotificationVersion,
+		PreviousFailoverVersion:     resp.PreviousFailoverVersion,
 		NotificationVersion:         notificationVersion,
+		LastUpdatedTime:             h.timeSource.Now().UnixNano(),
 	}
 
 	if resp.ConfigVersion < task.GetConfigVersion() {
@@ -246,16 +262,17 @@ func (h *domainReplicationTaskExecutorImpl) handleDomainUpdateReplicationTask(ta
 		request.ReplicationConfig.ActiveClusterName = task.ReplicationConfig.GetActiveClusterName()
 		request.FailoverVersion = task.GetFailoverVersion()
 		request.FailoverNotificationVersion = notificationVersion
+		request.PreviousFailoverVersion = task.GetPreviousFailoverVersion()
 	}
 
 	if !recordUpdated {
 		return nil
 	}
 
-	return h.metadataManagerV2.UpdateDomain(request)
+	return h.metadataManager.UpdateDomain(ctx, request)
 }
 
-func (h *domainReplicationTaskExecutorImpl) validateDomainReplicationTask(task *replicator.DomainTaskAttributes) error {
+func (h *domainReplicationTaskExecutorImpl) validateDomainReplicationTask(task *types.DomainTaskAttributes) error {
 	if task == nil {
 		return ErrEmptyDomainReplicationTask
 	}
@@ -279,7 +296,7 @@ func (h *domainReplicationTaskExecutorImpl) validateDomainReplicationTask(task *
 }
 
 func (h *domainReplicationTaskExecutorImpl) convertClusterReplicationConfigFromThrift(
-	input []*shared.ClusterReplicationConfiguration) []*persistence.ClusterReplicationConfig {
+	input []*types.ClusterReplicationConfiguration) []*persistence.ClusterReplicationConfig {
 	output := []*persistence.ClusterReplicationConfig{}
 	for _, cluster := range input {
 		clusterName := cluster.GetClusterName()
@@ -288,15 +305,15 @@ func (h *domainReplicationTaskExecutorImpl) convertClusterReplicationConfigFromT
 	return output
 }
 
-func (h *domainReplicationTaskExecutorImpl) convertDomainStatusFromThrift(input *shared.DomainStatus) (int, error) {
+func (h *domainReplicationTaskExecutorImpl) convertDomainStatusFromThrift(input *types.DomainStatus) (int, error) {
 	if input == nil {
 		return 0, ErrInvalidDomainStatus
 	}
 
 	switch *input {
-	case shared.DomainStatusRegistered:
+	case types.DomainStatusRegistered:
 		return persistence.DomainStatusRegistered, nil
-	case shared.DomainStatusDeprecated:
+	case types.DomainStatusDeprecated:
 		return persistence.DomainStatusDeprecated, nil
 	default:
 		return 0, ErrInvalidDomainStatus

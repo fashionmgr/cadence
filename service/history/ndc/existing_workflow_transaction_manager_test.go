@@ -93,6 +93,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	targetMutableState.EXPECT().IsCurrentWorkflowGuaranteed().Return(true).AnyTimes()
 
 	targetContext.EXPECT().UpdateWorkflowExecutionWithNewAsPassive(
+		gomock.Any(),
 		now,
 		newContext,
 		newMutableState,
@@ -188,6 +189,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	targetWorkflow.EXPECT().Revive().Return(nil).Times(1)
 
 	targetContext.EXPECT().ConflictResolveWorkflowExecution(
+		gomock.Any(),
 		now,
 		persistence.ConflictResolveWorkflowModeUpdateCurrent,
 		targetMutableState,
@@ -196,7 +198,6 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 		currentContext,
 		currentMutableState,
 		currentWorkflowPolicy.Ptr(),
-		(*persistence.CurrentWorkflowCAS)(nil),
 	).Return(nil).Times(1)
 
 	err := s.updateMgr.dispatchForExistingWorkflow(ctx, now, isWorkflowRebuilt, targetWorkflow, newWorkflow)
@@ -262,6 +263,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	targetWorkflow.EXPECT().Revive().Return(nil).Times(1)
 
 	targetContext.EXPECT().ConflictResolveWorkflowExecution(
+		gomock.Any(),
 		now,
 		persistence.ConflictResolveWorkflowModeUpdateCurrent,
 		targetMutableState,
@@ -270,7 +272,6 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 		currentContext,
 		currentMutableState,
 		currentWorkflowPolicy.Ptr(),
-		(*persistence.CurrentWorkflowCAS)(nil),
 	).Return(nil).Times(1)
 
 	err := s.updateMgr.dispatchForExistingWorkflow(ctx, now, isWorkflowRebuilt, targetWorkflow, newWorkflow)
@@ -336,6 +337,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	newWorkflow.EXPECT().SuppressBy(currentWorkflow).Return(execution.TransactionPolicyPassive, nil).Times(1)
 
 	targetContext.EXPECT().UpdateWorkflowExecutionWithNew(
+		gomock.Any(),
 		now,
 		persistence.UpdateWorkflowModeBypassCurrent,
 		newContext,
@@ -407,6 +409,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	newWorkflow.EXPECT().SuppressBy(currentWorkflow).Return(execution.TransactionPolicyPassive, nil).Times(1)
 
 	targetContext.EXPECT().UpdateWorkflowExecutionWithNew(
+		gomock.Any(),
 		now,
 		persistence.UpdateWorkflowModeBypassCurrent,
 		(execution.Context)(nil),
@@ -459,6 +462,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	s.mockTransactionMgr.EXPECT().getCurrentWorkflowRunID(ctx, domainID, workflowID).Return(targetRunID, nil).Times(1)
 
 	targetContext.EXPECT().ConflictResolveWorkflowExecution(
+		gomock.Any(),
 		now,
 		persistence.ConflictResolveWorkflowModeUpdateCurrent,
 		targetMutableState,
@@ -467,7 +471,6 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 		(execution.Context)(nil),
 		(execution.MutableState)(nil),
 		(*execution.TransactionPolicy)(nil),
-		(*persistence.CurrentWorkflowCAS)(nil),
 	).Return(nil).Times(1)
 
 	err := s.updateMgr.dispatchForExistingWorkflow(ctx, now, isWorkflowRebuilt, targetWorkflow, newWorkflow)
@@ -531,6 +534,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	targetWorkflow.EXPECT().Revive().Return(nil).Times(1)
 
 	targetContext.EXPECT().ConflictResolveWorkflowExecution(
+		gomock.Any(),
 		now,
 		persistence.ConflictResolveWorkflowModeUpdateCurrent,
 		targetMutableState,
@@ -539,7 +543,6 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 		currentContext,
 		currentMutableState,
 		currentWorkflowPolicy.Ptr(),
-		(*persistence.CurrentWorkflowCAS)(nil),
 	).Return(nil).Times(1)
 
 	err := s.updateMgr.dispatchForExistingWorkflow(ctx, now, isWorkflowRebuilt, targetWorkflow, newWorkflow)
@@ -604,6 +607,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	newWorkflow.EXPECT().SuppressBy(currentWorkflow).Return(execution.TransactionPolicyPassive, nil).Times(1)
 
 	targetContext.EXPECT().ConflictResolveWorkflowExecution(
+		gomock.Any(),
 		now,
 		persistence.ConflictResolveWorkflowModeBypassCurrent,
 		targetMutableState,
@@ -612,7 +616,6 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 		(execution.Context)(nil),
 		(execution.MutableState)(nil),
 		(*execution.TransactionPolicy)(nil),
-		(*persistence.CurrentWorkflowCAS)(nil),
 	).Return(nil).Times(1)
 
 	err := s.updateMgr.dispatchForExistingWorkflow(ctx, now, isWorkflowRebuilt, targetWorkflow, newWorkflow)
@@ -677,6 +680,7 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 	newWorkflow.EXPECT().SuppressBy(currentWorkflow).Return(execution.TransactionPolicyPassive, nil).Times(1)
 
 	targetContext.EXPECT().ConflictResolveWorkflowExecution(
+		gomock.Any(),
 		now,
 		persistence.ConflictResolveWorkflowModeBypassCurrent,
 		targetMutableState,
@@ -685,7 +689,6 @@ func (s *transactionManagerForExistingWorkflowSuite) TestDispatchForExistingWork
 		(execution.Context)(nil),
 		(execution.MutableState)(nil),
 		(*execution.TransactionPolicy)(nil),
-		(*persistence.CurrentWorkflowCAS)(nil),
 	).Return(nil).Times(1)
 
 	err := s.updateMgr.dispatchForExistingWorkflow(ctx, now, isWorkflowRebuilt, targetWorkflow, newWorkflow)

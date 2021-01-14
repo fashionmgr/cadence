@@ -21,6 +21,7 @@
 package queue
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/uber/cadence/service/history/task"
@@ -63,32 +64,51 @@ func (c *processingQueueCollection) ActiveQueue() ProcessingQueue {
 
 func (c *processingQueueCollection) AddTasks(
 	tasks map[task.Key]task.Task,
-	more bool,
+	newReadLevel task.Key,
 ) {
-	c.ActiveQueue().AddTasks(tasks, more)
+	activeQueue := c.ActiveQueue()
+	activeQueue.AddTasks(tasks, newReadLevel)
 
-	if !more {
+	if taskKeyEquals(activeQueue.State().ReadLevel(), activeQueue.State().MaxLevel()) {
 		c.resetActiveQueue()
 	}
 }
 
-func (c *processingQueueCollection) UpdateAckLevels() {
+func (c *processingQueueCollection) UpdateAckLevels() (task.Key, int) {
+	if len(c.queues) == 0 {
+		return nil, 0
+	}
+
 	remainingQueues := make([]ProcessingQueue, 0, len(c.queues))
+	totalPendingTasks := 0
+	var minAckLevel task.Key
 
 	for _, queue := range c.queues {
-		queue.UpdateAckLevel()
-		if !taskKeyEquals(queue.State().AckLevel(), queue.State().MaxLevel()) {
-			remainingQueues = append(remainingQueues, queue)
+		ackLevel, numPendingTasks := queue.UpdateAckLevel()
+		if taskKeyEquals(ackLevel, queue.State().MaxLevel()) {
 			continue
+		}
+
+		remainingQueues = append(remainingQueues, queue)
+		totalPendingTasks += numPendingTasks
+		if minAckLevel == nil {
+			minAckLevel = ackLevel
+		} else {
+			minAckLevel = minTaskKey(minAckLevel, ackLevel)
 		}
 	}
 
 	c.queues = remainingQueues
+	return minAckLevel, totalPendingTasks
 }
 
 func (c *processingQueueCollection) Split(
 	policy ProcessingQueueSplitPolicy,
 ) []ProcessingQueue {
+	if len(c.queues) == 0 {
+		return nil
+	}
+
 	newQueues := make([]ProcessingQueue, 0, len(c.queues))
 	nextLevelQueues := []ProcessingQueue{}
 
@@ -126,16 +146,22 @@ func (c *processingQueueCollection) Merge(
 		newQueues = append(newQueues, mergedQueues[:len(mergedQueues)-1]...)
 
 		lastMergedQueue := mergedQueues[len(mergedQueues)-1]
-		if currentQueueIdx+1 == len(c.queues) ||
-			!c.queues[currentQueueIdx+1].State().AckLevel().Less(lastMergedQueue.State().MaxLevel()) {
+		overlapWithCurrentQueue := currentQueueIdx+1 != len(c.queues) &&
+			c.queues[currentQueueIdx+1].State().AckLevel().Less(lastMergedQueue.State().MaxLevel())
+		overlapWithIncomingQueue := incomingQueueIdx+1 != len(incomingQueues) &&
+			incomingQueues[incomingQueueIdx+1].State().AckLevel().Less(lastMergedQueue.State().MaxLevel())
 
+		if !overlapWithCurrentQueue && !overlapWithIncomingQueue {
 			newQueues = append(newQueues, lastMergedQueue)
 			incomingQueueIdx++
-		} else {
+			currentQueueIdx++
+		} else if overlapWithCurrentQueue {
 			incomingQueues[incomingQueueIdx] = lastMergedQueue
+			currentQueueIdx++
+		} else {
+			c.queues[currentQueueIdx] = lastMergedQueue
+			incomingQueueIdx++
 		}
-
-		currentQueueIdx++
 	}
 
 	if incomingQueueIdx < len(incomingQueues) {
@@ -147,6 +173,17 @@ func (c *processingQueueCollection) Merge(
 	}
 
 	c.queues = newQueues
+
+	// make sure the result is ordered and disjoint
+	for idx := 0; idx < len(c.queues)-1; idx++ {
+		if c.queues[idx+1].State().AckLevel().Less(c.queues[idx].State().MaxLevel()) {
+			errMsg := ""
+			for _, q := range c.queues {
+				errMsg += fmt.Sprintf("%v ", q)
+			}
+			panic("invalid processing queue merge result: " + errMsg)
+		}
+	}
 
 	c.resetActiveQueue()
 }

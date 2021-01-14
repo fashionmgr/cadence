@@ -1,7 +1,7 @@
 // The MIT License (MIT)
-// 
+
 // Copyright (c) 2017-2020 Uber Technologies Inc.
-// 
+
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -52,6 +52,11 @@ type Interface interface {
 		Request *history.DescribeMutableStateRequest,
 	) (*history.DescribeMutableStateResponse, error)
 
+	DescribeQueue(
+		ctx context.Context,
+		Request *shared.DescribeQueueRequest,
+	) (*shared.DescribeQueueResponse, error)
+
 	DescribeWorkflowExecution(
 		ctx context.Context,
 		DescribeRequest *history.DescribeWorkflowExecutionRequest,
@@ -76,6 +81,11 @@ type Interface interface {
 		ctx context.Context,
 		Request *replicator.MergeDLQMessagesRequest,
 	) (*replicator.MergeDLQMessagesResponse, error)
+
+	NotifyFailoverMarkers(
+		ctx context.Context,
+		Request *history.NotifyFailoverMarkersRequest,
+	) error
 
 	PollMutableState(
 		ctx context.Context,
@@ -137,24 +147,19 @@ type Interface interface {
 		Request *shared.RemoveTaskRequest,
 	) error
 
-	ReplicateEvents(
-		ctx context.Context,
-		ReplicateRequest *history.ReplicateEventsRequest,
-	) error
-
 	ReplicateEventsV2(
 		ctx context.Context,
 		ReplicateV2Request *history.ReplicateEventsV2Request,
 	) error
 
-	ReplicateRawEvents(
-		ctx context.Context,
-		ReplicateRequest *history.ReplicateRawEventsRequest,
-	) error
-
 	RequestCancelWorkflowExecution(
 		ctx context.Context,
 		CancelRequest *history.RequestCancelWorkflowExecutionRequest,
+	) error
+
+	ResetQueue(
+		ctx context.Context,
+		Request *shared.ResetQueueRequest,
 	) error
 
 	ResetStickyTaskList(
@@ -273,6 +278,17 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
+				Name: "DescribeQueue",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:  transport.Unary,
+					Unary: thrift.UnaryHandler(h.DescribeQueue),
+				},
+				Signature:    "DescribeQueue(Request *shared.DescribeQueueRequest) (*shared.DescribeQueueResponse)",
+				ThriftModule: history.ThriftModule,
+			},
+
+			thrift.Method{
 				Name: "DescribeWorkflowExecution",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -324,6 +340,17 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 					Unary: thrift.UnaryHandler(h.MergeDLQMessages),
 				},
 				Signature:    "MergeDLQMessages(Request *replicator.MergeDLQMessagesRequest) (*replicator.MergeDLQMessagesResponse)",
+				ThriftModule: history.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "NotifyFailoverMarkers",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:  transport.Unary,
+					Unary: thrift.UnaryHandler(h.NotifyFailoverMarkers),
+				},
+				Signature:    "NotifyFailoverMarkers(Request *history.NotifyFailoverMarkersRequest)",
 				ThriftModule: history.ThriftModule,
 			},
 
@@ -460,17 +487,6 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
-				Name: "ReplicateEvents",
-				HandlerSpec: thrift.HandlerSpec{
-
-					Type:  transport.Unary,
-					Unary: thrift.UnaryHandler(h.ReplicateEvents),
-				},
-				Signature:    "ReplicateEvents(ReplicateRequest *history.ReplicateEventsRequest)",
-				ThriftModule: history.ThriftModule,
-			},
-
-			thrift.Method{
 				Name: "ReplicateEventsV2",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -482,17 +498,6 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
-				Name: "ReplicateRawEvents",
-				HandlerSpec: thrift.HandlerSpec{
-
-					Type:  transport.Unary,
-					Unary: thrift.UnaryHandler(h.ReplicateRawEvents),
-				},
-				Signature:    "ReplicateRawEvents(ReplicateRequest *history.ReplicateRawEventsRequest)",
-				ThriftModule: history.ThriftModule,
-			},
-
-			thrift.Method{
 				Name: "RequestCancelWorkflowExecution",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -500,6 +505,17 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 					Unary: thrift.UnaryHandler(h.RequestCancelWorkflowExecution),
 				},
 				Signature:    "RequestCancelWorkflowExecution(CancelRequest *history.RequestCancelWorkflowExecutionRequest)",
+				ThriftModule: history.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "ResetQueue",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:  transport.Unary,
+					Unary: thrift.UnaryHandler(h.ResetQueue),
+				},
+				Signature:    "ResetQueue(Request *shared.ResetQueueRequest)",
 				ThriftModule: history.ThriftModule,
 			},
 
@@ -659,7 +675,7 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 		},
 	}
 
-	procedures := make([]transport.Procedure, 0, 38)
+	procedures := make([]transport.Procedure, 0, 39)
 	procedures = append(procedures, thrift.BuildProcedures(service, opts...)...)
 	return procedures
 }
@@ -714,6 +730,25 @@ func (h handler) DescribeMutableState(ctx context.Context, body wire.Value) (thr
 
 	hadError := err != nil
 	result, err := history.HistoryService_DescribeMutableState_Helper.WrapResponse(success, err)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+	}
+	return response, err
+}
+
+func (h handler) DescribeQueue(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args history.HistoryService_DescribeQueue_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, err
+	}
+
+	success, err := h.impl.DescribeQueue(ctx, args.Request)
+
+	hadError := err != nil
+	result, err := history.HistoryService_DescribeQueue_Helper.WrapResponse(success, err)
 
 	var response thrift.Response
 	if err == nil {
@@ -809,6 +844,25 @@ func (h handler) MergeDLQMessages(ctx context.Context, body wire.Value) (thrift.
 
 	hadError := err != nil
 	result, err := history.HistoryService_MergeDLQMessages_Helper.WrapResponse(success, err)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+	}
+	return response, err
+}
+
+func (h handler) NotifyFailoverMarkers(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args history.HistoryService_NotifyFailoverMarkers_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, err
+	}
+
+	err := h.impl.NotifyFailoverMarkers(ctx, args.Request)
+
+	hadError := err != nil
+	result, err := history.HistoryService_NotifyFailoverMarkers_Helper.WrapResponse(err)
 
 	var response thrift.Response
 	if err == nil {
@@ -1046,25 +1100,6 @@ func (h handler) RemoveTask(ctx context.Context, body wire.Value) (thrift.Respon
 	return response, err
 }
 
-func (h handler) ReplicateEvents(ctx context.Context, body wire.Value) (thrift.Response, error) {
-	var args history.HistoryService_ReplicateEvents_Args
-	if err := args.FromWire(body); err != nil {
-		return thrift.Response{}, err
-	}
-
-	err := h.impl.ReplicateEvents(ctx, args.ReplicateRequest)
-
-	hadError := err != nil
-	result, err := history.HistoryService_ReplicateEvents_Helper.WrapResponse(err)
-
-	var response thrift.Response
-	if err == nil {
-		response.IsApplicationError = hadError
-		response.Body = result
-	}
-	return response, err
-}
-
 func (h handler) ReplicateEventsV2(ctx context.Context, body wire.Value) (thrift.Response, error) {
 	var args history.HistoryService_ReplicateEventsV2_Args
 	if err := args.FromWire(body); err != nil {
@@ -1084,25 +1119,6 @@ func (h handler) ReplicateEventsV2(ctx context.Context, body wire.Value) (thrift
 	return response, err
 }
 
-func (h handler) ReplicateRawEvents(ctx context.Context, body wire.Value) (thrift.Response, error) {
-	var args history.HistoryService_ReplicateRawEvents_Args
-	if err := args.FromWire(body); err != nil {
-		return thrift.Response{}, err
-	}
-
-	err := h.impl.ReplicateRawEvents(ctx, args.ReplicateRequest)
-
-	hadError := err != nil
-	result, err := history.HistoryService_ReplicateRawEvents_Helper.WrapResponse(err)
-
-	var response thrift.Response
-	if err == nil {
-		response.IsApplicationError = hadError
-		response.Body = result
-	}
-	return response, err
-}
-
 func (h handler) RequestCancelWorkflowExecution(ctx context.Context, body wire.Value) (thrift.Response, error) {
 	var args history.HistoryService_RequestCancelWorkflowExecution_Args
 	if err := args.FromWire(body); err != nil {
@@ -1113,6 +1129,25 @@ func (h handler) RequestCancelWorkflowExecution(ctx context.Context, body wire.V
 
 	hadError := err != nil
 	result, err := history.HistoryService_RequestCancelWorkflowExecution_Helper.WrapResponse(err)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+	}
+	return response, err
+}
+
+func (h handler) ResetQueue(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args history.HistoryService_ResetQueue_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, err
+	}
+
+	err := h.impl.ResetQueue(ctx, args.Request)
+
+	hadError := err != nil
+	result, err := history.HistoryService_ResetQueue_Helper.WrapResponse(err)
 
 	var response thrift.Response
 	if err == nil {

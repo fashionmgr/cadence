@@ -22,21 +22,25 @@ package sql
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 
-	workflow "github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/common/persistence/serialization"
+
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/persistence/sql/sqlplugin"
+	"github.com/uber/cadence/common/types"
 )
 
 // TODO: Rename all SQL Managers to Stores
 type sqlStore struct {
 	db     sqlplugin.DB
 	logger log.Logger
+	parser serialization.Parser
 }
 
 func (m *sqlStore) GetName() string {
@@ -49,10 +53,10 @@ func (m *sqlStore) Close() {
 	}
 }
 
-func (m *sqlStore) txExecute(operation string, f func(tx sqlplugin.Tx) error) error {
-	tx, err := m.db.BeginTx()
+func (m *sqlStore) txExecute(ctx context.Context, operation string, f func(tx sqlplugin.Tx) error) error {
+	tx, err := m.db.BeginTx(ctx)
 	if err != nil {
-		return &workflow.InternalServiceError{
+		return &types.InternalServiceError{
 			Message: fmt.Sprintf("%s failed. Failed to start transaction. Error: %v", operation, err),
 		}
 	}
@@ -66,19 +70,19 @@ func (m *sqlStore) txExecute(operation string, f func(tx sqlplugin.Tx) error) er
 		switch err.(type) {
 		case *persistence.ConditionFailedError,
 			*persistence.CurrentWorkflowConditionFailedError,
-			*workflow.InternalServiceError,
+			*types.InternalServiceError,
 			*persistence.WorkflowExecutionAlreadyStartedError,
-			*workflow.DomainAlreadyExistsError,
+			*types.DomainAlreadyExistsError,
 			*persistence.ShardOwnershipLostError:
 			return err
 		default:
-			return &workflow.InternalServiceError{
+			return &types.InternalServiceError{
 				Message: fmt.Sprintf("%v: %v", operation, err),
 			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return &workflow.InternalServiceError{
+		return &types.InternalServiceError{
 			Message: fmt.Sprintf("%s operation failed. Failed to commit transaction. Error: %v", operation, err),
 		}
 	}
@@ -90,7 +94,7 @@ func gobSerialize(x interface{}) ([]byte, error) {
 	e := gob.NewEncoder(&b)
 	err := e.Encode(x)
 	if err != nil {
-		return nil, &workflow.InternalServiceError{
+		return nil, &types.InternalServiceError{
 			Message: fmt.Sprintf("Error in serialization: %v", err),
 		}
 	}
@@ -103,7 +107,7 @@ func gobDeserialize(a []byte, x interface{}) error {
 	err := d.Decode(x)
 
 	if err != nil {
-		return &workflow.InternalServiceError{
+		return &types.InternalServiceError{
 			Message: fmt.Sprintf("Error in deserialization: %v", err),
 		}
 	}

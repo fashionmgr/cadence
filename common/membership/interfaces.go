@@ -18,22 +18,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../LICENSE -package $GOPACKAGE -source $GOFILE -destination interfaces_mock.go -self_package github.com/uber/cadence/common/membership
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interfaces_mock.go -self_package github.com/uber/cadence/common/membership
 
 package membership
 
 import (
 	"errors"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/types"
 )
 
 // ErrUnknownService is thrown for a service that is not tracked by this instance
 var ErrUnknownService = errors.New("Service not tracked by Monitor")
 
 // ErrInsufficientHosts is thrown when there are not enough hosts to serve the request
-var ErrInsufficientHosts = &shared.InternalServiceError{Message: "Not enough hosts to serve the request"}
+var ErrInsufficientHosts = &types.InternalServiceError{Message: "Not enough hosts to serve the request"}
 
 // ErrListenerAlreadyExist is thrown on a duplicate AddListener call from the same listener
 var ErrListenerAlreadyExist = errors.New("Listener already exist for the service")

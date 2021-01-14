@@ -26,11 +26,11 @@ import (
 	"time"
 
 	"github.com/pborman/uuid"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
@@ -39,8 +39,8 @@ import (
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/common/types"
 )
 
 type (
@@ -94,8 +94,8 @@ func (s *domainCacheSuite) TestListDomain() {
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "some random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 1,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			}},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestCurrentClusterName,
@@ -114,8 +114,8 @@ func (s *domainCacheSuite) TestListDomain() {
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "another random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 2,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			}},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestAlternativeClusterName,
@@ -134,8 +134,8 @@ func (s *domainCacheSuite) TestListDomain() {
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "yet another random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 3,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			}},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestAlternativeClusterName,
@@ -153,9 +153,9 @@ func (s *domainCacheSuite) TestListDomain() {
 
 	pageToken := []byte("some random page token")
 
-	s.metadataMgr.On("GetMetadata").Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
 	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
-	s.metadataMgr.On("ListDomains", &persistence.ListDomainsRequest{
+	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
 	}).Return(&persistence.ListDomainsResponse{
@@ -163,7 +163,7 @@ func (s *domainCacheSuite) TestListDomain() {
 		NextPageToken: pageToken,
 	}, nil).Once()
 
-	s.metadataMgr.On("ListDomains", &persistence.ListDomainsRequest{
+	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: pageToken,
 	}).Return(&persistence.ListDomainsResponse{
@@ -199,13 +199,13 @@ func (s *domainCacheSuite) TestListDomain() {
 func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByName() {
 	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	domainNotificationVersion := int64(999999) // make this notification version really large for test
-	s.metadataMgr.On("GetMetadata").Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
 	domainRecord := &persistence.GetDomainResponse{
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "some random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 1,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{
 					"abc": {
 						Reason:          common.StringPtr("test reason"),
 						Operator:        common.StringPtr("test operator"),
@@ -223,8 +223,8 @@ func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByName() {
 	}
 	entry := s.buildEntryFromRecord(domainRecord)
 
-	s.metadataMgr.On("GetDomain", &persistence.GetDomainRequest{Name: entry.info.Name}).Return(domainRecord, nil).Once()
-	s.metadataMgr.On("ListDomains", &persistence.ListDomainsRequest{
+	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{Name: entry.info.Name}).Return(domainRecord, nil).Once()
+	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
 	}).Return(&persistence.ListDomainsResponse{
@@ -243,13 +243,13 @@ func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByName() {
 func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByID() {
 	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	domainNotificationVersion := int64(999999) // make this notification version really large for test
-	s.metadataMgr.On("GetMetadata").Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
 	domainRecord := &persistence.GetDomainResponse{
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "some random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 1,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			},
 		},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
@@ -262,8 +262,8 @@ func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByID() {
 	}
 	entry := s.buildEntryFromRecord(domainRecord)
 
-	s.metadataMgr.On("GetDomain", &persistence.GetDomainRequest{ID: entry.info.ID}).Return(domainRecord, nil).Once()
-	s.metadataMgr.On("ListDomains", &persistence.ListDomainsRequest{
+	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{ID: entry.info.ID}).Return(domainRecord, nil).Once()
+	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
 	}).Return(&persistence.ListDomainsResponse{
@@ -285,8 +285,8 @@ func (s *domainCacheSuite) TestRegisterCallback_CatchUp() {
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "some random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 1,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			}},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestCurrentClusterName,
@@ -307,8 +307,8 @@ func (s *domainCacheSuite) TestRegisterCallback_CatchUp() {
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "another random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 2,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			}},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestAlternativeClusterName,
@@ -325,9 +325,9 @@ func (s *domainCacheSuite) TestRegisterCallback_CatchUp() {
 	entry2 := s.buildEntryFromRecord(domainRecord2)
 	domainNotificationVersion++
 
-	s.metadataMgr.On("GetMetadata").Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil).Once()
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil).Once()
 	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
-	s.metadataMgr.On("ListDomains", &persistence.ListDomainsRequest{
+	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
 	}).Return(&persistence.ListDomainsResponse{
@@ -368,8 +368,8 @@ func (s *domainCacheSuite) TestUpdateCache_TriggerCallBack() {
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "some random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 1,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			}},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestCurrentClusterName,
@@ -390,8 +390,8 @@ func (s *domainCacheSuite) TestUpdateCache_TriggerCallBack() {
 		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "another random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 2,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			}},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestAlternativeClusterName,
@@ -408,9 +408,9 @@ func (s *domainCacheSuite) TestUpdateCache_TriggerCallBack() {
 	entry2Old := s.buildEntryFromRecord(domainRecord2Old)
 	domainNotificationVersion++
 
-	s.metadataMgr.On("GetMetadata").Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil).Once()
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil).Once()
 	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
-	s.metadataMgr.On("ListDomains", &persistence.ListDomainsRequest{
+	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
 	}).Return(&persistence.ListDomainsResponse{
@@ -477,8 +477,8 @@ func (s *domainCacheSuite) TestUpdateCache_TriggerCallBack() {
 	s.Empty(entriesOld)
 	s.Empty(entriesNew)
 
-	s.metadataMgr.On("GetMetadata").Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil).Once()
-	s.metadataMgr.On("ListDomains", &persistence.ListDomainsRequest{
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil).Once()
+	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
 	}).Return(&persistence.ListDomainsResponse{
@@ -501,14 +501,14 @@ func (s *domainCacheSuite) TestUpdateCache_TriggerCallBack() {
 func (s *domainCacheSuite) TestGetTriggerListAndUpdateCache_ConcurrentAccess() {
 	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	domainNotificationVersion := int64(999999) // make this notification version really large for test
-	s.metadataMgr.On("GetMetadata").Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
 	id := uuid.New()
 	domainRecordOld := &persistence.GetDomainResponse{
 		Info: &persistence.DomainInfo{ID: id, Name: "some random domain name", Data: make(map[string]string)},
 		Config: &persistence.DomainConfig{
 			Retention: 1,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			}},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestCurrentClusterName,
@@ -522,8 +522,8 @@ func (s *domainCacheSuite) TestGetTriggerListAndUpdateCache_ConcurrentAccess() {
 	}
 	entryOld := s.buildEntryFromRecord(domainRecordOld)
 
-	s.metadataMgr.On("GetDomain", &persistence.GetDomainRequest{ID: id}).Return(domainRecordOld, nil).Maybe()
-	s.metadataMgr.On("ListDomains", &persistence.ListDomainsRequest{
+	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{ID: id}).Return(domainRecordOld, nil).Maybe()
+	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
 	}).Return(&persistence.ListDomainsResponse{
@@ -618,8 +618,8 @@ func Test_IsSampledForLongerRetentionEnabled(t *testing.T) {
 		},
 		config: &persistence.DomainConfig{
 			Retention: 7,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			},
 		},
 	}
@@ -637,8 +637,8 @@ func Test_IsSampledForLongerRetention(t *testing.T) {
 		},
 		config: &persistence.DomainConfig{
 			Retention: 7,
-			BadBinaries: shared.BadBinaries{
-				Binaries: map[string]*shared.BadBinaryInfo{},
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
 			},
 		},
 	}
@@ -664,9 +664,6 @@ func Test_DomainCacheEntry_GetDomainNotActiveErr(t *testing.T) {
 		cluster.TestCurrentClusterName,
 		cluster.TestCurrentClusterName,
 		cluster.TestAllClusterInfo,
-		&config.ReplicationConsumerConfig{
-			Type: config.ReplicationConsumerTypeRPC,
-		},
 	)
 	domainEntry := NewGlobalDomainCacheEntryForTest(
 		&persistence.DomainInfo{Name: "test-domain"},
@@ -688,6 +685,6 @@ func Test_DomainCacheEntry_GetDomainNotActiveErr(t *testing.T) {
 	domainEntry.replicationConfig.ActiveClusterName = cluster.TestAlternativeClusterName
 	err := domainEntry.GetDomainNotActiveErr()
 	require.NotNil(t, err)
-	_, ok := err.(*shared.DomainNotActiveError)
+	_, ok := err.(*types.DomainNotActiveError)
 	require.True(t, ok)
 }

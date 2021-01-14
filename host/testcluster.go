@@ -21,11 +21,12 @@
 package host
 
 import (
+	"context"
 	"io/ioutil"
 	"os"
+	"time"
 
 	"github.com/uber-go/tally"
-	"go.uber.org/zap"
 
 	"github.com/uber/cadence/client"
 	adminClient "github.com/uber/cadence/client/admin"
@@ -33,6 +34,7 @@ import (
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/filestore"
 	"github.com/uber/cadence/common/archiver/provider"
+	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/definition"
 	"github.com/uber/cadence/common/domain"
@@ -40,11 +42,14 @@ import (
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/messaging"
+	"github.com/uber/cadence/common/messaging/kafka"
+	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
 	pes "github.com/uber/cadence/common/persistence/elasticsearch"
 	persistencetests "github.com/uber/cadence/common/persistence/persistence-tests"
 	"github.com/uber/cadence/common/persistence/sql/sqlplugin/mysql"
+	"github.com/uber/cadence/common/persistence/sql/sqlplugin/postgres"
 	"github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/service/dynamicconfig"
 )
@@ -70,7 +75,6 @@ type (
 	// TestClusterConfig are config for a test cluster
 	TestClusterConfig struct {
 		FrontendAddress       string
-		EnableNDC             bool
 		EnableArchival        bool
 		IsMasterCluster       bool
 		ClusterNo             int
@@ -78,7 +82,7 @@ type (
 		MessagingClientConfig *MessagingClientConfig
 		Persistence           persistencetests.TestBaseOptions
 		HistoryConfig         *HistoryConfig
-		ESConfig              *elasticsearch.Config
+		ESConfig              *config.ElasticSearchConfig
 		WorkerConfig          *WorkerConfig
 		MockAdminClient       map[string]adminClient.Client
 	}
@@ -86,7 +90,7 @@ type (
 	// MessagingClientConfig is the config for messaging config
 	MessagingClientConfig struct {
 		UseMock     bool
-		KafkaConfig *messaging.KafkaConfig
+		KafkaConfig *config.KafkaConfig
 	}
 
 	// WorkerConfig is the config for enabling/disabling cadence worker
@@ -97,7 +101,10 @@ type (
 	}
 )
 
-const defaultTestValueOfESIndexMaxResultWindow = 5
+const (
+	defaultTestValueOfESIndexMaxResultWindow = 5
+	defaultTestPersistenceTimeout            = 5 * time.Second
+)
 
 // NewCluster creates and sets up the test cluster
 func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, error) {
@@ -114,7 +121,6 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 			options.ClusterMetadata.MasterClusterName,
 			options.ClusterMetadata.CurrentClusterName,
 			options.ClusterMetadata.ClusterInformation,
-			options.ClusterMetadata.ReplicationConsumer,
 		)
 	}
 
@@ -123,6 +129,8 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 		var ops *persistencetests.TestBaseOptions
 		if TestFlags.SQLPluginName == mysql.PluginName {
 			ops = mysql.GetTestClusterOption()
+		} else if TestFlags.SQLPluginName == postgres.PluginName {
+			ops = postgres.GetTestClusterOption()
 		} else {
 			panic("not supported plugin " + TestFlags.SQLPluginName)
 		}
@@ -139,13 +147,18 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 	setupShards(testBase, options.HistoryConfig.NumHistoryShards, logger)
 	archiverBase := newArchiverBase(options.EnableArchival, logger)
 	messagingClient := getMessagingClient(options.MessagingClientConfig, logger)
-	var esClient elasticsearch.Client
+	var esClient elasticsearch.GenericClient
 	var esVisibilityMgr persistence.VisibilityManager
 	advancedVisibilityWritingMode := dynamicconfig.GetStringPropertyFn(common.AdvancedVisibilityWritingModeOff)
 	if options.WorkerConfig.EnableIndexer {
 		advancedVisibilityWritingMode = dynamicconfig.GetStringPropertyFn(common.AdvancedVisibilityWritingModeOn)
 		var err error
-		esClient, err = elasticsearch.NewClient(options.ESConfig)
+		visConfig := &config.VisibilityConfig{
+			VisibilityListMaxQPS:   dynamicconfig.GetIntPropertyFilteredByDomain(2000),
+			ESIndexMaxResultWindow: dynamicconfig.GetIntPropertyFn(defaultTestValueOfESIndexMaxResultWindow),
+			ValidSearchAttributes:  dynamicconfig.GetMapPropertyFn(definition.GetDefaultIndexedKeys()),
+		}
+		esClient, err = elasticsearch.NewGenericClient(options.ESConfig, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -155,11 +168,6 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 		if err != nil {
 			return nil, err
 		}
-		visConfig := &config.VisibilityConfig{
-			VisibilityListMaxQPS:   dynamicconfig.GetIntPropertyFilteredByDomain(2000),
-			ESIndexMaxResultWindow: dynamicconfig.GetIntPropertyFn(defaultTestValueOfESIndexMaxResultWindow),
-			ValidSearchAttributes:  dynamicconfig.GetMapPropertyFn(definition.GetDefaultIndexedKeys()),
-		}
 		esVisibilityStore := pes.NewElasticSearchVisibilityStore(esClient, indexName, visProducer, visConfig, logger)
 		esVisibilityMgr = persistence.NewVisibilityManagerImpl(esVisibilityStore, logger)
 	}
@@ -168,6 +176,14 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 
 	pConfig := testBase.Config()
 	pConfig.NumHistoryShards = options.HistoryConfig.NumHistoryShards
+	scope := tally.NewTestScope("integration-test", nil)
+	metricsClient := metrics.NewClient(scope, metrics.ServiceIdx(0))
+	domainReplicationQueue := domain.NewReplicationQueue(
+		testBase.DomainReplicationQueueMgr,
+		options.ClusterMetadata.CurrentClusterName,
+		metricsClient,
+		logger,
+	)
 	cadenceParams := &CadenceParams{
 		ClusterMetadata:               clusterMetadata,
 		PersistenceConfig:             pConfig,
@@ -177,12 +193,11 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 		ShardMgr:                      testBase.ShardMgr,
 		HistoryV2Mgr:                  testBase.HistoryV2Mgr,
 		ExecutionMgrFactory:           testBase.ExecutionMgrFactory,
-		DomainReplicationQueue:        testBase.DomainReplicationQueue,
+		DomainReplicationQueue:        domainReplicationQueue,
 		TaskMgr:                       testBase.TaskMgr,
 		VisibilityMgr:                 visibilityMgr,
 		Logger:                        logger,
 		ClusterNo:                     options.ClusterNo,
-		EnableNDC:                     options.EnableNDC,
 		ESConfig:                      options.ESConfig,
 		ESClient:                      esClient,
 		ArchiverMetadata:              archiverBase.metadata,
@@ -190,7 +205,7 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 		HistoryConfig:                 options.HistoryConfig,
 		WorkerConfig:                  options.WorkerConfig,
 		MockAdminClient:               options.MockAdminClient,
-		DomainReplicationTaskExecutor: domain.NewReplicationTaskExecutor(testBase.MetadataManager, logger),
+		DomainReplicationTaskExecutor: domain.NewReplicationTaskExecutor(testBase.MetadataManager, clock.NewRealTimeSource(), logger),
 	}
 	cluster := NewCadence(cadenceParams)
 	if err := cluster.Start(); err != nil {
@@ -203,10 +218,13 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 func setupShards(testBase persistencetests.TestBase, numHistoryShards int, logger log.Logger) {
 	// shard 0 is always created, we create additional shards if needed
 	for shardID := 1; shardID < numHistoryShards; shardID++ {
-		err := testBase.CreateShard(shardID, "", 0)
+		ctx, cancel := context.WithTimeout(context.Background(), defaultTestPersistenceTimeout)
+		err := testBase.CreateShard(ctx, shardID, "", 0)
 		if err != nil {
+			cancel()
 			logger.Fatal("Failed to create shard", tag.Error(err))
 		}
+		cancel()
 	}
 }
 
@@ -262,9 +280,8 @@ func getMessagingClient(config *MessagingClientConfig, logger log.Logger) messag
 	if config == nil || config.UseMock {
 		return mocks.NewMockMessagingClient(&mocks.KafkaProducer{}, nil)
 	}
-	checkCluster := len(config.KafkaConfig.ClusterToTopic) != 0
 	checkApp := len(config.KafkaConfig.Applications) != 0
-	return messaging.NewKafkaClient(config.KafkaConfig, nil, zap.NewNop(), logger, tally.NoopScope, checkCluster, checkApp)
+	return kafka.NewKafkaClient(config.KafkaConfig, metrics.NewNoopMetricsClient(), logger, tally.NoopScope, checkApp)
 }
 
 // TearDownCluster tears down the test cluster

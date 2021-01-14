@@ -17,10 +17,14 @@ persistence:
             cassandra:
                 hosts: {{ default .Env.CASSANDRA_SEEDS "" }}
                 keyspace: {{ default .Env.KEYSPACE "cadence" }}
+                user: {{ default .Env.CASSANDRA_USER "" }}
+                password: {{ default .Env.CASSANDRA_PASSWORD "" }}
         visibility:
             cassandra:
                 hosts: {{ default .Env.CASSANDRA_SEEDS "" }}
                 keyspace: {{ default .Env.VISIBILITY_KEYSPACE "cadence_visibility" }}
+                user: {{ default .Env.CASSANDRA_USER "" }}
+                password: {{ default .Env.CASSANDRA_PASSWORD "" }}
         {{- else if eq $db "mysql" }}
         default:
             sql:
@@ -50,6 +54,8 @@ persistence:
         default:
             sql:
                 pluginName: "postgres"
+                encodingType: "thriftrw"
+                decodingTypes: ["thriftrw"]
                 databaseName: {{ default .Env.DBNAME "cadence" }}
                 connectAddr: "{{ default .Env.POSTGRES_SEEDS "" }}:{{ default .Env.DB_PORT "5432" }}"
                 connectProtocol: "tcp"
@@ -61,6 +67,8 @@ persistence:
         visibility:
             sql:
                 pluginName: "postgres"
+                encodingType: "thriftrw"
+                decodingTypes: ["thriftrw"]
                 databaseName: {{ default .Env.VISIBILITY_DBNAME "cadence_visibility" }}
                 connectAddr: "{{ default .Env.POSTGRES_SEEDS "" }}:{{ default .Env.DB_PORT "5432" }}"
                 connectProtocol: "tcp"
@@ -73,6 +81,9 @@ persistence:
         {{- if eq $es "true" }}
         es-visibility:
             elasticsearch:
+                version: {{ default .Env.ES_VERSION "" }}
+                username: {{ default .Env.ES_USER "" }}
+                password: {{ default .Env.ES_PWD "" }}
                 url:
                     scheme: "http"
                     host: "{{ default .Env.ES_SEEDS "" }}:9200"
@@ -112,6 +123,11 @@ services:
             prometheus:
                 timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
                 listenAddress: {{ .Env.PROMETHEUS_ENDPOINT }}
+        {{- else if .Env.PROMETHEUS_ENDPOINT_0 }}
+        metrics:
+            prometheus:
+                timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
+                listenAddress: {{ .Env.PROMETHEUS_ENDPOINT_0 }}
         {{- end }}
 
     matching:
@@ -128,6 +144,11 @@ services:
             prometheus:
                 timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
                 listenAddress: {{ .Env.PROMETHEUS_ENDPOINT }}
+        {{- else if .Env.PROMETHEUS_ENDPOINT_1 }}
+        metrics:
+            prometheus:
+                timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
+                listenAddress: {{ .Env.PROMETHEUS_ENDPOINT_1 }}
         {{- end }}
 
     history:
@@ -144,6 +165,11 @@ services:
             prometheus:
                 timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
                 listenAddress: {{ .Env.PROMETHEUS_ENDPOINT }}
+        {{- else if .Env.PROMETHEUS_ENDPOINT_2 }}
+        metrics:
+            prometheus:
+                timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
+                listenAddress: {{ .Env.PROMETHEUS_ENDPOINT_2 }}
         {{- end }}
 
     worker:
@@ -160,6 +186,11 @@ services:
             prometheus:
                 timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
                 listenAddress: {{ .Env.PROMETHEUS_ENDPOINT }}
+        {{- else if .Env.PROMETHEUS_ENDPOINT_3 }}
+        metrics:
+            prometheus:
+                timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
+                listenAddress: {{ .Env.PROMETHEUS_ENDPOINT_3 }}
         {{- end }}
 
 clusterMetadata:
@@ -224,7 +255,7 @@ publicClient:
     hostPort: {{ default .Env.BIND_ON_IP "127.0.0.1" }}:7933
 
 dynamicConfigClient:
-    filepath: {{ default .Env.DYNAMIC_CONFIG_FILE_PATH "/etc/cadence/config/dynamicconfig" }}
+    filepath: {{ default .Env.DYNAMIC_CONFIG_FILE_PATH "/etc/cadence/config/dynamicconfig/development.yaml" }}
     pollInterval: "60s"
 
 blobstore:

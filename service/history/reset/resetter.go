@@ -18,15 +18,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:generate mockgen -copyright_file ../../../LICENSE -package $GOPACKAGE -source $GOFILE -destination resetter_mock.go
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination resetter_mock.go
 
 package reset
 
 import (
+	context "context"
 	ctx "context"
 	"fmt"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
@@ -34,6 +34,7 @@ import (
 	"github.com/uber/cadence/common/definition"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
 )
@@ -54,7 +55,8 @@ type (
 			resetRequestID string,
 			currentWorkflow execution.Workflow,
 			resetReason string,
-			additionalReapplyEvents []*shared.HistoryEvent,
+			additionalReapplyEvents []*types.HistoryEvent,
+			skipSignalReapply bool,
 		) error
 	}
 
@@ -105,7 +107,8 @@ func (r *workflowResetterImpl) ResetWorkflow(
 	resetRequestID string,
 	currentWorkflow execution.Workflow,
 	resetReason string,
-	additionalReapplyEvents []*shared.HistoryEvent,
+	additionalReapplyEvents []*types.HistoryEvent,
+	skipSignalReapply bool,
 ) (retError error) {
 
 	domainEntry, err := r.domainCache.GetDomainByID(domainID)
@@ -141,6 +144,7 @@ func (r *workflowResetterImpl) ResetWorkflow(
 		resetWorkflowVersion,
 		resetReason,
 		additionalReapplyEvents,
+		skipSignalReapply,
 	)
 	if err != nil {
 		return err
@@ -148,6 +152,7 @@ func (r *workflowResetterImpl) ResetWorkflow(
 	defer resetWorkflow.GetReleaseFn()(retError)
 
 	return r.persistToDB(
+		ctx,
 		currentWorkflowTerminated,
 		currentWorkflow,
 		resetWorkflow,
@@ -167,7 +172,8 @@ func (r *workflowResetterImpl) prepareResetWorkflow(
 	resetRequestID string,
 	resetWorkflowVersion int64,
 	resetReason string,
-	additionalReapplyEvents []*shared.HistoryEvent,
+	additionalReapplyEvents []*types.HistoryEvent,
+	skipSignalReapply bool,
 ) (execution.Workflow, error) {
 
 	resetWorkflow, err := r.replayResetWorkflow(
@@ -189,7 +195,7 @@ func (r *workflowResetterImpl) prepareResetWorkflow(
 
 	baseLastEventVersion := resetMutableState.GetCurrentVersion()
 	if baseLastEventVersion > resetWorkflowVersion {
-		return nil, &shared.InternalServiceError{
+		return nil, &types.InternalServiceError{
 			Message: "workflowResetter encounter version mismatch.",
 		}
 	}
@@ -200,29 +206,12 @@ func (r *workflowResetterImpl) prepareResetWorkflow(
 		return nil, err
 	}
 
-	// TODO add checking of reset until event ID == decision task started ID + 1
-	decision, ok := resetMutableState.GetInFlightDecision()
-	if !ok || decision.StartedID+1 != resetMutableState.GetNextEventID() {
-		return nil, &shared.BadRequestError{
-			Message: fmt.Sprintf("Can only reset workflow to DecisionTaskStarted + 1: %v", baseRebuildLastEventID+1),
-		}
-	}
-	if len(resetMutableState.GetPendingChildExecutionInfos()) > 0 {
-		return nil, &shared.BadRequestError{
-			Message: fmt.Sprintf("Can only reset workflow with pending child workflows"),
-		}
-	}
-
-	_, err = resetMutableState.AddDecisionTaskFailedEvent(
-		decision.ScheduleID,
-		decision.StartedID, shared.DecisionTaskFailedCauseResetWorkflow,
-		nil,
-		execution.IdentityHistoryService,
-		resetReason,
-		"",
+	resetMutableState, err = r.closePendingDecisionTask(
+		resetMutableState,
 		baseRunID,
 		resetRunID,
 		baseLastEventVersion,
+		resetReason,
 	)
 	if err != nil {
 		return nil, err
@@ -232,19 +221,26 @@ func (r *workflowResetterImpl) prepareResetWorkflow(
 		return nil, err
 	}
 
-	if err := r.reapplyContinueAsNewWorkflowEvents(
-		ctx,
-		resetMutableState,
-		domainID,
-		workflowID,
-		baseRunID,
-		baseBranchToken,
-		baseRebuildLastEventID+1,
-		baseNextEventID,
-	); err != nil {
-		return nil, err
+	// TODO right now only signals are eligible for reapply, so we can directly skip the whole reapply process
+	// for the sake of performance. In the future, if there are other events that need to be reapplied, remove this check
+	// For example, we may want to re-apply activity/timer results for https://github.com/uber/cadence/issues/2934
+	if !skipSignalReapply {
+		if err := r.reapplyResetAndContinueAsNewWorkflowEvents(
+			ctx,
+			resetMutableState,
+			domainID,
+			workflowID,
+			baseRunID,
+			baseBranchToken,
+			baseRebuildLastEventID+1,
+			baseNextEventID,
+		); err != nil {
+			return nil, err
+		}
+
 	}
 
+	// NOTE: this is reapplying events that are passing into the API that we shouldn't skip
 	if err := r.reapplyEvents(resetMutableState, additionalReapplyEvents); err != nil {
 		return nil, err
 	}
@@ -257,6 +253,7 @@ func (r *workflowResetterImpl) prepareResetWorkflow(
 }
 
 func (r *workflowResetterImpl) persistToDB(
+	ctx context.Context,
 	currentWorkflowTerminated bool,
 	currentWorkflow execution.Workflow,
 	resetWorkflow execution.Workflow,
@@ -264,6 +261,7 @@ func (r *workflowResetterImpl) persistToDB(
 
 	if currentWorkflowTerminated {
 		return currentWorkflow.GetContext().UpdateWorkflowExecutionWithNewAsActive(
+			ctx,
 			r.shard.GetTimeSource().Now(),
 			resetWorkflow.GetContext(),
 			resetWorkflow.GetMutableState(),
@@ -285,12 +283,22 @@ func (r *workflowResetterImpl) persistToDB(
 	if err != nil {
 		return err
 	}
-	resetHistorySize, err := resetWorkflow.GetContext().PersistFirstWorkflowEvents(resetWorkflowEventsSeq[0])
+
+	resetHistorySize := int64(0)
+	if len(resetWorkflowEventsSeq) != 1 {
+		return &types.InternalServiceError{
+			Message: "there should be EXACTLY one batch of events for reset",
+		}
+	}
+
+	// reset workflow with decision task failed or timed out
+	resetHistorySize, err = resetWorkflow.GetContext().PersistNonFirstWorkflowEvents(ctx, resetWorkflowEventsSeq[0])
 	if err != nil {
 		return err
 	}
 
 	return resetWorkflow.GetContext().CreateWorkflowExecution(
+		ctx,
 		resetWorkflowSnapshot,
 		resetHistorySize,
 		now,
@@ -312,7 +320,8 @@ func (r *workflowResetterImpl) replayResetWorkflow(
 	resetRequestID string,
 ) (execution.Workflow, error) {
 
-	resetBranchToken, err := r.generateBranchToken(
+	resetBranchToken, err := r.forkAndGenerateBranchToken(
+		ctx,
 		domainID,
 		workflowID,
 		baseBranchToken,
@@ -325,9 +334,9 @@ func (r *workflowResetterImpl) replayResetWorkflow(
 
 	resetContext := execution.NewContext(
 		domainID,
-		shared.WorkflowExecution{
-			WorkflowId: common.StringPtr(workflowID),
-			RunId:      common.StringPtr(resetRunID),
+		types.WorkflowExecution{
+			WorkflowID: common.StringPtr(workflowID),
+			RunID:      common.StringPtr(resetRunID),
 		},
 		r.shard,
 		r.shard.GetExecutionManager(),
@@ -379,14 +388,14 @@ func (r *workflowResetterImpl) failInflightActivity(
 		case common.TransientEventID:
 			// activity is started (with retry policy)
 			// should not encounter this case when rebuilding mutable state
-			return &shared.InternalServiceError{
+			return &types.InternalServiceError{
 				Message: "workflowResetter encounter transient activity",
 			}
 		default:
 			if _, err := mutableState.AddActivityTaskFailedEvent(
 				ai.ScheduleID,
 				ai.StartedID,
-				&shared.RespondActivityTaskFailedRequest{
+				&types.RespondActivityTaskFailedRequest{
 					Reason:   common.StringPtr(terminateReason),
 					Details:  ai.Details,
 					Identity: common.StringPtr(ai.StartedIdentity),
@@ -399,7 +408,8 @@ func (r *workflowResetterImpl) failInflightActivity(
 	return nil
 }
 
-func (r *workflowResetterImpl) generateBranchToken(
+func (r *workflowResetterImpl) forkAndGenerateBranchToken(
+	ctx context.Context,
 	domainID string,
 	workflowID string,
 	forkBranchToken []byte,
@@ -408,7 +418,7 @@ func (r *workflowResetterImpl) generateBranchToken(
 ) ([]byte, error) {
 	// fork a new history branch
 	shardID := r.shard.GetShardID()
-	resp, err := r.historyV2Mgr.ForkHistoryBranch(&persistence.ForkHistoryBranchRequest{
+	resp, err := r.historyV2Mgr.ForkHistoryBranch(ctx, &persistence.ForkHistoryBranchRequest{
 		ForkBranchToken: forkBranchToken,
 		ForkNodeID:      forkNodeID,
 		Info:            persistence.BuildHistoryGarbageCleanupInfo(domainID, workflowID, resetRunID),
@@ -436,7 +446,7 @@ func (r *workflowResetterImpl) terminateWorkflow(
 	)
 }
 
-func (r *workflowResetterImpl) reapplyContinueAsNewWorkflowEvents(
+func (r *workflowResetterImpl) reapplyResetAndContinueAsNewWorkflowEvents(
 	ctx ctx.Context,
 	resetMutableState execution.MutableState,
 	domainID string,
@@ -455,6 +465,7 @@ func (r *workflowResetterImpl) reapplyContinueAsNewWorkflowEvents(
 
 	// first special handling the remaining events for base workflow
 	if nextRunID, err = r.reapplyWorkflowEvents(
+		ctx,
 		resetMutableState,
 		baseRebuildNextEventID,
 		baseNextEventID,
@@ -467,9 +478,9 @@ func (r *workflowResetterImpl) reapplyContinueAsNewWorkflowEvents(
 		context, release, err := r.executionCache.GetOrCreateWorkflowExecution(
 			ctx,
 			domainID,
-			shared.WorkflowExecution{
-				WorkflowId: common.StringPtr(workflowID),
-				RunId:      common.StringPtr(runID),
+			types.WorkflowExecution{
+				WorkflowID: common.StringPtr(workflowID),
+				RunID:      common.StringPtr(runID),
 			},
 		)
 		if err != nil {
@@ -477,7 +488,7 @@ func (r *workflowResetterImpl) reapplyContinueAsNewWorkflowEvents(
 		}
 		defer func() { release(retError) }()
 
-		mutableState, err := context.LoadWorkflowExecution()
+		mutableState, err := context.LoadWorkflowExecution(ctx)
 		if err != nil {
 			// no matter what error happen, we need to retry
 			return 0, nil, err
@@ -499,6 +510,7 @@ func (r *workflowResetterImpl) reapplyContinueAsNewWorkflowEvents(
 		}
 
 		if nextRunID, err = r.reapplyWorkflowEvents(
+			ctx,
 			resetMutableState,
 			common.FirstEventID,
 			nextWorkflowNextEventID,
@@ -511,6 +523,7 @@ func (r *workflowResetterImpl) reapplyContinueAsNewWorkflowEvents(
 }
 
 func (r *workflowResetterImpl) reapplyWorkflowEvents(
+	ctx context.Context,
 	mutableState execution.MutableState,
 	firstEventID int64,
 	nextEventID int64,
@@ -521,21 +534,28 @@ func (r *workflowResetterImpl) reapplyWorkflowEvents(
 	//  from visibility for better coverage of events eligible for re-application.
 	//  after the above change, this API do not have to return the continue as new run ID
 
+	if firstEventID == nextEventID {
+		// This means the workflow reset to a pending decision task
+		// and the decision task is the latest event in the workflow.
+		return "", nil
+	}
+
 	iter := collection.NewPagingIterator(r.getPaginationFn(
+		ctx,
 		firstEventID,
 		nextEventID,
 		branchToken,
 	))
 
 	var nextRunID string
-	var lastEvents []*shared.HistoryEvent
+	var lastEvents []*types.HistoryEvent
 
 	for iter.HasNext() {
 		batch, err := iter.Next()
 		if err != nil {
 			return "", err
 		}
-		lastEvents = batch.(*shared.History).Events
+		lastEvents = batch.(*types.History).Events
 		if err := r.reapplyEvents(mutableState, lastEvents); err != nil {
 			return "", err
 		}
@@ -543,8 +563,8 @@ func (r *workflowResetterImpl) reapplyWorkflowEvents(
 
 	if len(lastEvents) > 0 {
 		lastEvent := lastEvents[len(lastEvents)-1]
-		if lastEvent.GetEventType() == shared.EventTypeWorkflowExecutionContinuedAsNew {
-			nextRunID = lastEvent.GetWorkflowExecutionContinuedAsNewEventAttributes().GetNewExecutionRunId()
+		if lastEvent.GetEventType() == types.EventTypeWorkflowExecutionContinuedAsNew {
+			nextRunID = lastEvent.GetWorkflowExecutionContinuedAsNewEventAttributes().GetNewExecutionRunID()
 		}
 	}
 	return nextRunID, nil
@@ -552,12 +572,12 @@ func (r *workflowResetterImpl) reapplyWorkflowEvents(
 
 func (r *workflowResetterImpl) reapplyEvents(
 	mutableState execution.MutableState,
-	events []*shared.HistoryEvent,
+	events []*types.HistoryEvent,
 ) error {
 
 	for _, event := range events {
 		switch event.GetEventType() {
-		case shared.EventTypeWorkflowExecutionSignaled:
+		case types.EventTypeWorkflowExecutionSignaled:
 			attr := event.GetWorkflowExecutionSignaledEventAttributes()
 			if _, err := mutableState.AddWorkflowExecutionSignaled(
 				attr.GetSignalName(),
@@ -574,6 +594,7 @@ func (r *workflowResetterImpl) reapplyEvents(
 }
 
 func (r *workflowResetterImpl) getPaginationFn(
+	ctx context.Context,
 	firstEventID int64,
 	nextEventID int64,
 	branchToken []byte,
@@ -582,6 +603,7 @@ func (r *workflowResetterImpl) getPaginationFn(
 	return func(paginationToken []byte) ([]interface{}, []byte, error) {
 
 		_, historyBatches, token, _, err := persistence.PaginateHistory(
+			ctx,
 			r.historyV2Mgr,
 			true,
 			branchToken,
@@ -601,4 +623,53 @@ func (r *workflowResetterImpl) getPaginationFn(
 		}
 		return paginateItems, token, nil
 	}
+}
+
+func (r *workflowResetterImpl) closePendingDecisionTask(
+	resetMutableState execution.MutableState,
+	baseRunID string,
+	resetRunID string,
+	baseLastEventVersion int64,
+	resetReason string,
+) (execution.MutableState, error) {
+
+	if len(resetMutableState.GetPendingChildExecutionInfos()) > 0 {
+		return nil, &types.BadRequestError{
+			Message: fmt.Sprintf("Can not reset workflow with pending child workflows"),
+		}
+	}
+
+	if decision, ok := resetMutableState.GetInFlightDecision(); ok {
+		// reset workflow has decision task start
+		_, err := resetMutableState.AddDecisionTaskFailedEvent(
+			decision.ScheduleID,
+			decision.StartedID,
+			types.DecisionTaskFailedCauseResetWorkflow,
+			nil,
+			execution.IdentityHistoryService,
+			resetReason,
+			"",
+			baseRunID,
+			resetRunID,
+			baseLastEventVersion,
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else if decision, ok := resetMutableState.GetPendingDecision(); ok {
+		if ok {
+			//reset workflow has decision task schedule
+			_, err := resetMutableState.AddDecisionTaskResetTimeoutEvent(
+				decision.ScheduleID,
+				baseRunID,
+				resetRunID,
+				baseLastEventVersion,
+				resetReason,
+			)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return resetMutableState, nil
 }

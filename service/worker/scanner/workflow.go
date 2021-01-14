@@ -24,24 +24,20 @@ import (
 	"context"
 	"time"
 
-	"github.com/uber/cadence/service/worker/scanner/executions"
-
 	"go.uber.org/cadence"
 	"go.uber.org/cadence/activity"
 	cclient "go.uber.org/cadence/client"
 	"go.uber.org/cadence/workflow"
 
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/service/worker/scanner/executions"
 	"github.com/uber/cadence/service/worker/scanner/history"
 	"github.com/uber/cadence/service/worker/scanner/tasklist"
-)
-
-type (
-	contextKey int
+	"github.com/uber/cadence/service/worker/scanner/timers"
 )
 
 const (
-	scannerContextKey = contextKey(0)
+	scannerContextKey = "scannerContextKey"
 
 	maxConcurrentActivityExecutionSize     = 10
 	maxConcurrentDecisionTaskExecutionSize = 10
@@ -56,16 +52,10 @@ const (
 	historyScannerWFTypeName     = "cadence-sys-history-scanner-workflow"
 	historyScannerTaskListName   = "cadence-sys-history-scanner-tasklist-0"
 	historyScavengerActivityName = "cadence-sys-history-scanner-scvg-activity"
-
-	executionsScannerWFID           = "cadence-sys-executions-scanner"
-	executionsScannerWFTypeName     = "cadence-sys-executions-scanner-workflow"
-	executionsScannerTaskListName   = "cadence-sys-executions-scanner-tasklist-0"
-	executionsScavengerActivityName = "cadence-sys-executions-scanner-scvg-activity"
 )
 
 var (
-	tlScavengerHBInterval         = 10 * time.Second
-	executionsScavengerHBInterval = 10 * time.Second
+	tlScavengerHBInterval = 10 * time.Second
 
 	activityRetryPolicy = cadence.RetryPolicy{
 		InitialInterval:    10 * time.Second,
@@ -93,23 +83,21 @@ var (
 		WorkflowIDReusePolicy:        cclient.WorkflowIDReusePolicyAllowDuplicate,
 		CronSchedule:                 "0 */12 * * *",
 	}
-	executionsScannerWFStartOptions = cclient.StartWorkflowOptions{
-		ID:                           executionsScannerWFID,
-		TaskList:                     executionsScannerTaskListName,
-		ExecutionStartToCloseTimeout: infiniteDuration,
-		WorkflowIDReusePolicy:        cclient.WorkflowIDReusePolicyAllowDuplicate,
-		CronSchedule:                 "0 */12 * * *",
-	}
 )
 
 func init() {
 	workflow.RegisterWithOptions(TaskListScannerWorkflow, workflow.RegisterOptions{Name: tlScannerWFTypeName})
-	workflow.RegisterWithOptions(HistoryScannerWorkflow, workflow.RegisterOptions{Name: historyScannerWFTypeName})
-	workflow.RegisterWithOptions(ExecutionsScannerWorkflow, workflow.RegisterOptions{Name: executionsScannerWFTypeName})
-
 	activity.RegisterWithOptions(TaskListScavengerActivity, activity.RegisterOptions{Name: taskListScavengerActivityName})
+
+	workflow.RegisterWithOptions(HistoryScannerWorkflow, workflow.RegisterOptions{Name: historyScannerWFTypeName})
 	activity.RegisterWithOptions(HistoryScavengerActivity, activity.RegisterOptions{Name: historyScavengerActivityName})
-	activity.RegisterWithOptions(ExecutionsScavengerActivity, activity.RegisterOptions{Name: executionsScavengerActivityName})
+
+	workflow.RegisterWithOptions(executions.ConcreteScannerWorkflow, workflow.RegisterOptions{Name: executions.ConcreteExecutionsScannerWFTypeName})
+	workflow.RegisterWithOptions(executions.CurrentScannerWorkflow, workflow.RegisterOptions{Name: executions.CurrentExecutionsScannerWFTypeName})
+	workflow.RegisterWithOptions(executions.ConcreteFixerWorkflow, workflow.RegisterOptions{Name: executions.ConcreteExecutionsFixerWFTypeName})
+	workflow.RegisterWithOptions(executions.CurrentFixerWorkflow, workflow.RegisterOptions{Name: executions.CurrentExecutionsFixerWFTypeName})
+	workflow.RegisterWithOptions(timers.ScannerWorkflow, workflow.RegisterOptions{Name: timers.ScannerWFTypeName})
+	workflow.RegisterWithOptions(timers.FixerWorkflow, workflow.RegisterOptions{Name: timers.FixerWFTypeName})
 }
 
 // TaskListScannerWorkflow is the workflow that runs the task-list scanner background daemon
@@ -133,23 +121,13 @@ func HistoryScannerWorkflow(
 	return future.Get(ctx, nil)
 }
 
-// ExecutionsScannerWorkflow is the workflow that runs the executions scanner background daemon
-func ExecutionsScannerWorkflow(
-	ctx workflow.Context,
-	executionsScannerWorkflowParams executions.ScannerWorkflowParams,
-) error {
-
-	future := workflow.ExecuteActivity(workflow.WithActivityOptions(ctx, activityOptions), executionsScavengerActivityName, executionsScannerWorkflowParams)
-	return future.Get(ctx, nil)
-}
-
 // HistoryScavengerActivity is the activity that runs history scavenger
 func HistoryScavengerActivity(
 	activityCtx context.Context,
 ) (history.ScavengerHeartbeatDetails, error) {
 
 	ctx := activityCtx.Value(scannerContextKey).(scannerContext)
-	rps := ctx.cfg.PersistenceMaxQPS()
+	rps := ctx.cfg.ScannerPersistenceMaxQPS()
 
 	hbd := history.ScavengerHeartbeatDetails{}
 	if activity.HasHeartbeatDetails(activityCtx) {
@@ -175,7 +153,7 @@ func TaskListScavengerActivity(
 ) error {
 
 	ctx := activityCtx.Value(scannerContextKey).(scannerContext)
-	scavenger := tasklist.NewScavenger(ctx.GetTaskManager(), ctx.GetMetricsClient(), ctx.GetLogger())
+	scavenger := tasklist.NewScavenger(activityCtx, ctx.GetTaskManager(), ctx.GetMetricsClient(), ctx.GetLogger())
 	ctx.GetLogger().Info("Starting task list scavenger")
 	scavenger.Start()
 	for scavenger.Alive() {
@@ -186,28 +164,6 @@ func TaskListScavengerActivity(
 			return activityCtx.Err()
 		}
 		time.Sleep(tlScavengerHBInterval)
-	}
-	return nil
-}
-
-// ExecutionsScavengerActivity is the activity that runs executions scavenger
-func ExecutionsScavengerActivity(
-	activityCtx context.Context,
-	executionsScannerWorkflowParams executions.ScannerWorkflowParams,
-) error {
-
-	ctx := activityCtx.Value(scannerContextKey).(scannerContext)
-	scavenger := executions.NewScavenger(executionsScannerWorkflowParams, ctx.GetFrontendClient(), ctx.GetHistoryManager(), ctx.GetMetricsClient(), ctx.GetLogger())
-	ctx.GetLogger().Info("Starting executions scavenger")
-	scavenger.Start()
-	for scavenger.Alive() {
-		activity.RecordHeartbeat(activityCtx)
-		if activityCtx.Err() != nil {
-			ctx.GetLogger().Info("activity context error, stopping scavenger", tag.Error(activityCtx.Err()))
-			scavenger.Stop()
-			return activityCtx.Err()
-		}
-		time.Sleep(executionsScavengerHBInterval)
 	}
 	return nil
 }

@@ -1,4 +1,6 @@
-// Copyright (c) 2017 Uber Technologies, Inc.
+// The MIT License (MIT)
+//
+// Copyright (c) 2017-2020 Uber Technologies Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -7,24 +9,25 @@
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
 //
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
 //
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 package worker
 
 import (
+	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
-	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/definition"
 	"github.com/uber/cadence/common/domain"
@@ -35,12 +38,17 @@ import (
 	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/common/service"
 	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/worker/archiver"
 	"github.com/uber/cadence/service/worker/batcher"
+	"github.com/uber/cadence/service/worker/failovermanager"
 	"github.com/uber/cadence/service/worker/indexer"
 	"github.com/uber/cadence/service/worker/parentclosepolicy"
 	"github.com/uber/cadence/service/worker/replicator"
 	"github.com/uber/cadence/service/worker/scanner"
+	"github.com/uber/cadence/service/worker/scanner/executions"
+	"github.com/uber/cadence/service/worker/scanner/shardscanner"
+	"github.com/uber/cadence/service/worker/scanner/timers"
 )
 
 type (
@@ -59,15 +67,18 @@ type (
 
 	// Config contains all the service config for worker
 	Config struct {
-		ReplicationCfg                *replicator.Config
-		ArchiverConfig                *archiver.Config
-		IndexerCfg                    *indexer.Config
-		ScannerCfg                    *scanner.Config
-		BatcherCfg                    *batcher.Config
-		ThrottledLogRPS               dynamicconfig.IntPropertyFn
-		PersistenceGlobalMaxQPS       dynamicconfig.IntPropertyFn
-		EnableBatcher                 dynamicconfig.BoolPropertyFn
-		EnableParentClosePolicyWorker dynamicconfig.BoolPropertyFn
+		ArchiverConfig                    *archiver.Config
+		IndexerCfg                        *indexer.Config
+		ScannerCfg                        *scanner.Config
+		BatcherCfg                        *batcher.Config
+		failoverManagerCfg                *failovermanager.Config
+		ThrottledLogRPS                   dynamicconfig.IntPropertyFn
+		PersistenceGlobalMaxQPS           dynamicconfig.IntPropertyFn
+		PersistenceMaxQPS                 dynamicconfig.IntPropertyFn
+		EnableBatcher                     dynamicconfig.BoolPropertyFn
+		EnableParentClosePolicyWorker     dynamicconfig.BoolPropertyFn
+		EnableFailoverManager             dynamicconfig.BoolPropertyFn
+		DomainReplicationMaxRetryDuration dynamicconfig.DurationPropertyFn
 	}
 )
 
@@ -81,7 +92,7 @@ func NewService(
 	serviceResource, err := resource.New(
 		params,
 		common.WorkerServiceName,
-		serviceConfig.ReplicationCfg.PersistenceMaxQPS,
+		serviceConfig.PersistenceMaxQPS,
 		serviceConfig.PersistenceGlobalMaxQPS,
 		serviceConfig.ThrottledLogRPS,
 		func(
@@ -106,42 +117,44 @@ func NewService(
 
 // NewConfig builds the new Config for cadence-worker service
 func NewConfig(params *service.BootstrapParams) *Config {
-	dc := dynamicconfig.NewCollection(params.DynamicConfig, params.Logger)
+	dc := dynamicconfig.NewCollection(
+		params.DynamicConfig,
+		params.Logger,
+		dynamicconfig.ClusterNameFilter(params.ClusterMetadata.GetCurrentClusterName()),
+	)
 	config := &Config{
-		ReplicationCfg: &replicator.Config{
-			PersistenceMaxQPS:                  dc.GetIntProperty(dynamicconfig.WorkerPersistenceMaxQPS, 500),
-			ReplicatorMetaTaskConcurrency:      dc.GetIntProperty(dynamicconfig.WorkerReplicatorMetaTaskConcurrency, 64),
-			ReplicatorTaskConcurrency:          dc.GetIntProperty(dynamicconfig.WorkerReplicatorTaskConcurrency, 256),
-			ReplicatorMessageConcurrency:       dc.GetIntProperty(dynamicconfig.WorkerReplicatorMessageConcurrency, 2048),
-			ReplicatorActivityBufferRetryCount: dc.GetIntProperty(dynamicconfig.WorkerReplicatorActivityBufferRetryCount, 8),
-			ReplicatorHistoryBufferRetryCount:  dc.GetIntProperty(dynamicconfig.WorkerReplicatorHistoryBufferRetryCount, 8),
-			ReplicationTaskMaxRetryCount:       dc.GetIntProperty(dynamicconfig.WorkerReplicationTaskMaxRetryCount, 400),
-			ReplicationTaskMaxRetryDuration:    dc.GetDurationProperty(dynamicconfig.WorkerReplicationTaskMaxRetryDuration, 15*time.Minute),
-			ReplicationTaskContextTimeout:      dc.GetDurationProperty(dynamicconfig.WorkerReplicationTaskContextDuration, 30*time.Second),
-			ReReplicationContextTimeout:        dc.GetDurationPropertyFilteredByDomainID(dynamicconfig.WorkerReReplicationContextTimeout, 0*time.Second),
-			EnableRPCReplication:               dc.GetBoolProperty(dynamicconfig.WorkerEnableRPCReplication, false),
-		},
 		ArchiverConfig: &archiver.Config{
 			ArchiverConcurrency:           dc.GetIntProperty(dynamicconfig.WorkerArchiverConcurrency, 50),
 			ArchivalsPerIteration:         dc.GetIntProperty(dynamicconfig.WorkerArchivalsPerIteration, 1000),
 			TimeLimitPerArchivalIteration: dc.GetDurationProperty(dynamicconfig.WorkerTimeLimitPerArchivalIteration, archiver.MaxArchivalIterationTimeout()),
 		},
 		ScannerCfg: &scanner.Config{
-			PersistenceMaxQPS:        dc.GetIntProperty(dynamicconfig.ScannerPersistenceMaxQPS, 100),
+			ScannerPersistenceMaxQPS: dc.GetIntProperty(dynamicconfig.ScannerPersistenceMaxQPS, 5),
 			Persistence:              &params.PersistenceConfig,
 			ClusterMetadata:          params.ClusterMetadata,
 			TaskListScannerEnabled:   dc.GetBoolProperty(dynamicconfig.TaskListScannerEnabled, true),
-			HistoryScannerEnabled:    dc.GetBoolProperty(dynamicconfig.HistoryScannerEnabled, true),
-			ExecutionsScannerEnabled: dc.GetBoolProperty(dynamicconfig.ExecutionsScannerEnabled, false),
+			HistoryScannerEnabled:    dc.GetBoolProperty(dynamicconfig.HistoryScannerEnabled, false),
+			ShardScanners: []*shardscanner.ScannerConfig{
+				executions.ConcreteExecutionScannerConfig(dc),
+				executions.CurrentExecutionScannerConfig(dc),
+				timers.ScannerConfig(dc),
+			},
 		},
 		BatcherCfg: &batcher.Config{
 			AdminOperationToken: dc.GetStringProperty(dynamicconfig.AdminOperationToken, common.DefaultAdminOperationToken),
 			ClusterMetadata:     params.ClusterMetadata,
 		},
-		EnableBatcher:                 dc.GetBoolProperty(dynamicconfig.EnableBatcher, false),
-		EnableParentClosePolicyWorker: dc.GetBoolProperty(dynamicconfig.EnableParentClosePolicyWorker, true),
-		ThrottledLogRPS:               dc.GetIntProperty(dynamicconfig.WorkerThrottledLogRPS, 20),
-		PersistenceGlobalMaxQPS:       dc.GetIntProperty(dynamicconfig.WorkerPersistenceGlobalMaxQPS, 0),
+		failoverManagerCfg: &failovermanager.Config{
+			AdminOperationToken: dc.GetStringProperty(dynamicconfig.AdminOperationToken, common.DefaultAdminOperationToken),
+			ClusterMetadata:     params.ClusterMetadata,
+		},
+		EnableBatcher:                     dc.GetBoolProperty(dynamicconfig.EnableBatcher, false),
+		EnableParentClosePolicyWorker:     dc.GetBoolProperty(dynamicconfig.EnableParentClosePolicyWorker, true),
+		EnableFailoverManager:             dc.GetBoolProperty(dynamicconfig.EnableFailoverManager, true),
+		ThrottledLogRPS:                   dc.GetIntProperty(dynamicconfig.WorkerThrottledLogRPS, 20),
+		PersistenceGlobalMaxQPS:           dc.GetIntProperty(dynamicconfig.WorkerPersistenceGlobalMaxQPS, 0),
+		PersistenceMaxQPS:                 dc.GetIntProperty(dynamicconfig.WorkerPersistenceMaxQPS, 500),
+		DomainReplicationMaxRetryDuration: dc.GetDurationProperty(dynamicconfig.WorkerReplicationTaskMaxRetryDuration, 10*time.Minute),
 	}
 	advancedVisWritingMode := dc.GetStringProperty(
 		dynamicconfig.AdvancedVisibilityWritingMode,
@@ -165,13 +178,13 @@ func (s *Service) Start() {
 	if !atomic.CompareAndSwapInt32(&s.status, common.DaemonStatusInitialized, common.DaemonStatusStarted) {
 		return
 	}
-
 	logger := s.GetLogger()
 	logger.Info("worker starting", tag.ComponentWorker)
 
 	s.Resource.Start()
+	s.Resource.GetDomainReplicationQueue().Start()
 
-	s.ensureSystemDomainExists()
+	s.ensureDomainExists(common.SystemLocalDomainName)
 	s.startScanner()
 	if s.config.IndexerCfg != nil {
 		s.startIndexer()
@@ -184,10 +197,14 @@ func (s *Service) Start() {
 		s.startArchiver()
 	}
 	if s.config.EnableBatcher() {
+		s.ensureDomainExists(common.BatcherLocalDomainName)
 		s.startBatcher()
 	}
 	if s.config.EnableParentClosePolicyWorker() {
 		s.startParentClosePolicyProcessor()
+	}
+	if s.config.EnableFailoverManager() {
+		s.startFailoverManager()
 	}
 
 	logger.Info("worker started", tag.ComponentWorker)
@@ -203,6 +220,7 @@ func (s *Service) Stop() {
 	close(s.stopC)
 
 	s.Resource.Stop()
+	s.Resource.GetDomainReplicationQueue().Stop()
 
 	s.params.Logger.Info("worker stopped", tag.ComponentWorker)
 }
@@ -247,22 +265,20 @@ func (s *Service) startScanner() {
 
 func (s *Service) startReplicator() {
 	domainReplicationTaskExecutor := domain.NewReplicationTaskExecutor(
-		s.GetMetadataManager(),
-		s.GetLogger(),
+		s.Resource.GetMetadataManager(),
+		s.Resource.GetTimeSource(),
+		s.Resource.GetLogger(),
 	)
 	msgReplicator := replicator.NewReplicator(
 		s.GetClusterMetadata(),
-		s.GetMetadataManager(),
-		s.GetDomainCache(),
 		s.GetClientBean(),
-		s.config.ReplicationCfg,
-		s.GetMessagingClient(),
 		s.GetLogger(),
 		s.GetMetricsClient(),
 		s.GetHostInfo(),
 		s.GetWorkerServiceResolver(),
 		s.GetDomainReplicationQueue(),
 		domainReplicationTaskExecutor,
+		s.config.DomainReplicationMaxRetryDuration(),
 	)
 	if err := msgReplicator.Start(); err != nil {
 		msgReplicator.Stop()
@@ -302,26 +318,41 @@ func (s *Service) startArchiver() {
 	}
 }
 
-func (s *Service) ensureSystemDomainExists() {
-	_, err := s.GetMetadataManager().GetDomain(&persistence.GetDomainRequest{Name: common.SystemLocalDomainName})
-	switch err.(type) {
-	case nil:
-		// noop
-	case *shared.EntityNotExistsError:
-		s.GetLogger().Info("cadence-system domain does not exist, attempting to register domain")
-		s.registerSystemDomain()
-	default:
-		s.GetLogger().Fatal("failed to verify if cadence system domain exists", tag.Error(err))
+func (s *Service) startFailoverManager() {
+	params := &failovermanager.BootstrapParams{
+		Config:        *s.config.failoverManagerCfg,
+		ServiceClient: s.params.PublicClient,
+		MetricsClient: s.GetMetricsClient(),
+		Logger:        s.GetLogger(),
+		TallyScope:    s.params.MetricScope,
+		ClientBean:    s.GetClientBean(),
+	}
+	if err := failovermanager.New(params).Start(); err != nil {
+		s.Stop()
+		s.GetLogger().Fatal("error starting failoverManager", tag.Error(err))
 	}
 }
 
-func (s *Service) registerSystemDomain() {
+func (s *Service) ensureDomainExists(domain string) {
+	_, err := s.GetMetadataManager().GetDomain(context.Background(), &persistence.GetDomainRequest{Name: domain})
+	switch err.(type) {
+	case nil:
+		// noop
+	case *types.EntityNotExistsError:
+		s.GetLogger().Info(fmt.Sprintf("domain %s does not exist, attempting to register domain", domain))
+		s.registerSystemDomain(domain)
+	default:
+		s.GetLogger().Fatal("failed to verify if system domain exists", tag.Error(err))
+	}
+}
+
+func (s *Service) registerSystemDomain(domain string) {
 
 	currentClusterName := s.GetClusterMetadata().GetCurrentClusterName()
-	_, err := s.GetMetadataManager().CreateDomain(&persistence.CreateDomainRequest{
+	_, err := s.GetMetadataManager().CreateDomain(context.Background(), &persistence.CreateDomainRequest{
 		Info: &persistence.DomainInfo{
-			ID:          common.SystemDomainID,
-			Name:        common.SystemLocalDomainName,
+			ID:          getDomainID(domain),
+			Name:        domain,
 			Description: "Cadence internal system domain",
 		},
 		Config: &persistence.DomainConfig{
@@ -336,9 +367,20 @@ func (s *Service) registerSystemDomain() {
 		FailoverVersion: common.EmptyVersion,
 	})
 	if err != nil {
-		if _, ok := err.(*shared.DomainAlreadyExistsError); ok {
+		if _, ok := err.(*types.DomainAlreadyExistsError); ok {
 			return
 		}
 		s.GetLogger().Fatal("failed to register system domain", tag.Error(err))
 	}
+}
+
+func getDomainID(domain string) string {
+	var domainID string
+	switch domain {
+	case common.SystemLocalDomainName:
+		domainID = common.SystemDomainID
+	case common.BatcherLocalDomainName:
+		domainID = common.BatcherDomainID
+	}
+	return domainID
 }
