@@ -35,6 +35,7 @@ import (
 	"github.com/uber/cadence/common/client"
 	"github.com/uber/cadence/common/definition"
 	"github.com/uber/cadence/common/domain"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/elasticsearch"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
@@ -43,7 +44,6 @@ import (
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/common/service"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -247,8 +247,8 @@ func (adh *adminHandlerImpl) DescribeWorkflowExecution(
 		return nil, adh.error(err, scope)
 	}
 
-	shardID := common.WorkflowIDToHistoryShard(*request.Execution.WorkflowID, adh.numberOfHistoryShards)
-	shardIDstr := string(shardID)
+	shardID := common.WorkflowIDToHistoryShard(request.Execution.WorkflowID, adh.numberOfHistoryShards)
+	shardIDstr := string(rune(shardID)) // originally `string(int_shard_id)`, but changing it will change the ring hashing
 	shardIDForOutput := strconv.Itoa(shardID)
 
 	historyHost, err := adh.GetMembershipMonitor().Lookup(common.HistoryServiceName, shardIDstr)
@@ -260,15 +260,15 @@ func (adh *adminHandlerImpl) DescribeWorkflowExecution(
 
 	historyAddr := historyHost.GetAddress()
 	resp2, err := adh.GetHistoryClient().DescribeMutableState(ctx, &types.DescribeMutableStateRequest{
-		DomainUUID: &domainID,
+		DomainUUID: domainID,
 		Execution:  request.Execution,
 	})
 	if err != nil {
 		return &types.AdminDescribeWorkflowExecutionResponse{}, err
 	}
 	return &types.AdminDescribeWorkflowExecutionResponse{
-		ShardID:                common.StringPtr(shardIDForOutput),
-		HistoryAddr:            common.StringPtr(historyAddr),
+		ShardID:                shardIDForOutput,
+		HistoryAddr:            historyAddr,
 		MutableStateInDatabase: resp2.MutableStateInDatabase,
 		MutableStateInCache:    resp2.MutableStateInCache,
 	}, err
@@ -284,7 +284,7 @@ func (adh *adminHandlerImpl) RemoveTask(
 	scope, sw := adh.startRequestProfile(metrics.AdminRemoveTaskScope)
 	defer sw.Stop()
 
-	if request == nil || request.ShardID == nil || request.Type == nil || request.TaskID == nil {
+	if request == nil || request.Type == nil {
 		return adh.error(errRequestNotSet, scope)
 	}
 	err := adh.GetHistoryClient().RemoveTask(ctx, request)
@@ -301,7 +301,7 @@ func (adh *adminHandlerImpl) CloseShard(
 	scope, sw := adh.startRequestProfile(metrics.AdminCloseShardScope)
 	defer sw.Stop()
 
-	if request == nil || request.ShardID == nil {
+	if request == nil {
 		return adh.error(errRequestNotSet, scope)
 	}
 	err := adh.GetHistoryClient().CloseShard(ctx, request)
@@ -318,7 +318,7 @@ func (adh *adminHandlerImpl) ResetQueue(
 	scope, sw := adh.startRequestProfile(metrics.AdminResetQueueScope)
 	defer sw.Stop()
 
-	if request == nil || request.ShardID == nil || request.ClusterName == nil || request.Type == nil {
+	if request == nil || request.Type == nil {
 		return adh.error(errRequestNotSet, scope)
 	}
 	if request.GetClusterName() == "" {
@@ -339,7 +339,7 @@ func (adh *adminHandlerImpl) DescribeQueue(
 	scope, sw := adh.startRequestProfile(metrics.AdminDescribeQueueScope)
 	defer sw.Stop()
 
-	if request == nil || request.ShardID == nil || request.ClusterName == nil || request.Type == nil {
+	if request == nil || request.Type == nil {
 		return nil, adh.error(errRequestNotSet, scope)
 	}
 	if request.GetClusterName() == "" {
@@ -398,7 +398,7 @@ func (adh *adminHandlerImpl) GetWorkflowExecutionRawHistoryV2(
 	var targetVersionHistory *persistence.VersionHistory
 	if request.NextPageToken == nil {
 		response, err := adh.GetHistoryClient().GetMutableState(ctx, &types.GetMutableStateRequest{
-			DomainUUID: common.StringPtr(domainID),
+			DomainUUID: domainID,
 			Execution:  execution,
 		})
 		if err != nil {
@@ -480,9 +480,6 @@ func (adh *adminHandlerImpl) GetWorkflowExecutionRawHistoryV2(
 
 	pageToken.PersistenceToken = rawHistoryResponse.NextPageToken
 	size := rawHistoryResponse.Size
-	// N.B. - Dual emit is required here so that we can see aggregate timer stats across all
-	// domains along with the individual domains stats
-	adh.GetMetricsClient().RecordTimer(metrics.AdminGetWorkflowExecutionRawHistoryScope, metrics.HistorySize, time.Duration(size))
 	scope.RecordTimer(metrics.HistorySize, time.Duration(size))
 
 	rawBlobs := rawHistoryResponse.HistoryEventBlobs
@@ -516,7 +513,22 @@ func (adh *adminHandlerImpl) DescribeCluster(
 	scope, sw := adh.startRequestProfile(metrics.AdminGetWorkflowExecutionRawHistoryV2Scope)
 	defer sw.Stop()
 
-	membershipInfo := &types.MembershipInfo{}
+	// expose visibility store backend and if advanced options are available
+	ave := types.PersistenceFeature{
+		Key:     "advancedVisibilityEnabled",
+		Enabled: adh.params.ESConfig != nil,
+	}
+	visibilityStoreInfo := types.PersistenceInfo{
+		Backend:  adh.Resource.GetVisibilityManager().GetName(),
+		Features: []*types.PersistenceFeature{&ave},
+	}
+
+	// expose history store backend
+	historyStoreInfo := types.PersistenceInfo{
+		Backend: adh.GetHistoryManager().GetName(),
+	}
+
+	membershipInfo := types.MembershipInfo{}
 	if monitor := adh.GetMembershipMonitor(); monitor != nil {
 		currentHost, err := monitor.WhoAmI()
 		if err != nil {
@@ -524,7 +536,7 @@ func (adh *adminHandlerImpl) DescribeCluster(
 		}
 
 		membershipInfo.CurrentHost = &types.HostInfo{
-			Identity: common.StringPtr(currentHost.Identity()),
+			Identity: currentHost.Identity(),
 		}
 
 		members, err := monitor.GetReachableMembers()
@@ -544,13 +556,13 @@ func (adh *adminHandlerImpl) DescribeCluster(
 			var servers []*types.HostInfo
 			for _, server := range resolver.Members() {
 				servers = append(servers, &types.HostInfo{
-					Identity: common.StringPtr(server.Identity()),
+					Identity: server.Identity(),
 				})
 			}
 
 			rings = append(rings, &types.RingInfo{
-				Role:        common.StringPtr(role),
-				MemberCount: common.Int32Ptr(int32(resolver.MemberCount())),
+				Role:        role,
+				MemberCount: int32(resolver.MemberCount()),
 				Members:     servers,
 			})
 		}
@@ -559,10 +571,14 @@ func (adh *adminHandlerImpl) DescribeCluster(
 
 	return &types.DescribeClusterResponse{
 		SupportedClientVersions: &types.SupportedClientVersions{
-			GoSdk:   common.StringPtr(client.SupportedGoSDKVersion),
-			JavaSdk: common.StringPtr(client.SupportedJavaSDKVersion),
+			GoSdk:   client.SupportedGoSDKVersion,
+			JavaSdk: client.SupportedJavaSDKVersion,
 		},
-		MembershipInfo: membershipInfo,
+		MembershipInfo: &membershipInfo,
+		PersistenceInfo: map[string]*types.PersistenceInfo{
+			"visibilityStore": &visibilityStoreInfo,
+			"historyStore":    &historyStoreInfo,
+		},
 	}, nil
 }
 
@@ -579,7 +595,7 @@ func (adh *adminHandlerImpl) GetReplicationMessages(
 	if request == nil {
 		return nil, adh.error(errRequestNotSet, scope)
 	}
-	if request.ClusterName == nil {
+	if request.ClusterName == "" {
 		return nil, adh.error(errClusterNameNotSet, scope)
 	}
 
@@ -648,7 +664,7 @@ func (adh *adminHandlerImpl) GetDomainReplicationMessages(
 	return &types.GetDomainReplicationMessagesResponse{
 		Messages: &types.ReplicationMessages{
 			ReplicationTasks:       replicationTasks,
-			LastRetrievedMessageID: common.Int64Ptr(int64(lastMessageID)),
+			LastRetrievedMessageID: lastMessageID,
 		},
 	}, nil
 }
@@ -690,7 +706,7 @@ func (adh *adminHandlerImpl) ReapplyEvents(
 	if request == nil {
 		return adh.error(errRequestNotSet, scope)
 	}
-	if request.DomainName == nil || request.GetDomainName() == "" {
+	if request.GetDomainName() == "" {
 		return adh.error(errDomainNotSet, scope)
 	}
 	if request.WorkflowExecution == nil {
@@ -708,7 +724,7 @@ func (adh *adminHandlerImpl) ReapplyEvents(
 	}
 
 	err = adh.GetHistoryClient().ReapplyEvents(ctx, &types.HistoryReapplyEventsRequest{
-		DomainUUID: common.StringPtr(domainEntry.GetInfo().ID),
+		DomainUUID: domainEntry.GetInfo().ID,
 		Request:    request,
 	})
 	if err != nil {
@@ -736,7 +752,7 @@ func (adh *adminHandlerImpl) ReadDLQMessages(
 	}
 
 	if request.GetMaximumPageSize() <= 0 {
-		request.MaximumPageSize = common.Int32Ptr(common.ReadDLQMessagesPageSize)
+		request.MaximumPageSize = common.ReadDLQMessagesPageSize
 	}
 
 	if request.InclusiveEndMessageID == nil {
@@ -905,7 +921,7 @@ func (adh *adminHandlerImpl) RefreshWorkflowTasks(
 	}
 
 	err = adh.GetHistoryClient().RefreshWorkflowTasks(ctx, &types.HistoryRefreshWorkflowTasksRequest{
-		DomainUIID: common.StringPtr(domainEntry.GetInfo().ID),
+		DomainUIID: domainEntry.GetInfo().ID,
 		Request:    request,
 	})
 	if err != nil {
@@ -938,7 +954,7 @@ func (adh *adminHandlerImpl) ResendReplicationTasks(
 		adh.GetLogger(),
 	)
 	return resender.SendSingleWorkflowHistory(
-		request.GetDomainID(),
+		request.DomainID,
 		request.GetWorkflowID(),
 		request.GetRunID(),
 		resendStartEventID,

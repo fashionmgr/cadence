@@ -23,8 +23,8 @@ package cassandra
 import (
 	"time"
 
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
-	"github.com/uber/cadence/common/service/config"
 )
 
 const (
@@ -35,7 +35,7 @@ const (
 // CreateSession creates a new session
 // TODO this will be converted to private later, after all cassandra code moved to plugin pkg
 func CreateSession(cfg config.Cassandra) (gocql.Session, error) {
-	return cfg.CQLClient.CreateSession(gocql.ClusterConfig{
+	return gocql.NewClient().CreateSession(gocql.ClusterConfig{
 		Hosts:             cfg.Hosts,
 		Port:              cfg.Port,
 		User:              cfg.User,

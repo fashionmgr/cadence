@@ -27,11 +27,11 @@ import (
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
@@ -123,7 +123,6 @@ func newTransferQueueProcessorBase(
 				processorBase.redispatcher.AddTask,
 				shard.GetTimeSource(),
 				shard.GetConfig().TransferTaskMaxRetryCount,
-				nil,
 			)
 		},
 
@@ -459,7 +458,7 @@ func (t *transferQueueProcessorBase) readTasks(
 		return err
 	}
 
-	err := backoff.Retry(op, persistenceOperationRetryPolicy, common.IsPersistenceTransientError)
+	err := backoff.Retry(op, persistenceOperationRetryPolicy, persistence.IsTransientError)
 	if err != nil {
 		return nil, false, err
 	}

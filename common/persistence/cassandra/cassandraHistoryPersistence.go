@@ -26,12 +26,12 @@ import (
 	"time"
 
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
 	p "github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
-	"github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -176,11 +176,11 @@ func (h *nosqlHistoryManager) ReadHistoryBranch(
 
 		switch {
 		case nodeID < lastNodeID:
-			return nil, &types.InternalServiceError{
+			return nil, &types.InternalDataInconsistencyError{
 				Message: fmt.Sprintf("corrupted data, nodeID cannot decrease"),
 			}
 		case nodeID == lastNodeID:
-			return nil, &types.InternalServiceError{
+			return nil, &types.InternalDataInconsistencyError{
 				Message: fmt.Sprintf("corrupted data, same nodeID must have smaller txnID"),
 			}
 		default: // row.NodeID > lastNodeID:

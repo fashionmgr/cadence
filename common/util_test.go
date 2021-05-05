@@ -91,29 +91,67 @@ func TestCreateHistoryStartWorkflowRequest_ExpirationTimeWithCron(t *testing.T) 
 	domainID := uuid.New()
 	request := &types.StartWorkflowExecutionRequest{
 		RetryPolicy: &types.RetryPolicy{
-			InitialIntervalInSeconds:    Int32Ptr(60),
-			ExpirationIntervalInSeconds: Int32Ptr(60),
+			InitialIntervalInSeconds:    60,
+			ExpirationIntervalInSeconds: 60,
 		},
-		CronSchedule: StringPtr("@every 300s"),
+		CronSchedule: "@every 300s",
 	}
 	now := time.Now()
-	startRequest := CreateHistoryStartWorkflowRequest(domainID, request, now)
+	startRequest, _ := CreateHistoryStartWorkflowRequest(domainID, request, now)
+	require.NotNil(t, startRequest)
 
 	expirationTime := startRequest.GetExpirationTimestamp()
 	require.NotNil(t, expirationTime)
 	require.True(t, time.Unix(0, expirationTime).Sub(now) > 60*time.Second)
 }
 
+func TestCreateHistoryStartWorkflowRequest_DelayStart(t *testing.T) {
+	domainID := uuid.New()
+	request := &types.StartWorkflowExecutionRequest{
+		RetryPolicy: &types.RetryPolicy{
+			InitialIntervalInSeconds:    60,
+			ExpirationIntervalInSeconds: 60,
+		},
+		DelayStartSeconds: Int32Ptr(100),
+	}
+	now := time.Now()
+	startRequest, _ := CreateHistoryStartWorkflowRequest(domainID, request, now)
+	require.NotNil(t, startRequest)
+
+	expirationTime := startRequest.GetExpirationTimestamp()
+	require.NotNil(t, expirationTime)
+
+	// Since we assign the expiration time after we create the workflow request,
+	// There's a chance that the test thread might sleep or get deprioritized and
+	// expirationTime - now may not be equal to DelayStartSeconds. Adding 2 seconds
+	// buffer to avoid this test being flaky
+	require.True(
+		t,
+		time.Unix(0, expirationTime).Sub(now) >= (100+58)*time.Second,
+		"Integration test took too short: %f seconds vs %f seconds",
+		time.Duration(time.Unix(0, expirationTime).Sub(now)).Round(time.Millisecond).Seconds(),
+		time.Duration((100+58)*time.Second).Round(time.Millisecond).Seconds(),
+	)
+	require.True(
+		t,
+		time.Unix(0, expirationTime).Sub(now) < (100+68)*time.Second,
+		"Integration test took too long: %f seconds vs %f seconds",
+		time.Duration(time.Unix(0, expirationTime).Sub(now)).Round(time.Millisecond).Seconds(),
+		time.Duration((100+68)*time.Second).Round(time.Millisecond).Seconds(),
+	)
+}
+
 func TestCreateHistoryStartWorkflowRequest_ExpirationTimeWithoutCron(t *testing.T) {
 	domainID := uuid.New()
 	request := &types.StartWorkflowExecutionRequest{
 		RetryPolicy: &types.RetryPolicy{
-			InitialIntervalInSeconds:    Int32Ptr(60),
-			ExpirationIntervalInSeconds: Int32Ptr(60),
+			InitialIntervalInSeconds:    60,
+			ExpirationIntervalInSeconds: 60,
 		},
 	}
 	now := time.Now()
-	startRequest := CreateHistoryStartWorkflowRequest(domainID, request, now)
+	startRequest, _ := CreateHistoryStartWorkflowRequest(domainID, request, now)
+	require.NotNil(t, startRequest)
 
 	expirationTime := startRequest.GetExpirationTimestamp()
 	require.NotNil(t, expirationTime)
@@ -127,5 +165,40 @@ func TestConvertIndexedValueTypeToThriftType(t *testing.T) {
 	for i := 0; i < len(expected); i++ {
 		require.Equal(t, expected[i], ConvertIndexedValueTypeToThriftType(i, nil))
 		require.Equal(t, expected[i], ConvertIndexedValueTypeToThriftType(float64(i), nil))
+	}
+}
+
+func TestValidateDomainUUID(t *testing.T) {
+	testCases := []struct {
+		msg        string
+		domainUUID string
+		valid      bool
+	}{
+		{
+			msg:        "empty",
+			domainUUID: "",
+			valid:      false,
+		},
+		{
+			msg:        "invalid",
+			domainUUID: "some random uuid",
+			valid:      false,
+		},
+		{
+			msg:        "valid",
+			domainUUID: uuid.New(),
+			valid:      true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.msg, func(t *testing.T) {
+			err := ValidateDomainUUID(tc.domainUUID)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
 	}
 }

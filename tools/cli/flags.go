@@ -112,6 +112,9 @@ const (
 	FlagMoreWithAlias                     = FlagMore + ", m"
 	FlagAll                               = "all"
 	FlagAllWithAlias                      = FlagAll + ", a"
+	FlagDeprecated                        = "deprecated"
+	FlagDeprecatedWithAlias               = FlagDeprecated + ", dep"
+	FlagForce                             = "force"
 	FlagPageSize                          = "pagesize"
 	FlagPageSizeWithAlias                 = FlagPageSize + ", ps"
 	FlagEarliestTime                      = "earliest_time"
@@ -264,6 +267,7 @@ const (
 	FlagDateFormat                        = "date_format"
 	FlagShardMultiplier                   = "shard_multiplier"
 	FlagBucketSize                        = "bucket_size"
+	DelayStartSeconds                     = "delay_start_seconds"
 )
 
 var flagsForExecution = []cli.Flag{
@@ -277,8 +281,19 @@ var flagsForExecution = []cli.Flag{
 	},
 }
 
+var flagsOfExecutionForShow = []cli.Flag{
+	cli.StringFlag{
+		Name:  FlagWorkflowIDWithAlias,
+		Usage: "WorkflowID",
+	},
+	cli.StringFlag{
+		Name:  FlagRunIDWithAlias,
+		Usage: "RunID, required for archived history",
+	},
+}
+
 func getFlagsForShow() []cli.Flag {
-	return append(flagsForExecution, getFlagsForShowID()...)
+	return append(flagsOfExecutionForShow, getFlagsForShowID()...)
 }
 
 func getFlagsForShowID() []cli.Flag {
@@ -356,7 +371,7 @@ func getFlagsForStart() []cli.Flag {
 		cli.IntFlag{
 			Name: FlagWorkflowIDReusePolicyAlias,
 			Usage: "Optional input to configure if the same workflow ID is allow to use for new workflow execution. " +
-				"Available options: 0: AllowDuplicateFailedOnly, 1: AllowDuplicate, 2: RejectDuplicate",
+				"Available options: 0: AllowDuplicateFailedOnly, 1: AllowDuplicate, 2: RejectDuplicate, 3:TerminateIfRunning",
 		},
 		cli.StringFlag{
 			Name:  FlagInputWithAlias,
@@ -427,6 +442,10 @@ func getFlagsForStart() []cli.Flag {
 		cli.IntFlag{
 			Name:  FlagRetryMaxInterval,
 			Usage: "Optional retry maximum interval in seconds. If set will give an upper bound for retry interval. Must be equal or greater than retry interval.",
+		},
+		cli.IntFlag{
+			Name:  DelayStartSeconds,
+			Usage: "Optional workflow start delay in seconds. If set workflow start will be delayed this many seconds",
 		},
 	}
 }

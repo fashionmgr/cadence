@@ -33,13 +33,14 @@ import (
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
+	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/collection"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/quotas"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/common/types"
 	exec "github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
@@ -153,7 +154,18 @@ func (t *taskAckManagerImpl) GetTasks(
 
 	var replicationTasks []*types.ReplicationTask
 	readLevel := lastReadTaskID
+TaskInfoLoop:
 	for _, taskInfo := range taskInfoList {
+		// filter task info by domain clusters.
+		domainEntity, err := t.shard.GetDomainCache().GetDomainByID(taskInfo.GetDomainID())
+		if err != nil {
+			return nil, err
+		}
+		if skipTask(pollingCluster, domainEntity) {
+			continue
+		}
+
+		// construct replication task from DB
 		_ = t.rateLimiter.Wait(ctx)
 		var replicationTask *types.ReplicationTask
 		op := func() error {
@@ -161,12 +173,16 @@ func (t *taskAckManagerImpl) GetTasks(
 			replicationTask, err = t.toReplicationTask(ctx, taskInfo)
 			return err
 		}
-
-		err = backoff.Retry(op, t.retryPolicy, common.IsPersistenceTransientError)
-		if err != nil {
+		err = backoff.Retry(op, t.retryPolicy, persistence.IsTransientError)
+		switch err.(type) {
+		case nil:
+			// No action
+		case *types.BadRequestError, *types.InternalDataInconsistencyError, *types.EntityNotExistsError:
+			t.logger.Warn("Failed to get replication task.", tag.Error(err))
+		default:
 			t.logger.Error("Failed to get replication task. Return what we have so far.", tag.Error(err))
 			hasMore = true
-			break
+			break TaskInfoLoop
 		}
 		readLevel = taskInfo.GetTaskID()
 		if replicationTask != nil {
@@ -202,8 +218,8 @@ func (t *taskAckManagerImpl) GetTasks(
 
 	return &types.ReplicationMessages{
 		ReplicationTasks:       replicationTasks,
-		HasMore:                common.BoolPtr(hasMore),
-		LastRetrievedMessageID: common.Int64Ptr(readLevel),
+		HasMore:                hasMore,
+		LastRetrievedMessageID: readLevel,
 	}, nil
 }
 
@@ -221,19 +237,19 @@ func (t *taskAckManagerImpl) toReplicationTask(
 	case persistence.ReplicationTaskTypeSyncActivity:
 		task, err := t.generateSyncActivityTask(ctx, task)
 		if task != nil {
-			task.SourceTaskID = common.Int64Ptr(taskInfo.GetTaskID())
+			task.SourceTaskID = taskInfo.GetTaskID()
 		}
 		return task, err
 	case persistence.ReplicationTaskTypeHistory:
 		task, err := t.generateHistoryReplicationTask(ctx, task)
 		if task != nil {
-			task.SourceTaskID = common.Int64Ptr(taskInfo.GetTaskID())
+			task.SourceTaskID = taskInfo.GetTaskID()
 		}
 		return task, err
 	case persistence.ReplicationTaskTypeFailoverMarker:
 		task := t.generateFailoverMarkerTask(task)
 		if task != nil {
-			task.SourceTaskID = common.Int64Ptr(taskInfo.GetTaskID())
+			task.SourceTaskID = taskInfo.GetTaskID()
 		}
 		return task, nil
 	default:
@@ -252,8 +268,8 @@ func (t *taskAckManagerImpl) processReplication(
 ) (retReplicationTask *types.ReplicationTask, retError error) {
 
 	execution := types.WorkflowExecution{
-		WorkflowID: common.StringPtr(taskInfo.GetWorkflowID()),
-		RunID:      common.StringPtr(taskInfo.GetRunID()),
+		WorkflowID: taskInfo.GetWorkflowID(),
+		RunID:      taskInfo.GetRunID(),
 	}
 
 	context, release, err := t.executionCache.GetOrCreateWorkflowExecution(ctx, taskInfo.GetDomainID(), execution)
@@ -326,7 +342,7 @@ func (t *taskAckManagerImpl) getEventsBlob(
 	}
 
 	if len(eventBatchBlobs) != 1 {
-		return nil, &types.InternalServiceError{
+		return nil, &types.InternalDataInconsistencyError{
 			Message: "replicatorQueueProcessor encounter more than 1 NDC raw event batch",
 		}
 	}
@@ -345,8 +361,8 @@ func (t *taskAckManagerImpl) isNewRunNDCEnabled(
 		ctx,
 		domainID,
 		types.WorkflowExecution{
-			WorkflowID: common.StringPtr(workflowID),
-			RunID:      common.StringPtr(runID),
+			WorkflowID: workflowID,
+			RunID:      runID,
 		},
 	)
 	if err != nil {
@@ -462,10 +478,10 @@ func (t *taskAckManagerImpl) generateFailoverMarkerTask(
 
 	return &types.ReplicationTask{
 		TaskType:     types.ReplicationTaskType.Ptr(types.ReplicationTaskTypeFailoverMarker),
-		SourceTaskID: common.Int64Ptr(taskInfo.GetTaskID()),
+		SourceTaskID: taskInfo.GetTaskID(),
 		FailoverMarkerAttributes: &types.FailoverMarkerAttributes{
-			DomainID:        common.StringPtr(taskInfo.GetDomainID()),
-			FailoverVersion: common.Int64Ptr(taskInfo.GetVersion()),
+			DomainID:        taskInfo.GetDomainID(),
+			FailoverVersion: taskInfo.GetVersion(),
 		},
 		CreationTime: common.Int64Ptr(taskInfo.CreationTime),
 	}
@@ -510,19 +526,19 @@ func (t *taskAckManagerImpl) generateSyncActivityTask(
 			return &types.ReplicationTask{
 				TaskType: types.ReplicationTaskType.Ptr(types.ReplicationTaskTypeSyncActivity),
 				SyncActivityTaskAttributes: &types.SyncActivityTaskAttributes{
-					DomainID:           common.StringPtr(taskInfo.GetDomainID()),
-					WorkflowID:         common.StringPtr(taskInfo.GetWorkflowID()),
-					RunID:              common.StringPtr(taskInfo.GetRunID()),
-					Version:            common.Int64Ptr(activityInfo.Version),
-					ScheduledID:        common.Int64Ptr(activityInfo.ScheduleID),
+					DomainID:           taskInfo.GetDomainID(),
+					WorkflowID:         taskInfo.GetWorkflowID(),
+					RunID:              taskInfo.GetRunID(),
+					Version:            activityInfo.Version,
+					ScheduledID:        activityInfo.ScheduleID,
 					ScheduledTime:      scheduledTime,
-					StartedID:          common.Int64Ptr(activityInfo.StartedID),
+					StartedID:          activityInfo.StartedID,
 					StartedTime:        startedTime,
 					LastHeartbeatTime:  heartbeatTime,
 					Details:            activityInfo.Details,
-					Attempt:            common.Int32Ptr(activityInfo.Attempt),
+					Attempt:            activityInfo.Attempt,
 					LastFailureReason:  common.StringPtr(activityInfo.LastFailureReason),
-					LastWorkerIdentity: common.StringPtr(activityInfo.LastWorkerIdentity),
+					LastWorkerIdentity: activityInfo.LastWorkerIdentity,
 					LastFailureDetails: activityInfo.LastFailureDetails,
 					VersionHistory:     versionHistory,
 				},
@@ -593,10 +609,10 @@ func (t *taskAckManagerImpl) generateHistoryReplicationTask(
 			replicationTask := &types.ReplicationTask{
 				TaskType: types.ReplicationTaskType.Ptr(types.ReplicationTaskTypeHistoryV2),
 				HistoryTaskV2Attributes: &types.HistoryTaskV2Attributes{
-					TaskID:              common.Int64Ptr(task.FirstEventID),
-					DomainID:            common.StringPtr(task.DomainID),
-					WorkflowID:          common.StringPtr(task.WorkflowID),
-					RunID:               common.StringPtr(task.RunID),
+					TaskID:              task.FirstEventID,
+					DomainID:            task.DomainID,
+					WorkflowID:          task.WorkflowID,
+					RunID:               task.RunID,
 					VersionHistoryItems: versionHistoryItems,
 					Events:              eventsBlob,
 					NewRunEvents:        newRunEventsBlob,
@@ -608,6 +624,15 @@ func (t *taskAckManagerImpl) generateHistoryReplicationTask(
 	)
 }
 
+func skipTask(pollingCluster string, domainEntity *cache.DomainCacheEntry) bool {
+	for _, cluster := range domainEntity.GetReplicationConfig().Clusters {
+		if cluster.ClusterName == pollingCluster {
+			return false
+		}
+	}
+	return true
+}
+
 func getVersionHistoryItems(
 	versionHistories *persistence.VersionHistories,
 	eventID int64,
@@ -615,7 +640,7 @@ func getVersionHistoryItems(
 ) ([]*types.VersionHistoryItem, []byte, error) {
 
 	if versionHistories == nil {
-		return nil, nil, &types.InternalServiceError{
+		return nil, nil, &types.BadRequestError{
 			Message: "replicatorQueueProcessor encounter workflow without version histories",
 		}
 	}

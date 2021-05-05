@@ -198,6 +198,8 @@ const (
 	PersistenceCompleteTaskScope
 	// PersistenceCompleteTasksLessThanScope is the metric scope for persistence.TaskManager.PersistenceCompleteTasksLessThan API
 	PersistenceCompleteTasksLessThanScope
+	// PersistenceGetOrphanTasksScope is the metric scope for persistence.TaskManager.GetOrphanTasks API
+	PersistenceGetOrphanTasksScope
 	// PersistenceLeaseTaskListScope tracks LeaseTaskList calls made by service to persistence layer
 	PersistenceLeaseTaskListScope
 	// PersistenceUpdateTaskListScope tracks PersistenceUpdateTaskListScope calls made by service to persistence layer
@@ -958,7 +960,7 @@ const (
 	TimerStandbyTaskDeleteHistoryEventScope
 	// TimerStandbyTaskWorkflowBackoffTimerScope is the scope used by metric emitted by timer queue processor for processing retry task.
 	TimerStandbyTaskWorkflowBackoffTimerScope
-	// HistoryEventNotificationScope is the scope used by shard history event nitification
+	// HistoryEventNotificationScope is the scope used by shard history event notification
 	HistoryEventNotificationScope
 	// ReplicatorQueueProcessorScope is the scope used by all metric emitted by replicator queue processor
 	ReplicatorQueueProcessorScope
@@ -1123,6 +1125,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		PersistenceGetTasksScope:                                 {operation: "GetTasks"},
 		PersistenceCompleteTaskScope:                             {operation: "CompleteTask"},
 		PersistenceCompleteTasksLessThanScope:                    {operation: "CompleteTasksLessThan"},
+		PersistenceGetOrphanTasksScope:                           {operation: "GetOrphanTasks"},
 		PersistenceLeaseTaskListScope:                            {operation: "LeaseTaskList"},
 		PersistenceUpdateTaskListScope:                           {operation: "UpdateTaskList"},
 		PersistenceListTaskListScope:                             {operation: "ListTaskList"},
@@ -1579,6 +1582,7 @@ const (
 	CadenceErrDomainNotActiveCounter
 	CadenceErrServiceBusyCounter
 	CadenceErrEntityNotExistsCounter
+	CadenceErrWorkflowExecutionAlreadyCompletedCounter
 	CadenceErrExecutionAlreadyStartedCounter
 	CadenceErrDomainAlreadyExistsCounter
 	CadenceErrCancellationAlreadyRequestedCounter
@@ -1627,6 +1631,7 @@ const (
 	EventBlobSize
 
 	ArchivalConfigFailures
+	ActiveClusterGauge
 
 	ElasticsearchRequests
 	ElasticsearchFailures
@@ -1765,7 +1770,6 @@ const (
 
 	ActivityE2ELatency
 	ActivityLostCounter
-	ActiveClusterGauge
 	AckLevelUpdateCounter
 	AckLevelUpdateFailedCounter
 	DecisionTypeScheduleActivityCounter
@@ -1786,6 +1790,7 @@ const (
 	FailedDecisionsCounter
 	DecisionAttemptTimer
 	StaleMutableStateCounter
+	DataInconsistentCounter
 	AutoResetPointsLimitExceededCounter
 	AutoResetPointCorruptionCounter
 	ConcurrencyUpdateFailureCounter
@@ -1858,6 +1863,9 @@ const (
 	SignalInfoCount
 	RequestCancelInfoCount
 	BufferedEventsCount
+	TransferTasksCount
+	TimerTasksCount
+	ReplicationTasksCount
 	DeleteActivityInfoCount
 	DeleteTimerInfoCount
 	DeleteChildInfoCount
@@ -1958,6 +1966,9 @@ const (
 	LocalToRemoteMatchPerTaskListCounter
 	RemoteToLocalMatchPerTaskListCounter
 	RemoteToRemoteMatchPerTaskListCounter
+	PollerPerTaskListCounter
+	TaskListManagersGauge
+	TaskLagPerTaskListGauge
 
 	NumMatchingMetrics
 )
@@ -2045,6 +2056,7 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		CadenceErrDomainNotActiveCounter:                    {metricName: "cadence_errors_domain_not_active", metricType: Counter},
 		CadenceErrServiceBusyCounter:                        {metricName: "cadence_errors_service_busy", metricType: Counter},
 		CadenceErrEntityNotExistsCounter:                    {metricName: "cadence_errors_entity_not_exists", metricType: Counter},
+		CadenceErrWorkflowExecutionAlreadyCompletedCounter:  {metricName: "cadence_errors_workflow_execution_already_completed", metricType: Counter},
 		CadenceErrExecutionAlreadyStartedCounter:            {metricName: "cadence_errors_execution_already_started", metricType: Counter},
 		CadenceErrDomainAlreadyExistsCounter:                {metricName: "cadence_errors_domain_already_exists", metricType: Counter},
 		CadenceErrCancellationAlreadyRequestedCounter:       {metricName: "cadence_errors_cancellation_already_requested", metricType: Counter},
@@ -2087,6 +2099,7 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		HistoryCount:                                        {metricName: "history_count", metricType: Timer},
 		EventBlobSize:                                       {metricName: "event_blob_size", metricType: Timer},
 		ArchivalConfigFailures:                              {metricName: "archivalconfig_failures", metricType: Counter},
+		ActiveClusterGauge:                                  {metricName: "active_cluster", metricType: Gauge},
 		ElasticsearchRequests:                               {metricName: "elasticsearch_requests", metricType: Counter},
 		ElasticsearchFailures:                               {metricName: "elasticsearch_errors", metricType: Counter},
 		ElasticsearchLatency:                                {metricName: "elasticsearch_latency", metricType: Timer},
@@ -2212,7 +2225,6 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		TaskLimitExceededCounter: {metricName: "task_errors_limit_exceeded_counter", metricType: Counter},
 		TaskProcessingLatency:    {metricName: "task_latency_processing", metricType: Timer},
 		TaskQueueLatency:         {metricName: "task_latency_queue", metricType: Timer},
-		ActiveClusterGauge:       {metricName: "active_cluster", metricType: Gauge},
 
 		// per domain task metrics
 
@@ -2269,6 +2281,7 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		FailedDecisionsCounter:                            {metricName: "failed_decisions", metricType: Counter},
 		DecisionAttemptTimer:                              {metricName: "decision_attempt", metricType: Timer},
 		StaleMutableStateCounter:                          {metricName: "stale_mutable_state", metricType: Counter},
+		DataInconsistentCounter:                           {metricName: "data_inconsistent", metricType: Counter},
 		AutoResetPointsLimitExceededCounter:               {metricName: "auto_reset_points_exceed_limit", metricType: Counter},
 		AutoResetPointCorruptionCounter:                   {metricName: "auto_reset_point_corruption", metricType: Counter},
 		ConcurrencyUpdateFailureCounter:                   {metricName: "concurrency_update_failure", metricType: Counter},
@@ -2333,7 +2346,7 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		ActivityInfoSize:                                  {metricName: "activity_info_size", metricType: Timer},
 		TimerInfoSize:                                     {metricName: "timer_info_size", metricType: Timer},
 		ChildInfoSize:                                     {metricName: "child_info_size", metricType: Timer},
-		SignalInfoSize:                                    {metricName: "signal_info", metricType: Timer},
+		SignalInfoSize:                                    {metricName: "signal_info_size", metricType: Timer},
 		BufferedEventsSize:                                {metricName: "buffered_events_size", metricType: Timer},
 		ActivityInfoCount:                                 {metricName: "activity_info_count", metricType: Timer},
 		TimerInfoCount:                                    {metricName: "timer_info_count", metricType: Timer},
@@ -2409,6 +2422,9 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		FailoverMarkerInsertFailure:                       {metricName: "failover_marker_insert_failures", metricType: Counter},
 		FailoverMarkerNotificationFailure:                 {metricName: "failover_marker_notification_failures", metricType: Counter},
 		FailoverMarkerUpdateShardFailure:                  {metricName: "failover_marker_update_shard_failures", metricType: Counter},
+		TransferTasksCount:                                {metricName: "transfer_tasks_count", metricType: Timer},
+		TimerTasksCount:                                   {metricName: "timer_tasks_count", metricType: Timer},
+		ReplicationTasksCount:                             {metricName: "replication_tasks_count", metricType: Timer},
 	},
 	Matching: {
 		PollSuccessPerTaskListCounter:            {metricName: "poll_success_per_tl", metricRollupName: "poll_success"},
@@ -2437,6 +2453,9 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		LocalToRemoteMatchPerTaskListCounter:     {metricName: "local_to_remote_matches_per_tl", metricRollupName: "local_to_remote_matches"},
 		RemoteToLocalMatchPerTaskListCounter:     {metricName: "remote_to_local_matches_per_tl", metricRollupName: "remote_to_local_matches"},
 		RemoteToRemoteMatchPerTaskListCounter:    {metricName: "remote_to_remote_matches_per_tl", metricRollupName: "remote_to_remote_matches"},
+		PollerPerTaskListCounter:                 {metricName: "poller_count_per_tl", metricRollupName: "poller_count"},
+		TaskListManagersGauge:                    {metricName: "tasklist_managers", metricType: Gauge},
+		TaskLagPerTaskListGauge:                  {metricName: "task_lag_per_tl", metricType: Gauge},
 	},
 	Worker: {
 		ReplicatorMessages:                            {metricName: "replicator_messages"},

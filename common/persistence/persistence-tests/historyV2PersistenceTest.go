@@ -118,11 +118,6 @@ func (s *HistoryV2PersistenceSuite) TestScanAllTrees() {
 	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
 	defer cancel()
 
-	// TODO https://github.com/uber/cadence/issues/2458
-	if s.HistoryV2Mgr.GetName() != "cassandra" {
-		return
-	}
-
 	resp, err := s.HistoryV2Mgr.GetAllHistoryTreeBranches(ctx, &p.GetAllHistoryTreeBranchesRequest{
 		PageSize: 1,
 	})
@@ -366,7 +361,7 @@ func (s *HistoryV2PersistenceSuite) TestReadBranchByPagination() {
 
 // TestConcurrentlyCreateAndAppendBranches test
 func (s *HistoryV2PersistenceSuite) TestConcurrentlyCreateAndAppendBranches() {
-	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), largeTestContextTimeout)
 	defer cancel()
 
 	treeID := uuid.New()
@@ -451,7 +446,7 @@ func (s *HistoryV2PersistenceSuite) TestConcurrentlyCreateAndAppendBranches() {
 
 			// read to verify override success, at this point history is corrupted, missing 7/8, so we should only see 6 events
 			_, err = s.readWithError(ctx, branch, 1, 25)
-			_, ok := err.(*types.InternalServiceError)
+			_, ok := err.(*types.InternalDataInconsistencyError)
 			s.Equal(true, ok)
 
 			events = s.read(ctx, branch, 1, 7)
@@ -701,7 +696,7 @@ func (s *HistoryV2PersistenceSuite) genRandomEvents(eventIDs []int64, version in
 
 	timestamp := time.Now().UnixNano()
 	for _, eid := range eventIDs {
-		e := &types.HistoryEvent{EventID: common.Int64Ptr(eid), Version: common.Int64Ptr(version), Timestamp: int64Ptr(timestamp)}
+		e := &types.HistoryEvent{EventID: eid, Version: version, Timestamp: int64Ptr(timestamp)}
 		events = append(events, e)
 	}
 

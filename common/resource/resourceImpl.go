@@ -43,6 +43,7 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/domain"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
@@ -52,7 +53,6 @@ import (
 	"github.com/uber/cadence/common/persistence"
 	persistenceClient "github.com/uber/cadence/common/persistence/client"
 	"github.com/uber/cadence/common/service"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 )
 
 type (
@@ -143,7 +143,7 @@ func New(
 	visibilityManagerInitializer VisibilityManagerInitializer,
 ) (impl *Impl, retError error) {
 
-	logger := params.Logger.WithTags(tag.Service(serviceName))
+	logger := params.Logger
 	throttledLogger := loggerimpl.NewThrottledLogger(logger, throttledLoggerMaxRPS)
 
 	numShards := params.PersistenceConfig.NumHistoryShards

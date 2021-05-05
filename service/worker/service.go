@@ -31,13 +31,13 @@ import (
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/definition"
 	"github.com/uber/cadence/common/domain"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/persistence"
 	persistenceClient "github.com/uber/cadence/common/persistence/client"
 	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/common/service"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/worker/archiver"
 	"github.com/uber/cadence/service/worker/batcher"
@@ -49,6 +49,7 @@ import (
 	"github.com/uber/cadence/service/worker/scanner/executions"
 	"github.com/uber/cadence/service/worker/scanner/shardscanner"
 	"github.com/uber/cadence/service/worker/scanner/timers"
+	"github.com/uber/cadence/service/worker/shadower"
 )
 
 type (
@@ -78,6 +79,7 @@ type (
 		EnableBatcher                     dynamicconfig.BoolPropertyFn
 		EnableParentClosePolicyWorker     dynamicconfig.BoolPropertyFn
 		EnableFailoverManager             dynamicconfig.BoolPropertyFn
+		EnableWorkflowShadower            dynamicconfig.BoolPropertyFn
 		DomainReplicationMaxRetryDuration dynamicconfig.DurationPropertyFn
 	}
 )
@@ -129,16 +131,21 @@ func NewConfig(params *service.BootstrapParams) *Config {
 			TimeLimitPerArchivalIteration: dc.GetDurationProperty(dynamicconfig.WorkerTimeLimitPerArchivalIteration, archiver.MaxArchivalIterationTimeout()),
 		},
 		ScannerCfg: &scanner.Config{
-			ScannerPersistenceMaxQPS: dc.GetIntProperty(dynamicconfig.ScannerPersistenceMaxQPS, 5),
-			Persistence:              &params.PersistenceConfig,
-			ClusterMetadata:          params.ClusterMetadata,
-			TaskListScannerEnabled:   dc.GetBoolProperty(dynamicconfig.TaskListScannerEnabled, true),
-			HistoryScannerEnabled:    dc.GetBoolProperty(dynamicconfig.HistoryScannerEnabled, false),
+			ScannerPersistenceMaxQPS:                    dc.GetIntProperty(dynamicconfig.ScannerPersistenceMaxQPS, 5),
+			GetOrphanTasksPageSizeFn:                    dc.GetIntProperty(dynamicconfig.ScannerGetOrphanTasksPageSize, common.DefaultScannerGetOrphanTasksPageSize),
+			TaskBatchSizeFn:                             dc.GetIntProperty(dynamicconfig.ScannerBatchSizeForTasklistHandler, common.DefaultScannerGetOrphanTasksPageSize),
+			EnableCleaningOrphanTaskInTasklistScavenger: dc.GetBoolProperty(dynamicconfig.EnableCleaningOrphanTaskInTasklistScavenger, false),
+			MaxTasksPerJobFn:                            dc.GetIntProperty(dynamicconfig.ScannerMaxTasksProcessedPerTasklistJob, common.DefaultScannerMaxTasksProcessedPerTasklistJob),
+			Persistence:                                 &params.PersistenceConfig,
+			ClusterMetadata:                             params.ClusterMetadata,
+			TaskListScannerEnabled:                      dc.GetBoolProperty(dynamicconfig.TaskListScannerEnabled, true),
+			HistoryScannerEnabled:                       dc.GetBoolProperty(dynamicconfig.HistoryScannerEnabled, false),
 			ShardScanners: []*shardscanner.ScannerConfig{
 				executions.ConcreteExecutionScannerConfig(dc),
 				executions.CurrentExecutionScannerConfig(dc),
 				timers.ScannerConfig(dc),
 			},
+			MaxWorkflowRetentionInDays: dc.GetIntProperty(dynamicconfig.MaxRetentionDays, domain.DefaultMaxWorkflowRetentionInDays),
 		},
 		BatcherCfg: &batcher.Config{
 			AdminOperationToken: dc.GetStringProperty(dynamicconfig.AdminOperationToken, common.DefaultAdminOperationToken),
@@ -151,6 +158,7 @@ func NewConfig(params *service.BootstrapParams) *Config {
 		EnableBatcher:                     dc.GetBoolProperty(dynamicconfig.EnableBatcher, false),
 		EnableParentClosePolicyWorker:     dc.GetBoolProperty(dynamicconfig.EnableParentClosePolicyWorker, true),
 		EnableFailoverManager:             dc.GetBoolProperty(dynamicconfig.EnableFailoverManager, true),
+		EnableWorkflowShadower:            dc.GetBoolProperty(dynamicconfig.EnableWorkflowShadower, true),
 		ThrottledLogRPS:                   dc.GetIntProperty(dynamicconfig.WorkerThrottledLogRPS, 20),
 		PersistenceGlobalMaxQPS:           dc.GetIntProperty(dynamicconfig.WorkerPersistenceGlobalMaxQPS, 0),
 		PersistenceMaxQPS:                 dc.GetIntProperty(dynamicconfig.WorkerPersistenceMaxQPS, 500),
@@ -205,6 +213,10 @@ func (s *Service) Start() {
 	}
 	if s.config.EnableFailoverManager() {
 		s.startFailoverManager()
+	}
+	if s.config.EnableWorkflowShadower() {
+		s.ensureDomainExists(common.ShadowerLocalDomainName)
+		s.startWorkflowShadower()
 	}
 
 	logger.Info("worker started", tag.ComponentWorker)
@@ -333,6 +345,18 @@ func (s *Service) startFailoverManager() {
 	}
 }
 
+func (s *Service) startWorkflowShadower() {
+	params := &shadower.BootstrapParams{
+		ServiceClient: s.params.PublicClient,
+		DomainCache:   s.GetDomainCache(),
+		TallyScope:    s.params.MetricScope,
+	}
+	if err := shadower.New(params).Start(); err != nil {
+		s.Stop()
+		s.GetLogger().Fatal("error starting workflow shadower", tag.Error(err))
+	}
+}
+
 func (s *Service) ensureDomainExists(domain string) {
 	_, err := s.GetMetadataManager().GetDomain(context.Background(), &persistence.GetDomainRequest{Name: domain})
 	switch err.(type) {
@@ -381,6 +405,8 @@ func getDomainID(domain string) string {
 		domainID = common.SystemDomainID
 	case common.BatcherLocalDomainName:
 		domainID = common.BatcherDomainID
+	case common.ShadowerLocalDomainName:
+		domainID = common.ShadowerDomainID
 	}
 	return domainID
 }

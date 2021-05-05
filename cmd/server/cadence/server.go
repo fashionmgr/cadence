@@ -33,14 +33,14 @@ import (
 	"github.com/uber/cadence/common/authorization"
 	"github.com/uber/cadence/common/blobstore/filestore"
 	"github.com/uber/cadence/common/cluster"
+	"github.com/uber/cadence/common/config"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/elasticsearch"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/messaging/kafka"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/service"
-	"github.com/uber/cadence/common/service/config"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/service/frontend"
 	"github.com/uber/cadence/service/history"
 	"github.com/uber/cadence/service/matching"
@@ -102,15 +102,18 @@ func (s *server) Stop() {
 
 // startService starts a service with the given name and config
 func (s *server) startService() common.Daemon {
-
-	var err error
-
 	params := service.BootstrapParams{}
 	params.Name = "cadence-" + s.name
-	params.Logger = loggerimpl.NewLogger(s.cfg.Log.NewZapLogger())
+
+	zapLogger, err := s.cfg.Log.NewZapLogger()
+	if err != nil {
+		log.Fatal("failed to create the zap logger, err: ", err.Error())
+	}
+	params.Logger = loggerimpl.NewLogger(zapLogger)
+	params.UpdateLoggerWithServiceName(params.Name)
 	params.PersistenceConfig = s.cfg.Persistence
 
-	params.DynamicConfig, err = dynamicconfig.NewFileBasedClient(&s.cfg.DynamicConfigClient, params.Logger.WithTags(tag.Service(params.Name)), s.doneC)
+	params.DynamicConfig, err = dynamicconfig.NewFileBasedClient(&s.cfg.DynamicConfigClient, params.Logger, s.doneC)
 	if err != nil {
 		log.Printf("error creating file based dynamic config client, use no-op config client instead. error: %v", err)
 		params.DynamicConfig = dynamicconfig.NewNopClient()
@@ -124,7 +127,7 @@ func (s *server) startService() common.Daemon {
 
 	svcCfg := s.cfg.Services[s.name]
 	params.MetricScope = svcCfg.Metrics.NewScope(params.Logger, params.Name)
-	params.RPCFactory = svcCfg.RPC.NewFactory(params.Name, params.Logger)
+	params.RPCFactory = svcCfg.RPC.NewFactory(params.Name, params.Logger, s.cfg.NewGRPCPorts())
 	params.MembershipFactory, err = s.cfg.Ringpop.NewFactory(
 		params.RPCFactory.GetDispatcher(),
 		params.Name,

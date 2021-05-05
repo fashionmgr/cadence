@@ -33,10 +33,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/uber/cadence/common/cache"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -101,12 +101,12 @@ func TestReadLevelForAllExpiredTasksInBatch(t *testing.T) {
 
 	// Add all expired tasks
 	tasks := []*persistence.TaskInfo{
-		&persistence.TaskInfo{
+		{
 			TaskID:      11,
 			Expiry:      time.Now().Add(-time.Minute),
 			CreatedTime: time.Now().Add(-time.Hour),
 		},
-		&persistence.TaskInfo{
+		{
 			TaskID:      12,
 			Expiry:      time.Now().Add(-time.Minute),
 			CreatedTime: time.Now().Add(-time.Hour),
@@ -119,12 +119,12 @@ func TestReadLevelForAllExpiredTasksInBatch(t *testing.T) {
 
 	// Now add a mix of valid and expired tasks
 	require.True(t, tlm.taskReader.addTasksToBuffer([]*persistence.TaskInfo{
-		&persistence.TaskInfo{
+		{
 			TaskID:      13,
 			Expiry:      time.Now().Add(-time.Minute),
 			CreatedTime: time.Now().Add(-time.Hour),
 		},
-		&persistence.TaskInfo{
+		{
 			TaskID:      14,
 			Expiry:      time.Now().Add(time.Hour),
 			CreatedTime: time.Now().Add(time.Minute),
@@ -146,6 +146,7 @@ func createTestTaskListManagerWithConfig(controller *gomock.Controller, cfg *Con
 	tm := newTestTaskManager(logger)
 	mockDomainCache := cache.NewMockDomainCache(controller)
 	mockDomainCache.EXPECT().GetDomainByID(gomock.Any()).Return(cache.CreateDomainCacheEntry("domainName"), nil).AnyTimes()
+	mockDomainCache.EXPECT().GetDomainName(gomock.Any()).Return("domainName", nil).AnyTimes()
 	me := newMatchingEngine(
 		cfg, tm, nil, logger, mockDomainCache,
 	)

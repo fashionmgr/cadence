@@ -440,6 +440,14 @@ type (
 		CreatedTime            time.Time
 	}
 
+	// TaskKey gives primary key info for a specific task
+	TaskKey struct {
+		DomainID     string
+		TaskListName string
+		TaskType     int
+		TaskID       int64
+	}
+
 	// Task is the generic interface for workflow tasks
 	Task interface {
 		GetType() int
@@ -782,6 +790,7 @@ type (
 
 	// CreateWorkflowExecutionResponse is the response to CreateWorkflowExecutionRequest
 	CreateWorkflowExecutionResponse struct {
+		MutableStateUpdateSessionStats *MutableStateUpdateSessionStats
 	}
 
 	// GetWorkflowExecutionRequest is used to retrieve the info of a workflow execution
@@ -1167,6 +1176,16 @@ type (
 		Limit        int   // Limit on the max number of tasks that can be completed. Required param
 	}
 
+	// GetOrphanTasksRequest contains the request params need to invoke the GetOrphanTasks API
+	GetOrphanTasksRequest struct {
+		Limit int
+	}
+
+	// GetOrphanTasksResponse is the response to GetOrphanTasksRequests
+	GetOrphanTasksResponse struct {
+		Tasks []*TaskKey
+	}
+
 	// GetTimerIndexTasksRequest is the request for GetTimerIndexTasks
 	// TODO: replace this with an iterator that can configure min and max index.
 	GetTimerIndexTasksRequest struct {
@@ -1341,10 +1360,19 @@ type (
 		DeleteChildInfoCount         int
 		DeleteSignalInfoCount        int
 		DeleteRequestCancelInfoCount int
+
+		TransferTasksCount    int
+		TimerTasksCount       int
+		ReplicationTasksCount int
 	}
 
 	// UpdateWorkflowExecutionResponse is response for UpdateWorkflowExecutionRequest
 	UpdateWorkflowExecutionResponse struct {
+		MutableStateUpdateSessionStats *MutableStateUpdateSessionStats
+	}
+
+	// ConflictResolveWorkflowExecutionResponse is response for ConflictResolveWorkflowExecutionRequest
+	ConflictResolveWorkflowExecutionResponse struct {
 		MutableStateUpdateSessionStats *MutableStateUpdateSessionStats
 	}
 
@@ -1536,7 +1564,7 @@ type (
 		CreateWorkflowExecution(ctx context.Context, request *CreateWorkflowExecutionRequest) (*CreateWorkflowExecutionResponse, error)
 		GetWorkflowExecution(ctx context.Context, request *GetWorkflowExecutionRequest) (*GetWorkflowExecutionResponse, error)
 		UpdateWorkflowExecution(ctx context.Context, request *UpdateWorkflowExecutionRequest) (*UpdateWorkflowExecutionResponse, error)
-		ConflictResolveWorkflowExecution(ctx context.Context, request *ConflictResolveWorkflowExecutionRequest) error
+		ConflictResolveWorkflowExecution(ctx context.Context, request *ConflictResolveWorkflowExecutionRequest) (*ConflictResolveWorkflowExecutionResponse, error)
 		ResetWorkflowExecution(ctx context.Context, request *ResetWorkflowExecutionRequest) error
 		DeleteWorkflowExecution(ctx context.Context, request *DeleteWorkflowExecutionRequest) error
 		DeleteCurrentWorkflowExecution(ctx context.Context, request *DeleteCurrentWorkflowExecutionRequest) error
@@ -1587,6 +1615,7 @@ type (
 		GetTasks(ctx context.Context, request *GetTasksRequest) (*GetTasksResponse, error)
 		CompleteTask(ctx context.Context, request *CompleteTaskRequest) error
 		CompleteTasksLessThan(ctx context.Context, request *CompleteTasksLessThanRequest) (int, error)
+		GetOrphanTasks(ctx context.Context, request *GetOrphanTasksRequest) (*GetOrphanTasksResponse, error)
 	}
 
 	// HistoryManager is used to manager workflow history events
@@ -2615,4 +2644,14 @@ func NewGetReplicationTasksFromDLQRequest(
 			NextPageToken: nextPageToken,
 		},
 	}
+}
+
+// IsTransientError checks if the error is a transient persistence error
+func IsTransientError(err error) bool {
+	switch err.(type) {
+	case *types.InternalServiceError, *types.ServiceBusyError, *TimeoutError:
+		return true
+	}
+
+	return false
 }

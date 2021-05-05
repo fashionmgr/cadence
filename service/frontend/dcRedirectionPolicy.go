@@ -29,7 +29,7 @@ import (
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
-	"github.com/uber/cadence/common/service/config"
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -78,6 +78,7 @@ var selectedAPIsForwardingRedirectionPolicyWhitelistedAPIs = map[string]struct{}
 	"RequestCancelWorkflowExecution":   {},
 	"TerminateWorkflowExecution":       {},
 	"QueryWorkflow":                    {},
+	"ResetWorkflowExecution":           {},
 }
 
 // RedirectionPolicyGenerator generate corresponding redirection policy

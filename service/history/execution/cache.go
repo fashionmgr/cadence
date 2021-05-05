@@ -27,7 +27,6 @@ import (
 
 	"github.com/pborman/uuid"
 
-	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/definition"
@@ -100,8 +99,8 @@ func (c *Cache) GetOrCreateCurrentWorkflowExecution(
 	// using empty run ID as current workflow run ID
 	runID := ""
 	execution := types.WorkflowExecution{
-		WorkflowID: common.StringPtr(workflowID),
-		RunID:      common.StringPtr(runID),
+		WorkflowID: workflowID,
+		RunID:      runID,
 	}
 
 	return c.getOrCreateWorkflowExecutionInternal(
@@ -266,7 +265,7 @@ func (c *Cache) validateWorkflowExecutionInfo(
 			return err
 		}
 
-		execution.RunID = common.StringPtr(response.RunID)
+		execution.RunID = response.RunID
 	} else if uuid.Parse(execution.GetRunID()) == nil { // immediately return if invalid runID
 		return &types.BadRequestError{Message: "RunID is not valid UUID."}
 	}
@@ -316,7 +315,7 @@ func (c *Cache) getCurrentExecutionWithRetry(
 		return err
 	}
 
-	err := backoff.Retry(op, persistenceOperationRetryPolicy, common.IsPersistenceTransientError)
+	err := backoff.Retry(op, persistenceOperationRetryPolicy, persistence.IsTransientError)
 	if err != nil {
 		c.metricsClient.IncCounter(metrics.HistoryCacheGetCurrentExecutionScope, metrics.CacheFailures)
 		return nil, err

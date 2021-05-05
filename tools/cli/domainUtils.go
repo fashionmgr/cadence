@@ -33,15 +33,15 @@ import (
 	"github.com/uber/cadence/common/archiver/provider"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/domain"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/persistence/client"
-	"github.com/uber/cadence/common/service/config"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 )
 
 const (
@@ -174,6 +174,17 @@ var (
 		},
 	}
 
+	deprecateDomainFlags = []cli.Flag{
+		cli.StringFlag{
+			Name:  FlagSecurityTokenWithAlias,
+			Usage: "Optional token for security check",
+		},
+		cli.BoolFlag{
+			Name:  FlagForce,
+			Usage: "Deprecate domain regardless of domain history.",
+		},
+	}
+
 	describeDomainFlags = []cli.Flag{
 		cli.StringFlag{
 			Name:  FlagDomainID,
@@ -203,6 +214,11 @@ var (
 
 	adminUpdateDomainFlags = append(
 		updateDomainFlags,
+		adminDomainCommonFlags...,
+	)
+
+	adminDeprecateDomainFlags = append(
+		deprecateDomainFlags,
 		adminDomainCommonFlags...,
 	)
 
@@ -268,7 +284,7 @@ func initializeDomainHandler(
 ) domain.Handler {
 
 	domainConfig := domain.Config{
-		MinRetentionDays:  dynamicconfig.GetIntPropertyFn(domain.MinRetentionDays),
+		MinRetentionDays:  dynamicconfig.GetIntPropertyFn(domain.DefaultMinWorkflowRetentionInDays),
 		MaxBadBinaryCount: dynamicconfig.GetIntPropertyFilteredByDomain(domain.MaxBadBinaries),
 		FailoverCoolDown:  dynamicconfig.GetDurationPropertyFnFilteredByDomain(domain.FailoverCoolDown),
 	}
@@ -287,7 +303,11 @@ func initializeDomainHandler(
 func initializeLogger(
 	serviceConfig *config.Config,
 ) log.Logger {
-	return loggerimpl.NewLogger(serviceConfig.Log.NewZapLogger())
+	zapLogger, err := serviceConfig.Log.NewZapLogger()
+	if err != nil {
+		ErrorAndExit("failed to create zap logger, err: ", err)
+	}
+	return loggerimpl.NewLogger(zapLogger)
 }
 
 func initializeMetadataMgr(

@@ -44,8 +44,6 @@ type sqlTaskManager struct {
 }
 
 var (
-	minUUID = "00000000-0000-0000-0000-000000000000"
-
 	stickyTasksListsTTL = time.Hour * 24
 )
 
@@ -259,16 +257,20 @@ func (m *sqlTaskManager) UpdateTaskList(
 
 type taskListPageToken struct {
 	ShardID  int
-	DomainID string
+	DomainID serialization.UUID
 	Name     string
 	TaskType int64
 }
 
+// ListTaskList lists tasklist from DB
+// DomainID translates into byte array in SQL. The minUUID is not the minimum byte array.
+// This API could return incomplete result set.
+// https://github.com/uber/cadence/issues/3911
 func (m *sqlTaskManager) ListTaskList(
 	ctx context.Context,
 	request *persistence.ListTaskListRequest,
 ) (*persistence.ListTaskListResponse, error) {
-	pageToken := taskListPageToken{TaskType: math.MinInt16, DomainID: minUUID}
+	pageToken := taskListPageToken{TaskType: math.MinInt16, DomainID: serialization.UUID{}}
 	if request.PageToken != nil {
 		if err := gobDeserialize(request.PageToken, &pageToken); err != nil {
 			return nil, &types.InternalServiceError{Message: fmt.Sprintf("error deserializing page token: %v", err)}
@@ -276,7 +278,7 @@ func (m *sqlTaskManager) ListTaskList(
 	}
 	var err error
 	var rows []sqlplugin.TaskListsRow
-	domainID := serialization.MustParseUUID(pageToken.DomainID)
+	domainID := pageToken.DomainID
 	for pageToken.ShardID < m.nShards {
 		rows, err = m.db.SelectFromTaskLists(ctx, &sqlplugin.TaskListsFilter{
 			ShardID:             pageToken.ShardID,
@@ -291,7 +293,7 @@ func (m *sqlTaskManager) ListTaskList(
 		if len(rows) > 0 {
 			break
 		}
-		pageToken = taskListPageToken{ShardID: pageToken.ShardID + 1, TaskType: math.MinInt16, DomainID: minUUID}
+		pageToken = taskListPageToken{ShardID: pageToken.ShardID + 1, TaskType: math.MinInt16, DomainID: serialization.UUID{}}
 	}
 
 	var nextPageToken []byte
@@ -300,12 +302,12 @@ func (m *sqlTaskManager) ListTaskList(
 		lastRow := &rows[request.PageSize-1]
 		nextPageToken, err = gobSerialize(&taskListPageToken{
 			ShardID:  pageToken.ShardID,
-			DomainID: lastRow.DomainID.String(),
+			DomainID: lastRow.DomainID,
 			Name:     lastRow.Name,
 			TaskType: lastRow.TaskType,
 		})
 	case pageToken.ShardID+1 < m.nShards:
-		nextPageToken, err = gobSerialize(&taskListPageToken{ShardID: pageToken.ShardID + 1, TaskType: math.MinInt16})
+		nextPageToken, err = gobSerialize(&taskListPageToken{ShardID: pageToken.ShardID + 1, TaskType: math.MinInt16, DomainID: serialization.UUID{}})
 	}
 
 	if err != nil {
@@ -399,6 +401,7 @@ func (m *sqlTaskManager) CreateTasks(
 			return nil, err
 		}
 		currTasksRow := sqlplugin.TasksRow{
+			ShardID:      m.shardID(v.Data.DomainID, request.TaskListInfo.Name),
 			DomainID:     serialization.MustParseUUID(v.Data.DomainID),
 			TaskListName: request.TaskListInfo.Name,
 			TaskType:     int64(request.TaskListInfo.TaskType),
@@ -451,6 +454,7 @@ func (m *sqlTaskManager) GetTasks(
 	request *persistence.GetTasksRequest,
 ) (*persistence.InternalGetTasksResponse, error) {
 	rows, err := m.db.SelectFromTasks(ctx, &sqlplugin.TasksFilter{
+		ShardID:      m.shardID(request.DomainID, request.TaskList),
 		DomainID:     serialization.MustParseUUID(request.DomainID),
 		TaskListName: request.TaskList,
 		TaskType:     int64(request.TaskType),
@@ -491,6 +495,7 @@ func (m *sqlTaskManager) CompleteTask(
 	taskID := request.TaskID
 	taskList := request.TaskList
 	_, err := m.db.DeleteFromTasks(ctx, &sqlplugin.TasksFilter{
+		ShardID:      m.shardID(taskList.DomainID, taskList.Name),
 		DomainID:     serialization.MustParseUUID(taskList.DomainID),
 		TaskListName: taskList.Name,
 		TaskType:     int64(taskList.TaskType),
@@ -506,6 +511,7 @@ func (m *sqlTaskManager) CompleteTasksLessThan(
 	request *persistence.CompleteTasksLessThanRequest,
 ) (int, error) {
 	result, err := m.db.DeleteFromTasks(ctx, &sqlplugin.TasksFilter{
+		ShardID:              m.shardID(request.DomainID, request.TaskListName),
 		DomainID:             serialization.MustParseUUID(request.DomainID),
 		TaskListName:         request.TaskListName,
 		TaskType:             int64(request.TaskType),
@@ -522,6 +528,30 @@ func (m *sqlTaskManager) CompleteTasksLessThan(
 		}
 	}
 	return int(nRows), nil
+}
+
+// GetOrphanTasks gets tasks from the tasks table that belong to a task_list no longer present
+// in the task_lists table.
+// TODO: Limit this query to a specific shard at a time. See https://github.com/uber/cadence/issues/4064
+func (m *sqlTaskManager) GetOrphanTasks(ctx context.Context, request *persistence.GetOrphanTasksRequest) (*persistence.GetOrphanTasksResponse, error) {
+	rows, err := m.db.GetOrphanTasks(ctx, &sqlplugin.OrphanTasksFilter{
+		Limit: &request.Limit,
+	})
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: err.Error()}
+	}
+
+	var tasks = make([]*persistence.TaskKey, len(rows))
+	for i, v := range rows {
+		tasks[i] = &persistence.TaskKey{
+			DomainID:     v.DomainID.String(),
+			TaskListName: v.TaskListName,
+			TaskType:     int(v.TaskType),
+			TaskID:       v.TaskID,
+		}
+	}
+
+	return &persistence.GetOrphanTasksResponse{Tasks: tasks}, nil
 }
 
 func (m *sqlTaskManager) shardID(domainID string, name string) int {

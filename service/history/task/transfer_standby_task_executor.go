@@ -184,7 +184,7 @@ func (t *transferStandbyTaskExecutor) processDecisionTask(
 		if decisionInfo.StartedID == common.EmptyEventID {
 			return newPushDecisionToMatchingInfo(
 				decisionTimeout,
-				types.TaskList{Name: &transferTask.TaskList},
+				types.TaskList{Name: transferTask.TaskList},
 			), nil
 		}
 
@@ -260,7 +260,7 @@ func (t *transferStandbyTaskExecutor) processCloseExecution(
 			workflowStartTimestamp,
 			workflowExecutionTimestamp.UnixNano(),
 			workflowCloseTimestamp,
-			workflowCloseStatus,
+			*workflowCloseStatus,
 			workflowHistoryLength,
 			transferTask.GetTaskID(),
 			visibilityMemo,

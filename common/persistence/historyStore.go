@@ -29,9 +29,9 @@ import (
 	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/codec"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/mapper/thrift"
 )
@@ -197,8 +197,8 @@ func (m *historyV2ManagerImpl) AppendHistoryNodes(
 			Msg: fmt.Sprintf("events to be appended cannot be empty"),
 		}
 	}
-	version := *request.Events[0].Version
-	nodeID := *request.Events[0].EventID
+	version := request.Events[0].Version
+	nodeID := request.Events[0].EventID
 	lastID := nodeID - 1
 
 	if nodeID <= 0 {
@@ -207,12 +207,12 @@ func (m *historyV2ManagerImpl) AppendHistoryNodes(
 		}
 	}
 	for _, e := range request.Events {
-		if *e.Version != version {
+		if e.Version != version {
 			return nil, &InvalidPersistenceRequestError{
 				Msg: fmt.Sprintf("event version must be the same inside a batch"),
 			}
 		}
-		if *e.EventID != lastID+1 {
+		if e.EventID != lastID+1 {
 			return nil, &InvalidPersistenceRequestError{
 				Msg: fmt.Sprintf("event ID must be continuous"),
 			}
@@ -384,7 +384,7 @@ func (m *historyV2ManagerImpl) readRawHistoryBranch(
 		}
 
 		if token.CurrentRangeIndex == notStartedIndex {
-			return nil, nil, 0, nil, &types.InternalServiceError{
+			return nil, nil, 0, nil, &types.InternalDataInconsistencyError{
 				Message: fmt.Sprintf("branchRange is corrupted"),
 			}
 		}
@@ -463,7 +463,7 @@ func (m *historyV2ManagerImpl) readHistoryBranch(
 		}
 		if len(events) == 0 {
 			logger.Error("Empty events in a batch")
-			return nil, nil, nil, 0, 0, &types.InternalServiceError{
+			return nil, nil, nil, 0, 0, &types.InternalDataInconsistencyError{
 				Message: fmt.Sprintf("corrupted history event batch, empty events"),
 			}
 		}
@@ -478,7 +478,7 @@ func (m *historyV2ManagerImpl) readHistoryBranch(
 				tag.FirstEventVersion(firstEvent.GetVersion()), tag.WorkflowFirstEventID(firstEvent.GetEventID()),
 				tag.LastEventVersion(lastEvent.GetVersion()), tag.WorkflowNextEventID(lastEvent.GetEventID()),
 				tag.Counter(eventCount))
-			return nil, nil, nil, 0, 0, &types.InternalServiceError{
+			return nil, nil, nil, 0, 0, &types.InternalDataInconsistencyError{
 				Message: fmt.Sprintf("corrupted history event batch, wrong version and IDs"),
 			}
 		}
@@ -504,7 +504,7 @@ func (m *historyV2ManagerImpl) readHistoryBranch(
 					tag.LastEventVersion(lastEvent.GetVersion()), tag.WorkflowNextEventID(lastEvent.GetEventID()),
 					tag.TokenLastEventVersion(token.LastEventVersion), tag.TokenLastEventID(token.LastEventID),
 					tag.Counter(eventCount))
-				return nil, nil, nil, 0, 0, &types.InternalServiceError{
+				return nil, nil, nil, 0, 0, &types.InternalDataInconsistencyError{
 					Message: fmt.Sprintf("corrupted history event batch, eventID is not continouous"),
 				}
 			}

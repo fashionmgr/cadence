@@ -25,14 +25,14 @@ import (
 	"time"
 
 	"github.com/uber/cadence/common"
-	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/common/dynamicconfig"
 )
 
 var (
 	// Override values for dynamic configs
 	staticOverrides = map[dynamicconfig.Key]interface{}{
 		dynamicconfig.FrontendRPS:                                   3000,
-		dynamicconfig.FrontendVisibilityListMaxQPS:                  100,
+		dynamicconfig.FrontendVisibilityListMaxQPS:                  200,
 		dynamicconfig.FrontendESIndexMaxResultWindow:                defaultTestValueOfESIndexMaxResultWindow,
 		dynamicconfig.MatchingNumTasklistWritePartitions:            3,
 		dynamicconfig.MatchingNumTasklistReadPartitions:             3,
@@ -44,6 +44,8 @@ var (
 		dynamicconfig.ReplicationTaskFetcherErrorRetryWait:          50 * time.Millisecond,
 		dynamicconfig.ReplicationTaskProcessorErrorRetryWait:        time.Millisecond,
 		dynamicconfig.EnableConsistentQueryByDomain:                 true,
+		dynamicconfig.EnableGRPCOutbound:                            true,
+		dynamicconfig.MinRetentionDays:                              0,
 	}
 )
 

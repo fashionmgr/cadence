@@ -22,6 +22,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -31,7 +32,6 @@ import (
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/urfave/cli"
-	s "go.uber.org/cadence/.gen/go/shared"
 
 	"github.com/uber/cadence/client/frontend"
 	"github.com/uber/cadence/common"
@@ -86,13 +86,12 @@ func (d *domainCLIImpl) RegisterDomain(c *cli.Context) {
 	securityToken := c.String(FlagSecurityToken)
 	var err error
 
-	var isGlobalDomainPtr *bool
+	isGlobalDomain := false
 	if c.IsSet(FlagIsGlobalDomain) {
-		isGlobalDomain, err := strconv.ParseBool(c.String(FlagIsGlobalDomain))
+		isGlobalDomain, err = strconv.ParseBool(c.String(FlagIsGlobalDomain))
 		if err != nil {
 			ErrorAndExit(fmt.Sprintf("Option %s format is invalid.", FlagIsGlobalDomain), err)
 		}
-		isGlobalDomainPtr = common.BoolPtr(isGlobalDomain)
 	}
 
 	domainData := map[string]string{}
@@ -110,45 +109,45 @@ func (d *domainCLIImpl) RegisterDomain(c *cli.Context) {
 		}
 	}
 
-	var activeClusterName *string
+	activeClusterName := ""
 	if c.IsSet(FlagActiveClusterName) {
-		activeClusterName = common.StringPtr(c.String(FlagActiveClusterName))
+		activeClusterName = c.String(FlagActiveClusterName)
 	}
 
 	var clusters []*types.ClusterReplicationConfiguration
 	if c.IsSet(FlagClusters) {
 		clusterStr := c.String(FlagClusters)
 		clusters = append(clusters, &types.ClusterReplicationConfiguration{
-			ClusterName: common.StringPtr(clusterStr),
+			ClusterName: clusterStr,
 		})
 		for _, clusterStr := range c.Args() {
 			clusters = append(clusters, &types.ClusterReplicationConfiguration{
-				ClusterName: common.StringPtr(clusterStr),
+				ClusterName: clusterStr,
 			})
 		}
 	}
 
 	request := &types.RegisterDomainRequest{
-		Name:                                   common.StringPtr(domainName),
-		Description:                            common.StringPtr(description),
-		OwnerEmail:                             common.StringPtr(ownerEmail),
+		Name:                                   domainName,
+		Description:                            description,
+		OwnerEmail:                             ownerEmail,
 		Data:                                   domainData,
-		WorkflowExecutionRetentionPeriodInDays: common.Int32Ptr(int32(retentionDays)),
+		WorkflowExecutionRetentionPeriodInDays: int32(retentionDays),
 		Clusters:                               clusters,
 		ActiveClusterName:                      activeClusterName,
-		SecurityToken:                          common.StringPtr(securityToken),
+		SecurityToken:                          securityToken,
 		HistoryArchivalStatus:                  archivalStatus(c, FlagHistoryArchivalStatus),
-		HistoryArchivalURI:                     common.StringPtr(c.String(FlagHistoryArchivalURI)),
+		HistoryArchivalURI:                     c.String(FlagHistoryArchivalURI),
 		VisibilityArchivalStatus:               archivalStatus(c, FlagVisibilityArchivalStatus),
-		VisibilityArchivalURI:                  common.StringPtr(c.String(FlagVisibilityArchivalURI)),
-		IsGlobalDomain:                         isGlobalDomainPtr,
+		VisibilityArchivalURI:                  c.String(FlagVisibilityArchivalURI),
+		IsGlobalDomain:                         isGlobalDomain,
 	}
 
 	ctx, cancel := newContext(c)
 	defer cancel()
 	err = d.registerDomain(ctx, request)
 	if err != nil {
-		if _, ok := err.(*s.DomainAlreadyExistsError); !ok {
+		if _, ok := err.(*types.DomainAlreadyExistsError); !ok {
 			ErrorAndExit("Register Domain operation failed.", err)
 		} else {
 			ErrorAndExit(fmt.Sprintf("Domain %s already registered.", domainName), err)
@@ -169,9 +168,6 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 	if c.IsSet(FlagActiveClusterName) {
 		activeCluster := c.String(FlagActiveClusterName)
 		fmt.Printf("Will set active cluster name to: %s, other flag will be omitted.\n", activeCluster)
-		replicationConfig := &types.DomainReplicationConfiguration{
-			ActiveClusterName: common.StringPtr(activeCluster),
-		}
 
 		var failoverTimeout *int32
 		if c.String(FlagFailoverType) == gracefulFailoverType {
@@ -180,8 +176,8 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 		}
 
 		updateRequest = &types.UpdateDomainRequest{
-			Name:                     common.StringPtr(domainName),
-			ReplicationConfiguration: replicationConfig,
+			Name:                     domainName,
+			ActiveClusterName:        common.StringPtr(activeCluster),
 			FailoverTimeoutInSeconds: failoverTimeout,
 		}
 	} else {
@@ -223,11 +219,11 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 		if c.IsSet(FlagClusters) {
 			clusterStr := c.String(FlagClusters)
 			clusters = append(clusters, &types.ClusterReplicationConfiguration{
-				ClusterName: common.StringPtr(clusterStr),
+				ClusterName: clusterStr,
 			})
 			for _, clusterStr := range c.Args() {
 				clusters = append(clusters, &types.ClusterReplicationConfiguration{
-					ClusterName: common.StringPtr(clusterStr),
+					ClusterName: clusterStr,
 				})
 			}
 		}
@@ -243,8 +239,8 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 			binBinaries = &types.BadBinaries{
 				Binaries: map[string]*types.BadBinaryInfo{
 					binChecksum: {
-						Reason:   common.StringPtr(reason),
-						Operator: common.StringPtr(operator),
+						Reason:   reason,
+						Operator: operator,
 					},
 				},
 			}
@@ -255,12 +251,11 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 			badBinaryToDelete = common.StringPtr(c.String(FlagRemoveBadBinary))
 		}
 
-		updateInfo := &types.UpdateDomainInfo{
-			Description: common.StringPtr(description),
-			OwnerEmail:  common.StringPtr(ownerEmail),
-			Data:        domainData,
-		}
-		updateConfig := &types.DomainConfiguration{
+		updateRequest = &types.UpdateDomainRequest{
+			Name:                                   domainName,
+			Description:                            common.StringPtr(description),
+			OwnerEmail:                             common.StringPtr(ownerEmail),
+			Data:                                   domainData,
 			WorkflowExecutionRetentionPeriodInDays: common.Int32Ptr(retentionDays),
 			EmitMetric:                             common.BoolPtr(emitMetric),
 			HistoryArchivalStatus:                  archivalStatus(c, FlagHistoryArchivalStatus),
@@ -268,30 +263,58 @@ func (d *domainCLIImpl) UpdateDomain(c *cli.Context) {
 			VisibilityArchivalStatus:               archivalStatus(c, FlagVisibilityArchivalStatus),
 			VisibilityArchivalURI:                  common.StringPtr(c.String(FlagVisibilityArchivalURI)),
 			BadBinaries:                            binBinaries,
-		}
-		replicationConfig := &types.DomainReplicationConfiguration{
-			Clusters: clusters,
-		}
-		updateRequest = &types.UpdateDomainRequest{
-			Name:                     common.StringPtr(domainName),
-			UpdatedInfo:              updateInfo,
-			Configuration:            updateConfig,
-			ReplicationConfiguration: replicationConfig,
-			DeleteBadBinary:          badBinaryToDelete,
+			Clusters:                               clusters,
+			DeleteBadBinary:                        badBinaryToDelete,
 		}
 	}
 
 	securityToken := c.String(FlagSecurityToken)
-	updateRequest.SecurityToken = common.StringPtr(securityToken)
+	updateRequest.SecurityToken = securityToken
 	_, err := d.updateDomain(ctx, updateRequest)
 	if err != nil {
-		if _, ok := err.(*s.EntityNotExistsError); !ok {
+		if _, ok := err.(*types.EntityNotExistsError); !ok {
 			ErrorAndExit("Operation UpdateDomain failed.", err)
 		} else {
 			ErrorAndExit(fmt.Sprintf("Domain %s does not exist.", domainName), err)
 		}
 	} else {
 		fmt.Printf("Domain %s successfully updated.\n", domainName)
+	}
+}
+
+func (d *domainCLIImpl) DeprecateDomain(c *cli.Context) {
+	domainName := getRequiredGlobalOption(c, FlagDomain)
+	securityToken := c.String(FlagSecurityToken)
+	force := c.Bool(FlagForce)
+
+	ctx, cancel := newContext(c)
+	defer cancel()
+
+	if !force {
+		// check if there is any workflow in this domain, if exists, do not deprecate
+		wfs, _ := listClosedWorkflow(getWorkflowClient(c), 1, 0, time.Now().UnixNano(), "", "", workflowStatusNotSet, nil, c)
+		if len(wfs) > 0 {
+			ErrorAndExit("Operation DeprecateDomain failed.", errors.New("Workflow history not cleared in this domain."))
+			return
+		}
+		wfs, _ = listOpenWorkflow(getWorkflowClient(c), 1, 0, time.Now().UnixNano(), "", "", nil, c)
+		if len(wfs) > 0 {
+			ErrorAndExit("Operation DeprecateDomain failed.", errors.New("Workflow still running in this domain."))
+			return
+		}
+	}
+	err := d.deprecateDomain(ctx, &types.DeprecateDomainRequest{
+		Name:          domainName,
+		SecurityToken: securityToken,
+	})
+	if err != nil {
+		if _, ok := err.(*types.EntityNotExistsError); !ok {
+			ErrorAndExit("Operation DeprecateDomain failed.", err)
+		} else {
+			ErrorAndExit(fmt.Sprintf("Domain %s does not exist.", domainName), err)
+		}
+	} else {
+		fmt.Printf("Domain %s successfully deprecated.\n", domainName)
 	}
 }
 
@@ -338,7 +361,7 @@ func (d *domainCLIImpl) getAllDomains(c *cli.Context) []*types.DescribeDomainRes
 	defer cancel()
 	for more := true; more; more = len(token) > 0 {
 		listRequest := &types.ListDomainsRequest{
-			PageSize:      common.Int32Ptr(pagesize),
+			PageSize:      pagesize,
 			NextPageToken: token,
 		}
 		listResp, err := d.listDomains(ctx, listRequest)
@@ -357,12 +380,9 @@ func isDomainFailoverManagedByCadence(domain *types.DescribeDomainResponse) bool
 }
 
 func (d *domainCLIImpl) failover(c *cli.Context, domainName string, targetCluster string) error {
-	replicationConfig := &types.DomainReplicationConfiguration{
-		ActiveClusterName: common.StringPtr(targetCluster),
-	}
 	updateRequest := &types.UpdateDomainRequest{
-		Name:                     common.StringPtr(domainName),
-		ReplicationConfiguration: replicationConfig,
+		Name:              domainName,
+		ActiveClusterName: common.StringPtr(targetCluster),
 	}
 	ctx, cancel := newContext(c)
 	defer cancel()
@@ -385,7 +405,7 @@ func (d *domainCLIImpl) DescribeDomain(c *cli.Context) {
 		UUID: common.StringPtr(domainID),
 	})
 	if err != nil {
-		if _, ok := err.(*s.EntityNotExistsError); !ok {
+		if _, ok := err.(*types.EntityNotExistsError); !ok {
 			ErrorAndExit("Operation DescribeDomain failed.", err)
 		}
 		ErrorAndExit(fmt.Sprintf("Domain %s does not exist.", domainName), err)
@@ -438,19 +458,44 @@ func (d *domainCLIImpl) DescribeDomain(c *cli.Context) {
 }
 
 func (d *domainCLIImpl) ListDomains(c *cli.Context) {
-	domains := d.getAllDomains(c)
 	pageSize := c.Int(FlagPageSize)
 	printAll := c.Bool(FlagAll)
+	printDeprecated := c.Bool(FlagDeprecated)
 	printFull := c.Bool(FlagPrintFullyDetail)
+	printJSON := c.Bool(FlagPrintJSON)
+
+	if printAll && printDeprecated {
+		ErrorAndExit(fmt.Sprintf("Cannot specify %s and %s flags at the same time.", FlagAll, FlagDeprecated), nil)
+	}
+
+	domains := d.getAllDomains(c)
+	var filteredDomains []*types.DescribeDomainResponse
+	if printAll {
+		filteredDomains = domains
+	} else {
+		filteredDomains = make([]*types.DescribeDomainResponse, 0, len(domains))
+		for _, domain := range domains {
+			if printDeprecated && *domain.DomainInfo.Status == types.DomainStatusDeprecated {
+				filteredDomains = append(filteredDomains, domain)
+			} else if !printDeprecated && *domain.DomainInfo.Status == types.DomainStatusRegistered {
+				filteredDomains = append(filteredDomains, domain)
+			}
+		}
+	}
+
+	if printJSON {
+		output, err := json.Marshal(filteredDomains)
+		if err != nil {
+			ErrorAndExit("Failed to encode domain results into JSON.", err)
+		}
+		fmt.Println(string(output))
+		return
+	}
 
 	table := createTableForListDomains(printAll, printFull)
 
 	currentPageSize := 0
-	for i, domain := range domains {
-		if !printAll && *domain.DomainInfo.Status != types.DomainStatusRegistered {
-			continue
-		}
-
+	for i, domain := range filteredDomains {
 		appendDomainToTable(table, domain, printAll, printFull)
 		currentPageSize++
 
@@ -504,6 +549,18 @@ func (d *domainCLIImpl) updateDomain(
 	}
 
 	return d.domainHandler.UpdateDomain(ctx, request)
+}
+
+func (d *domainCLIImpl) deprecateDomain(
+	ctx context.Context,
+	request *types.DeprecateDomainRequest,
+) error {
+
+	if d.frontendClient != nil {
+		return d.frontendClient.DeprecateDomain(ctx, request)
+	}
+
+	return d.domainHandler.DeprecateDomain(ctx, request)
 }
 
 func (d *domainCLIImpl) describeDomain(

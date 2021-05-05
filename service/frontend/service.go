@@ -26,8 +26,10 @@ import (
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/client"
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/definition"
 	"github.com/uber/cadence/common/domain"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/messaging"
 	"github.com/uber/cadence/common/persistence"
@@ -35,8 +37,6 @@ import (
 	espersistence "github.com/uber/cadence/common/persistence/elasticsearch"
 	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/common/service"
-	"github.com/uber/cadence/common/service/config"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 )
 
 // Config represents configuration for cadence-frontend service
@@ -136,9 +136,11 @@ func NewConfig(dc *dynamicconfig.Collection, numHistoryShards int, enableReadFro
 		DisallowQuery:                               dc.GetBoolPropertyFilteredByDomain(dynamicconfig.DisallowQuery, false),
 		SendRawWorkflowHistory:                      dc.GetBoolPropertyFilteredByDomain(dynamicconfig.SendRawWorkflowHistory, sendRawWorkflowHistory),
 		domainConfig: domain.Config{
-			MaxBadBinaryCount: dc.GetIntPropertyFilteredByDomain(dynamicconfig.FrontendMaxBadBinaries, domain.MaxBadBinaries),
-			MinRetentionDays:  dc.GetIntProperty(dynamicconfig.MinRetentionDays, domain.MinRetentionDays),
-			FailoverCoolDown:  dc.GetDurationPropertyFilteredByDomain(dynamicconfig.FrontendFailoverCoolDown, domain.FailoverCoolDown),
+			MaxBadBinaryCount:      dc.GetIntPropertyFilteredByDomain(dynamicconfig.FrontendMaxBadBinaries, domain.MaxBadBinaries),
+			MinRetentionDays:       dc.GetIntProperty(dynamicconfig.MinRetentionDays, domain.DefaultMinWorkflowRetentionInDays),
+			MaxRetentionDays:       dc.GetIntProperty(dynamicconfig.MaxRetentionDays, domain.DefaultMaxWorkflowRetentionInDays),
+			FailoverCoolDown:       dc.GetDurationPropertyFilteredByDomain(dynamicconfig.FrontendFailoverCoolDown, domain.FailoverCoolDown),
+			RequiredDomainDataKeys: dc.GetMapProperty(dynamicconfig.RequiredDomainDataKeys, nil),
 		},
 	}
 }
@@ -257,10 +259,16 @@ func (s *Service) Start() {
 	thriftHandler := NewThriftHandler(handler)
 	thriftHandler.register(s.GetDispatcher())
 
+	grpcHandler := newGrpcHandler(handler)
+	grpcHandler.register(s.GetDispatcher())
+
 	s.adminHandler = NewAdminHandler(s, s.params, s.config)
 
 	adminThriftHandler := NewAdminThriftHandler(s.adminHandler)
 	adminThriftHandler.register(s.GetDispatcher())
+
+	adminGRPCHandler := newAdminGRPCHandler(s.adminHandler)
+	adminGRPCHandler.register(s.GetDispatcher())
 
 	// must start resource first
 	s.Resource.Start()

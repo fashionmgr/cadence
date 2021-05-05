@@ -28,9 +28,9 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/config"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
-	"github.com/uber/cadence/common/service/config"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/environment"
 )
 
@@ -62,13 +62,12 @@ func NewTestCluster(keyspace, username, password, host string, port int, schemaD
 	}
 	result.schemaDir = schemaDir
 	result.cfg = config.Cassandra{
-		User:      username,
-		Password:  password,
-		Hosts:     host,
-		Port:      port,
-		MaxConns:  2,
-		Keyspace:  keyspace,
-		CQLClient: gocql.NewClient(),
+		User:     username,
+		Password: password,
+		Hosts:    host,
+		Port:     port,
+		MaxConns: 2,
+		Keyspace: keyspace,
 	}
 	return &result
 }
@@ -129,7 +128,7 @@ func (s *TestCluster) CreateSession() {
 	}
 
 	var err error
-	s.session, err = s.cfg.CQLClient.CreateSession(*s.cluster)
+	s.session, err = gocql.NewClient().CreateSession(*s.cluster)
 	if err != nil {
 		log.Fatal(`CreateSession`, err)
 	}

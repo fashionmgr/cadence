@@ -33,10 +33,10 @@ import (
 	"go.uber.org/cadence/workflow"
 
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/reconciliation/invariant"
 	"github.com/uber/cadence/common/reconciliation/store"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/service/worker/scanner/shardscanner"
 )
 
@@ -135,7 +135,6 @@ func (s *timersWorkflowsSuite) TestScannerWorkflow_Success() {
 		//var customc shardscanner.CustomScannerConfig
 		env.OnActivity(shardscanner.ActivityScanShard, mock.Anything, shardscanner.ScanShardActivityParams{
 			Shards:        batch,
-			ContextKey:    ScannerWFTypeName,
 			ScannerConfig: cconfig,
 		}).Return(reports, nil)
 	}

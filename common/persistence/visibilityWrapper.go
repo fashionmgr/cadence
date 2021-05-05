@@ -25,7 +25,7 @@ import (
 	"fmt"
 
 	"github.com/uber/cadence/common"
-	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -65,7 +65,10 @@ func (v *visibilityManagerWrapper) Close() {
 }
 
 func (v *visibilityManagerWrapper) GetName() string {
-	return "visibilityManagerWrapper"
+	if v.esVisibilityManager != nil {
+		return v.esVisibilityManager.GetName()
+	}
+	return v.visibilityManager.GetName()
 }
 
 func (v *visibilityManagerWrapper) RecordWorkflowExecutionStarted(

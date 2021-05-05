@@ -26,12 +26,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	p "github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
-	"github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -119,7 +119,7 @@ func newShardPersistence(
 
 	return &cassandraShardPersistence{
 		cassandraStore: cassandraStore{
-			client:  cfg.CQLClient,
+			client:  gocql.NewClient(),
 			session: session,
 			logger:  logger,
 		},

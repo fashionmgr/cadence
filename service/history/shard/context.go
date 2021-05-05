@@ -112,7 +112,7 @@ type (
 
 		CreateWorkflowExecution(ctx context.Context, request *persistence.CreateWorkflowExecutionRequest) (*persistence.CreateWorkflowExecutionResponse, error)
 		UpdateWorkflowExecution(ctx context.Context, request *persistence.UpdateWorkflowExecutionRequest) (*persistence.UpdateWorkflowExecutionResponse, error)
-		ConflictResolveWorkflowExecution(ctx context.Context, request *persistence.ConflictResolveWorkflowExecutionRequest) error
+		ConflictResolveWorkflowExecution(ctx context.Context, request *persistence.ConflictResolveWorkflowExecutionRequest) (*persistence.ConflictResolveWorkflowExecutionResponse, error)
 		AppendHistoryV2Events(ctx context.Context, request *persistence.AppendHistoryNodesRequest, domainID string, execution types.WorkflowExecution) (int, error)
 
 		ReplicateFailoverMarkers(ctx context.Context, makers []*persistence.FailoverMarkerTask) error
@@ -285,7 +285,7 @@ func (s *contextImpl) GetTransferProcessingQueueStates(cluster string) []*types.
 			AckLevel: common.Int64Ptr(ackLevel),
 			MaxLevel: common.Int64Ptr(math.MaxInt64),
 			DomainFilter: &types.DomainFilter{
-				ReverseMatch: common.BoolPtr(true),
+				ReverseMatch: true,
 			},
 		},
 	}
@@ -452,7 +452,7 @@ func (s *contextImpl) GetTimerProcessingQueueStates(cluster string) []*types.Pro
 			AckLevel: common.Int64Ptr(ackLevel.UnixNano()),
 			MaxLevel: common.Int64Ptr(math.MaxInt64),
 			DomainFilter: &types.DomainFilter{
-				ReverseMatch: common.BoolPtr(true),
+				ReverseMatch: true,
 			},
 		},
 	}
@@ -676,8 +676,8 @@ Create_Loop:
 	return nil, errMaxAttemptsExceeded
 }
 
-func (s *contextImpl) getDefaultEncoding(domainEntry *cache.DomainCacheEntry) common.EncodingType {
-	return common.EncodingType(s.config.EventEncodingType(domainEntry.GetInfo().Name))
+func (s *contextImpl) getDefaultEncoding(domainName string) common.EncodingType {
+	return common.EncodingType(s.config.EventEncodingType(domainName))
 }
 
 func (s *contextImpl) UpdateWorkflowExecution(
@@ -700,7 +700,7 @@ func (s *contextImpl) UpdateWorkflowExecution(
 	if err != nil {
 		return nil, err
 	}
-	request.Encoding = s.getDefaultEncoding(domainEntry)
+	request.Encoding = s.getDefaultEncoding(domainEntry.GetInfo().Name)
 
 	s.Lock()
 	defer s.Unlock()
@@ -791,10 +791,10 @@ Update_Loop:
 func (s *contextImpl) ConflictResolveWorkflowExecution(
 	ctx context.Context,
 	request *persistence.ConflictResolveWorkflowExecutionRequest,
-) error {
+) (*persistence.ConflictResolveWorkflowExecutionResponse, error) {
 	ctx, cancel, err := s.ensureMinContextTimeout(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if cancel != nil {
 		defer cancel()
@@ -806,9 +806,9 @@ func (s *contextImpl) ConflictResolveWorkflowExecution(
 	// do not try to get domain cache within shard lock
 	domainEntry, err := s.GetDomainCache().GetDomainByID(domainID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	request.Encoding = s.getDefaultEncoding(domainEntry)
+	request.Encoding = s.getDefaultEncoding(domainEntry.GetInfo().Name)
 
 	s.Lock()
 	defer s.Unlock()
@@ -823,7 +823,7 @@ func (s *contextImpl) ConflictResolveWorkflowExecution(
 			request.CurrentWorkflowMutation.TimerTasks,
 			&transferMaxReadLevel,
 		); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := s.allocateTaskIDsLocked(
@@ -834,7 +834,7 @@ func (s *contextImpl) ConflictResolveWorkflowExecution(
 		request.ResetWorkflowSnapshot.TimerTasks,
 		&transferMaxReadLevel,
 	); err != nil {
-		return err
+		return nil, err
 	}
 	if request.NewWorkflowSnapshot != nil {
 		if err := s.allocateTaskIDsLocked(
@@ -845,7 +845,7 @@ func (s *contextImpl) ConflictResolveWorkflowExecution(
 			request.NewWorkflowSnapshot.TimerTasks,
 			&transferMaxReadLevel,
 		); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	defer s.updateMaxReadLevelLocked(transferMaxReadLevel)
@@ -854,7 +854,7 @@ Conflict_Resolve_Loop:
 	for attempt := 0; attempt < conditionalRetryCount && ctx.Err() == nil; attempt++ {
 		currentRangeID := s.getRangeID()
 		request.RangeID = currentRangeID
-		err := s.executionManager.ConflictResolveWorkflowExecution(ctx, request)
+		resp, err := s.executionManager.ConflictResolveWorkflowExecution(ctx, request)
 		if err != nil {
 			switch err.(type) {
 			case *persistence.ConditionFailedError,
@@ -901,10 +901,10 @@ Conflict_Resolve_Loop:
 			}
 		}
 
-		return err
+		return resp, err
 	}
 
-	return errMaxAttemptsExceeded
+	return nil, errMaxAttemptsExceeded
 }
 
 func (s *contextImpl) ensureMinContextTimeout(
@@ -930,7 +930,7 @@ func (s *contextImpl) AppendHistoryV2Events(
 	execution types.WorkflowExecution,
 ) (int, error) {
 
-	domainEntry, err := s.GetDomainCache().GetDomainByID(domainID)
+	domainName, err := s.GetDomainCache().GetDomainName(domainID)
 	if err != nil {
 		return 0, err
 	}
@@ -942,18 +942,14 @@ func (s *contextImpl) AppendHistoryV2Events(
 		return 0, err
 	}
 
-	request.Encoding = s.getDefaultEncoding(domainEntry)
+	request.Encoding = s.getDefaultEncoding(domainName)
 	request.ShardID = common.IntPtr(s.shardID)
 	request.TransactionID = transactionID
 
 	size := 0
 	defer func() {
-		// N.B. - Dual emit here makes sense so that we can see aggregate timer stats across all
-		// domains along with the individual domains stats
-		s.GetMetricsClient().RecordTimer(metrics.SessionSizeStatsScope, metrics.HistorySize, time.Duration(size))
-		if entry, err := s.GetDomainCache().GetDomainByID(domainID); err == nil && entry != nil && entry.GetInfo() != nil {
-			s.GetMetricsClient().Scope(metrics.SessionSizeStatsScope, metrics.DomainTag(entry.GetInfo().Name)).RecordTimer(metrics.HistorySize, time.Duration(size))
-		}
+		s.GetMetricsClient().Scope(metrics.SessionSizeStatsScope, metrics.DomainTag(domainName)).
+			RecordTimer(metrics.HistorySize, time.Duration(size))
 		if size >= historySizeLogThreshold {
 			s.throttledLogger.Warn("history size threshold breached",
 				tag.WorkflowID(execution.GetWorkflowID()),
@@ -1467,7 +1463,7 @@ func acquireShard(
 	retryPolicy.SetExpirationInterval(5 * time.Second)
 
 	retryPredicate := func(err error) bool {
-		if common.IsPersistenceTransientError(err) {
+		if persistence.IsTransientError(err) {
 			return true
 		}
 		_, ok := err.(*persistence.ShardAlreadyExistError)

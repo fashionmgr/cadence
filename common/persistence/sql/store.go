@@ -23,8 +23,8 @@ package sql
 import (
 	"fmt"
 
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/persistence/sql/sqlplugin"
-	"github.com/uber/cadence/common/service/config"
 )
 
 var supportedPlugins = map[string]sqlplugin.Plugin{}
@@ -35,6 +35,19 @@ func RegisterPlugin(pluginName string, plugin sqlplugin.Plugin) {
 		panic("plugin " + pluginName + " already registered")
 	}
 	supportedPlugins[pluginName] = plugin
+}
+
+// RegisterPluginIfNotExists will register a SQL plugin only if a plugin with same name has not already been registered
+func RegisterPluginIfNotExists(pluginName string, plugin sqlplugin.Plugin) {
+	if _, ok := supportedPlugins[pluginName]; !ok {
+		supportedPlugins[pluginName] = plugin
+	}
+}
+
+// PluginRegistered returns true if plugin with given name has been registered, false otherwise
+func PluginRegistered(pluginName string) bool {
+	_, ok := supportedPlugins[pluginName]
+	return ok
 }
 
 // NewSQLDB creates a returns a reference to a logical connection to the

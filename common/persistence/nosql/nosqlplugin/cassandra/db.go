@@ -23,10 +23,10 @@ package cassandra
 import (
 	"errors"
 
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
-	"github.com/uber/cadence/common/service/config"
 )
 
 var (
@@ -58,7 +58,7 @@ func NewCassandraDB(cfg config.Cassandra, logger log.Logger) (nosqlplugin.DB, er
 		return nil, err
 	}
 	return &cdb{
-		client:  cfg.CQLClient,
+		client:  gocql.NewClient(),
 		session: session,
 		logger:  logger,
 	}, nil

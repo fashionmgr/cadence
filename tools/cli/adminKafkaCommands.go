@@ -41,12 +41,11 @@ import (
 	"github.com/uber/cadence/.gen/go/replicator"
 	"github.com/uber/cadence/client/admin"
 	"github.com/uber/cadence/common"
-	"github.com/uber/cadence/common/auth"
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/persistence/cassandra"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
-	"github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/mapper/thrift"
 )
@@ -144,10 +143,10 @@ func buildFilterFn(workflowID, runID string) filterFn {
 				return false
 			}
 		}
-		if len(workflowID) != 0 && *task.GetHistoryTaskV2Attributes().WorkflowID != workflowID {
+		if len(workflowID) != 0 && task.GetHistoryTaskV2Attributes().WorkflowID != workflowID {
 			return false
 		}
-		if len(runID) != 0 && *task.GetHistoryTaskV2Attributes().RunID != runID {
+		if len(runID) != 0 && task.GetHistoryTaskV2Attributes().RunID != runID {
 			return false
 		}
 		return true
@@ -274,9 +273,9 @@ Loop:
 				} else {
 					outStr = fmt.Sprintf(
 						"%v, %v, %v",
-						*task.GetHistoryTaskV2Attributes().DomainID,
-						*task.GetHistoryTaskV2Attributes().WorkflowID,
-						*task.GetHistoryTaskV2Attributes().RunID,
+						task.GetHistoryTaskV2Attributes().DomainID,
+						task.GetHistoryTaskV2Attributes().WorkflowID,
+						task.GetHistoryTaskV2Attributes().RunID,
 					)
 				}
 				_, err = outputFile.WriteString(fmt.Sprintf("%v\n", outStr))
@@ -451,7 +450,7 @@ func decodeVisibility(message []byte, val *indexer.Message) error {
 // ClustersConfig describes the kafka clusters
 type ClustersConfig struct {
 	Clusters map[string]config.ClusterConfig
-	TLS      auth.TLS
+	TLS      config.TLS
 }
 
 func doRereplicate(
@@ -475,8 +474,8 @@ func doRereplicate(
 	resp, err := exeMgr.GetWorkflowExecution(ctx, &persistence.GetWorkflowExecutionRequest{
 		DomainID: domainID,
 		Execution: types.WorkflowExecution{
-			WorkflowID: common.StringPtr(wid),
-			RunID:      common.StringPtr(rid),
+			WorkflowID: wid,
+			RunID:      rid,
 		},
 	})
 	if err != nil {
@@ -490,10 +489,10 @@ func doRereplicate(
 	if err := adminClient.ResendReplicationTasks(
 		ctx,
 		&types.ResendReplicationTasksRequest{
-			DomainID:      common.StringPtr(domainID),
-			WorkflowID:    common.StringPtr(wid),
-			RunID:         common.StringPtr(rid),
-			RemoteCluster: common.StringPtr(sourceCluster),
+			DomainID:      domainID,
+			WorkflowID:    wid,
+			RunID:         rid,
+			RemoteCluster: sourceCluster,
 			EndEventID:    common.Int64Ptr(endEventID + 1),
 			EndVersion:    common.Int64Ptr(endEventVersion),
 		},

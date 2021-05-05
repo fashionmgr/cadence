@@ -33,15 +33,14 @@ import (
 
 	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
-	"github.com/uber/cadence/common/auth"
 	"github.com/uber/cadence/common/codec"
+	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/persistence"
 	cassp "github.com/uber/cadence/common/persistence/cassandra"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
 	"github.com/uber/cadence/common/persistence/sql"
 	"github.com/uber/cadence/common/persistence/sql/sqlplugin"
-	"github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/mapper/thrift"
 )
@@ -170,10 +169,10 @@ func describeMutableState(c *cli.Context) *types.AdminDescribeWorkflowExecutionR
 	defer cancel()
 
 	resp, err := adminClient.DescribeWorkflowExecution(ctx, &types.AdminDescribeWorkflowExecutionRequest{
-		Domain: common.StringPtr(domain),
+		Domain: domain,
 		Execution: &types.WorkflowExecution{
-			WorkflowID: common.StringPtr(wid),
-			RunID:      common.StringPtr(rid),
+			WorkflowID: wid,
+			RunID:      rid,
 		},
 	})
 	if err != nil {
@@ -298,7 +297,7 @@ func connectToCassandra(c *cli.Context) (gocql.Client, gocql.Session) {
 		Timeout:           10 * time.Second,
 	}
 	if c.Bool(FlagEnableTLS) {
-		clusterConfig.TLS = &auth.TLS{
+		clusterConfig.TLS = &config.TLS{
 			Enabled:                true,
 			CertFile:               c.String(FlagTLSCertPath),
 			KeyFile:                c.String(FlagTLSKeyPath),
@@ -307,7 +306,7 @@ func connectToCassandra(c *cli.Context) (gocql.Client, gocql.Session) {
 		}
 	}
 
-	client := cFactory.CQLClient()
+	client := gocql.NewClient()
 	session, err := client.CreateSession(clusterConfig)
 	if err != nil {
 		ErrorAndExit("connect to Cassandra failed", err)
@@ -337,7 +336,7 @@ func connectToSQL(c *cli.Context) sqlplugin.DB {
 	}
 
 	if c.Bool(FlagEnableTLS) {
-		sqlConfig.TLS = &auth.TLS{
+		sqlConfig.TLS = &config.TLS{
 			Enabled:                true,
 			CertFile:               c.String(FlagTLSCertPath),
 			KeyFile:                c.String(FlagTLSKeyPath),
@@ -427,9 +426,9 @@ func AdminRemoveTask(c *cli.Context) {
 	defer cancel()
 
 	req := &types.RemoveTaskRequest{
-		ShardID:             common.Int32Ptr(int32(shardID)),
+		ShardID:             int32(shardID),
 		Type:                common.Int32Ptr(int32(typeID)),
-		TaskID:              common.Int64Ptr(taskID),
+		TaskID:              taskID,
 		VisibilityTimestamp: common.Int64Ptr(visibilityTimestamp),
 	}
 
@@ -500,7 +499,7 @@ func AdminCloseShard(c *cli.Context) {
 	defer cancel()
 
 	req := &types.CloseShardRequest{}
-	req.ShardID = common.Int32Ptr(int32(sid))
+	req.ShardID = int32(sid)
 
 	err := adminClient.CloseShard(ctx, req)
 	if err != nil {
@@ -527,7 +526,7 @@ func AdminDescribeHistoryHost(c *cli.Context) {
 
 	req := &types.DescribeHistoryHostRequest{}
 	if len(wid) > 0 {
-		req.ExecutionForHost = &types.WorkflowExecution{WorkflowID: common.StringPtr(wid)}
+		req.ExecutionForHost = &types.WorkflowExecution{WorkflowID: wid}
 	}
 	if c.IsSet(FlagShardID) {
 		req.ShardIDForHost = common.Int32Ptr(int32(sid))
@@ -559,10 +558,10 @@ func AdminRefreshWorkflowTasks(c *cli.Context) {
 	defer cancel()
 
 	err := adminClient.RefreshWorkflowTasks(ctx, &types.RefreshWorkflowTasksRequest{
-		Domain: common.StringPtr(domain),
+		Domain: domain,
 		Execution: &types.WorkflowExecution{
-			WorkflowID: common.StringPtr(wid),
-			RunID:      common.StringPtr(rid),
+			WorkflowID: wid,
+			RunID:      rid,
 		},
 	})
 	if err != nil {
@@ -584,8 +583,8 @@ func AdminResetQueue(c *cli.Context) {
 	defer cancel()
 
 	req := &types.ResetQueueRequest{
-		ShardID:     common.Int32Ptr(int32(shardID)),
-		ClusterName: common.StringPtr(clusterName),
+		ShardID:     int32(shardID),
+		ClusterName: clusterName,
 		Type:        common.Int32Ptr(int32(typeID)),
 	}
 
@@ -608,8 +607,8 @@ func AdminDescribeQueue(c *cli.Context) {
 	defer cancel()
 
 	req := &types.DescribeQueueRequest{
-		ShardID:     common.Int32Ptr(int32(shardID)),
-		ClusterName: common.StringPtr(clusterName),
+		ShardID:     int32(shardID),
+		ClusterName: clusterName,
 		Type:        common.Int32Ptr(int32(typeID)),
 	}
 

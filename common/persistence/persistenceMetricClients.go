@@ -310,18 +310,18 @@ func (p *workflowExecutionPersistenceClient) UpdateWorkflowExecution(
 func (p *workflowExecutionPersistenceClient) ConflictResolveWorkflowExecution(
 	ctx context.Context,
 	request *ConflictResolveWorkflowExecutionRequest,
-) error {
+) (*ConflictResolveWorkflowExecutionResponse, error) {
 	p.metricClient.IncCounter(metrics.PersistenceConflictResolveWorkflowExecutionScope, metrics.PersistenceRequests)
 
 	sw := p.metricClient.StartTimer(metrics.PersistenceConflictResolveWorkflowExecutionScope, metrics.PersistenceLatency)
-	err := p.persistence.ConflictResolveWorkflowExecution(ctx, request)
+	resp, err := p.persistence.ConflictResolveWorkflowExecution(ctx, request)
 	sw.Stop()
 
 	if err != nil {
 		p.updateErrorMetric(metrics.PersistenceConflictResolveWorkflowExecutionScope, err)
 	}
 
-	return err
+	return resp, err
 }
 
 func (p *workflowExecutionPersistenceClient) ResetWorkflowExecution(
@@ -792,6 +792,17 @@ func (p *taskPersistenceClient) CompleteTasksLessThan(
 	sw.Stop()
 	if err != nil {
 		p.updateErrorMetric(metrics.PersistenceCompleteTasksLessThanScope, err)
+	}
+	return result, err
+}
+
+func (p *taskPersistenceClient) GetOrphanTasks(ctx context.Context, request *GetOrphanTasksRequest) (*GetOrphanTasksResponse, error) {
+	p.metricClient.IncCounter(metrics.PersistenceGetOrphanTasksScope, metrics.PersistenceRequests)
+	sw := p.metricClient.StartTimer(metrics.PersistenceGetOrphanTasksScope, metrics.PersistenceLatency)
+	result, err := p.persistence.GetOrphanTasks(ctx, request)
+	sw.Stop()
+	if err != nil {
+		p.updateErrorMetric(metrics.PersistenceGetOrphanTasksScope, err)
 	}
 	return result, err
 }

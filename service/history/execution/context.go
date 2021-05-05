@@ -204,11 +204,11 @@ func (c *contextImpl) GetExecution() *types.WorkflowExecution {
 }
 
 func (c *contextImpl) GetDomainName() string {
-	domainEntry, err := c.shard.GetDomainCache().GetDomainByID(c.domainID)
+	domainName, err := c.shard.GetDomainCache().GetDomainName(c.domainID)
 	if err != nil {
 		return ""
 	}
-	return domainEntry.GetInfo().Name
+	return domainName
 }
 
 func (c *contextImpl) GetHistorySize() int64 {
@@ -414,7 +414,7 @@ func (c *contextImpl) CreateWorkflowExecution(
 		HistorySize: historySize,
 	}
 
-	_, err := c.createWorkflowExecutionWithRetry(ctx, createRequest)
+	resp, err := c.createWorkflowExecutionWithRetry(ctx, createRequest)
 	if err != nil {
 		if c.isPersistenceTimeoutError(err) {
 			c.notifyTasksFromWorkflowSnapshot(newWorkflow)
@@ -423,6 +423,14 @@ func (c *contextImpl) CreateWorkflowExecution(
 	}
 
 	c.notifyTasksFromWorkflowSnapshot(newWorkflow)
+
+	// finally emit session stats
+	domainName := c.GetDomainName()
+	emitSessionUpdateStats(
+		c.metricsClient,
+		domainName,
+		resp.MutableStateUpdateSessionStats,
+	)
 
 	return nil
 }
@@ -535,14 +543,15 @@ func (c *contextImpl) ConflictResolveWorkflowExecution(
 		return err
 	}
 
-	if err := c.shard.ConflictResolveWorkflowExecution(ctx, &persistence.ConflictResolveWorkflowExecutionRequest{
+	resp, err := c.shard.ConflictResolveWorkflowExecution(ctx, &persistence.ConflictResolveWorkflowExecutionRequest{
 		// RangeID , this is set by shard context
 		Mode:                    conflictResolveMode,
 		ResetWorkflowSnapshot:   *resetWorkflow,
 		NewWorkflowSnapshot:     newWorkflow,
 		CurrentWorkflowMutation: currentWorkflow,
 		// Encoding, this is set by shard context
-	}); err != nil {
+	})
+	if err != nil {
 		if c.isPersistenceTimeoutError(err) {
 			c.notifyTasksFromWorkflowSnapshot(resetWorkflow)
 			c.notifyTasksFromWorkflowSnapshot(newWorkflow)
@@ -572,6 +581,28 @@ func (c *contextImpl) ConflictResolveWorkflowExecution(
 	c.notifyTasksFromWorkflowSnapshot(resetWorkflow)
 	c.notifyTasksFromWorkflowSnapshot(newWorkflow)
 	c.notifyTasksFromWorkflowMutation(currentWorkflow)
+
+	// finally emit session stats
+	domainName := c.GetDomainName()
+	emitWorkflowHistoryStats(
+		c.metricsClient,
+		domainName,
+		int(c.stats.HistorySize),
+		int(resetMutableState.GetNextEventID()-1),
+	)
+	emitSessionUpdateStats(
+		c.metricsClient,
+		domainName,
+		resp.MutableStateUpdateSessionStats,
+	)
+	// emit workflow completion stats if any
+	if resetWorkflow.ExecutionInfo.State == persistence.WorkflowStateCompleted {
+		if event, err := resetMutableState.GetCompletionEvent(ctx); err == nil {
+			workflowType := resetWorkflow.ExecutionInfo.WorkflowTypeName
+			taskList := resetWorkflow.ExecutionInfo.TaskList
+			emitWorkflowCompletionStats(c.metricsClient, domainName, workflowType, taskList, event)
+		}
+	}
 
 	return nil
 }
@@ -904,8 +935,8 @@ func (c *contextImpl) PersistFirstWorkflowEvents(
 	workflowID := workflowEvents.WorkflowID
 	runID := workflowEvents.RunID
 	execution := types.WorkflowExecution{
-		WorkflowID: common.StringPtr(workflowEvents.WorkflowID),
-		RunID:      common.StringPtr(workflowEvents.RunID),
+		WorkflowID: workflowEvents.WorkflowID,
+		RunID:      workflowEvents.RunID,
 	}
 	branchToken := workflowEvents.BranchToken
 	events := workflowEvents.Events
@@ -936,8 +967,8 @@ func (c *contextImpl) PersistNonFirstWorkflowEvents(
 
 	domainID := workflowEvents.DomainID
 	execution := types.WorkflowExecution{
-		WorkflowID: common.StringPtr(workflowEvents.WorkflowID),
-		RunID:      common.StringPtr(workflowEvents.RunID),
+		WorkflowID: workflowEvents.WorkflowID,
+		RunID:      workflowEvents.RunID,
 	}
 	branchToken := workflowEvents.BranchToken
 	events := workflowEvents.Events
@@ -973,7 +1004,7 @@ func (c *contextImpl) appendHistoryV2EventsWithRetry(
 	err := backoff.Retry(
 		op,
 		persistenceOperationRetryPolicy,
-		common.IsPersistenceTransientError,
+		persistence.IsTransientError,
 	)
 	return int64(resp), err
 }
@@ -990,10 +1021,20 @@ func (c *contextImpl) createWorkflowExecutionWithRetry(
 		return err
 	}
 
+	isRetryable := func(err error) bool {
+		if _, ok := err.(*persistence.TimeoutError); ok {
+			// TODO: is timeout error retryable for create workflow?
+			// if we treat it as retryable, user may receive workflowAlreadyRunning error
+			// on the first start workflow execution request.
+			return false
+		}
+		return persistence.IsTransientError(err)
+	}
+
 	err := backoff.Retry(
 		op,
 		persistenceOperationRetryPolicy,
-		common.IsPersistenceTransientError,
+		isRetryable,
 	)
 	switch err.(type) {
 	case nil:
@@ -1031,7 +1072,7 @@ func (c *contextImpl) getWorkflowExecutionWithRetry(
 	err := backoff.Retry(
 		op,
 		persistenceOperationRetryPolicy,
-		common.IsPersistenceTransientError,
+		persistence.IsTransientError,
 	)
 	switch err.(type) {
 	case nil:
@@ -1064,9 +1105,17 @@ func (c *contextImpl) updateWorkflowExecutionWithRetry(
 		return err
 	}
 
+	isRetryable := func(err error) bool {
+		if _, ok := err.(*persistence.TimeoutError); ok {
+			// timeout error is not retryable for update workflow execution
+			return false
+		}
+		return persistence.IsTransientError(err)
+	}
+
 	err := backoff.Retry(
 		op, persistenceOperationRetryPolicy,
-		common.IsPersistenceTransientError,
+		isRetryable,
 	)
 	switch err.(type) {
 	case nil:
@@ -1167,8 +1216,8 @@ func (c *contextImpl) ReapplyEvents(
 	// Reapply events only reapply to the current run.
 	// The run id is only used for reapply event de-duplication
 	execution := &types.WorkflowExecution{
-		WorkflowID: common.StringPtr(workflowID),
-		RunID:      common.StringPtr(runID),
+		WorkflowID: workflowID,
+		RunID:      runID,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRemoteCallTimeout)
 	defer cancel()
@@ -1205,7 +1254,7 @@ func (c *contextImpl) ReapplyEvents(
 	return sourceCluster.ReapplyEvents(
 		ctx,
 		&types.ReapplyEventsRequest{
-			DomainName:        common.StringPtr(domainEntry.GetInfo().Name),
+			DomainName:        domainEntry.GetInfo().Name,
 			WorkflowExecution: execution,
 			Events:            reapplyEventsDataBlob.ToInternal(),
 		},

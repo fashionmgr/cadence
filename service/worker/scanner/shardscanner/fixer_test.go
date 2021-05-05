@@ -32,11 +32,11 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/uber/cadence/common/cache"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/reconciliation/entity"
 	"github.com/uber/cadence/common/reconciliation/invariant"
 	"github.com/uber/cadence/common/reconciliation/store"
-	"github.com/uber/cadence/common/service/dynamicconfig"
 )
 
 type FixerSuite struct {
@@ -76,6 +76,7 @@ func (s *FixerSuite) TestFix_Failure_FirstIteratorError() {
 				InfoDetails: "iterator error",
 			},
 		},
+		DomainStats: map[string]*FixStats{},
 	}, result)
 }
 
@@ -107,17 +108,7 @@ func (s *FixerSuite) TestFix_Failure_NonFirstError() {
 	fixedWriter := store.NewMockExecutionWriter(s.controller)
 	fixedWriter.EXPECT().Add(gomock.Any()).Return(nil).Times(4)
 	domainCache := cache.NewMockDomainCache(s.controller)
-	domainCache.EXPECT().GetDomainByID(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "test_domain",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil).Times(4)
+	domainCache.EXPECT().GetDomainName(gomock.Any()).Return("test-domain", nil).Times(4)
 	fixer := &ShardFixer{
 		shardID:          0,
 		itr:              mockItr,
@@ -140,6 +131,14 @@ func (s *FixerSuite) TestFix_Failure_NonFirstError() {
 				InfoDetails: "iterator got error on: 4",
 			},
 		},
+		DomainStats: map[string]*FixStats{
+			"test_domain": {
+				EntitiesCount: 4,
+				FixedCount:    4,
+				SkippedCount:  0,
+				FailedCount:   0,
+			},
+		},
 	}, result)
 }
 
@@ -160,17 +159,7 @@ func (s *FixerSuite) TestFix_Failure_SkippedWriterError() {
 	skippedWriter := store.NewMockExecutionWriter(s.controller)
 	skippedWriter.EXPECT().Add(gomock.Any()).Return(errors.New("skipped writer error")).Times(1)
 	domainCache := cache.NewMockDomainCache(s.controller)
-	domainCache.EXPECT().GetDomainByID(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "test_domain",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil)
+	domainCache.EXPECT().GetDomainName(gomock.Any()).Return("test-domain", nil).Times(1)
 	fixer := &ShardFixer{
 		shardID:          0,
 		itr:              mockItr,
@@ -190,6 +179,14 @@ func (s *FixerSuite) TestFix_Failure_SkippedWriterError() {
 			ControlFlowFailure: &ControlFlowFailure{
 				Info:        "blobstore add failed for skipped execution fix",
 				InfoDetails: "skipped writer error",
+			},
+		},
+		DomainStats: map[string]*FixStats{
+			"test_domain": {
+				EntitiesCount: 1,
+				FixedCount:    0,
+				SkippedCount:  0,
+				FailedCount:   0,
 			},
 		},
 	}, result)
@@ -212,17 +209,7 @@ func (s *FixerSuite) TestFix_Failure_FailedWriterError() {
 	failedWriter := store.NewMockExecutionWriter(s.controller)
 	failedWriter.EXPECT().Add(gomock.Any()).Return(errors.New("failed writer error")).Times(1)
 	domainCache := cache.NewMockDomainCache(s.controller)
-	domainCache.EXPECT().GetDomainByID(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "test_domain",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil)
+	domainCache.EXPECT().GetDomainName(gomock.Any()).Return("test-domain", nil).Times(1)
 	fixer := &ShardFixer{
 		shardID:          0,
 		itr:              mockItr,
@@ -242,6 +229,14 @@ func (s *FixerSuite) TestFix_Failure_FailedWriterError() {
 			ControlFlowFailure: &ControlFlowFailure{
 				Info:        "blobstore add failed for failed execution fix",
 				InfoDetails: "failed writer error",
+			},
+		},
+		DomainStats: map[string]*FixStats{
+			"test_domain": {
+				EntitiesCount: 1,
+				FixedCount:    0,
+				SkippedCount:  0,
+				FailedCount:   0,
 			},
 		},
 	}, result)
@@ -264,17 +259,7 @@ func (s *FixerSuite) TestFix_Failure_FixedWriterError() {
 	fixedWriter := store.NewMockExecutionWriter(s.controller)
 	fixedWriter.EXPECT().Add(gomock.Any()).Return(errors.New("fixed writer error")).Times(1)
 	domainCache := cache.NewMockDomainCache(s.controller)
-	domainCache.EXPECT().GetDomainByID(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "test_domain",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil)
+	domainCache.EXPECT().GetDomainName(gomock.Any()).Return("test-domain", nil).Times(1)
 	fixer := &ShardFixer{
 		shardID:          0,
 		itr:              mockItr,
@@ -294,6 +279,14 @@ func (s *FixerSuite) TestFix_Failure_FixedWriterError() {
 			ControlFlowFailure: &ControlFlowFailure{
 				Info:        "blobstore add failed for fixed execution fix",
 				InfoDetails: "fixed writer error",
+			},
+		},
+		DomainStats: map[string]*FixStats{
+			"test_domain": {
+				EntitiesCount: 1,
+				FixedCount:    0,
+				SkippedCount:  0,
+				FailedCount:   0,
 			},
 		},
 	}, result)
@@ -319,6 +312,7 @@ func (s *FixerSuite) TestFix_Failure_FixedWriterFlushError() {
 				InfoDetails: "fix writer flush failed",
 			},
 		},
+		DomainStats: map[string]*FixStats{},
 	}, result)
 }
 
@@ -345,6 +339,7 @@ func (s *FixerSuite) TestFix_Failure_SkippedWriterFlushError() {
 				InfoDetails: "skip writer flush failed",
 			},
 		},
+		DomainStats: map[string]*FixStats{},
 	}, result)
 }
 
@@ -374,6 +369,7 @@ func (s *FixerSuite) TestFix_Failure_FailedWriterFlushError() {
 				InfoDetails: "fail writer flush failed",
 			},
 		},
+		DomainStats: map[string]*FixStats{},
 	}, result)
 }
 
@@ -692,72 +688,12 @@ func (s *FixerSuite) TestFix_Success() {
 	mockFailedWriter.EXPECT().FlushedKeys().Return(&store.Keys{UUID: "failed_keys_uuid"})
 	mockFixedWriter.EXPECT().FlushedKeys().Return(&store.Keys{UUID: "fixed_keys_uuid"})
 	domainCache := cache.NewMockDomainCache(s.controller)
-	domainCache.EXPECT().GetDomainByID("skipped").Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "skipped",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil).Times(4)
-	domainCache.EXPECT().GetDomainByID("history_missing").Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "history_missing",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil).Times(2)
-	domainCache.EXPECT().GetDomainByID("first_history_event").Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "first_history_event",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil).Times(1)
-	domainCache.EXPECT().GetDomainByID("orphan_execution").Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "orphan_execution",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil).Times(1)
-	domainCache.EXPECT().GetDomainByID("failed").Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "failed",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil).Times(2)
-	domainCache.EXPECT().GetDomainByID("disallow_domain").Return(cache.NewDomainCacheEntryForTest(
-		&persistence.DomainInfo{
-			Name: "disallow_domain",
-		},
-		nil,
-		false,
-		nil,
-		0,
-		nil,
-		nil),
-		nil).Times(2)
+	domainCache.EXPECT().GetDomainName("skipped").Return("skipped", nil).Times(4)
+	domainCache.EXPECT().GetDomainName("history_missing").Return("history_missing", nil).Times(2)
+	domainCache.EXPECT().GetDomainName("first_history_event").Return("first_history_event", nil).Times(1)
+	domainCache.EXPECT().GetDomainName("orphan_execution").Return("orphan_execution", nil).Times(1)
+	domainCache.EXPECT().GetDomainName("failed").Return("failed", nil).Times(2)
+	domainCache.EXPECT().GetDomainName("disallow_domain").Return("disallow_domain", nil).Times(2)
 
 	allowDomain := func(domain string) bool {
 		return domain != "disallow_domain"
@@ -787,6 +723,44 @@ func (s *FixerSuite) TestFix_Success() {
 				Fixed:   &store.Keys{UUID: "fixed_keys_uuid"},
 				Failed:  &store.Keys{UUID: "failed_keys_uuid"},
 				Skipped: &store.Keys{UUID: "skipped_keys_uuid"},
+			},
+		},
+		DomainStats: map[string]*FixStats{
+			"disallow_domain": {
+				EntitiesCount: 2,
+				FixedCount:    0,
+				SkippedCount:  2,
+				FailedCount:   0,
+			},
+			"failed": {
+				EntitiesCount: 2,
+				FixedCount:    0,
+				SkippedCount:  0,
+				FailedCount:   2,
+			},
+			"first_history_event": {
+				EntitiesCount: 1,
+				FixedCount:    1,
+				SkippedCount:  0,
+				FailedCount:   0,
+			},
+			"history_missing": {
+				EntitiesCount: 2,
+				FixedCount:    2,
+				SkippedCount:  0,
+				FailedCount:   0,
+			},
+			"orphan_execution": {
+				EntitiesCount: 1,
+				FixedCount:    1,
+				SkippedCount:  0,
+				FailedCount:   0,
+			},
+			"skipped": {
+				EntitiesCount: 4,
+				FixedCount:    0,
+				SkippedCount:  4,
+				FailedCount:   0,
 			},
 		},
 	}, result)

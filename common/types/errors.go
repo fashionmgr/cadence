@@ -66,13 +66,19 @@ func (err DomainNotActiveError) Error() string {
 func (err EntityNotExistsError) Error() string {
 	sb := &strings.Builder{}
 	printField(sb, "Message", err.Message)
-	if err.CurrentCluster != nil {
-		printField(sb, "CurrentCluster", *err.CurrentCluster)
+	if err.CurrentCluster != "" {
+		printField(sb, "CurrentCluster", err.CurrentCluster)
 	}
-	if err.ActiveCluster != nil {
-		printField(sb, "ActiveCluster", *err.ActiveCluster)
+	if err.ActiveCluster != "" {
+		printField(sb, "ActiveCluster", err.ActiveCluster)
 	}
 	return fmt.Sprintf("EntityNotExistsError{%s}", sb.String())
+}
+
+func (err WorkflowExecutionAlreadyCompletedError) Error() string {
+	sb := &strings.Builder{}
+	printField(sb, "Message", err.Message)
+	return fmt.Sprintf("WorkflowExecutionAlreadyCompletedError{%s}", sb.String())
 }
 
 func (err InternalDataInconsistencyError) Error() string {
@@ -98,15 +104,9 @@ func (err RemoteSyncMatchedError) Error() string {
 func (err RetryTaskV2Error) Error() string {
 	sb := &strings.Builder{}
 	printField(sb, "Message", err.Message)
-	if err.DomainID != nil {
-		printField(sb, "DomainID", *err.DomainID)
-	}
-	if err.WorkflowID != nil {
-		printField(sb, "WorkflowID", *err.WorkflowID)
-	}
-	if err.RunID != nil {
-		printField(sb, "RunID", *err.RunID)
-	}
+	printField(sb, "DomainID", err.DomainID)
+	printField(sb, "WorkflowID", err.WorkflowID)
+	printField(sb, "RunID", err.RunID)
 	if err.StartEventID != nil {
 		printField(sb, "StartEventID", *err.StartEventID)
 	}
@@ -128,26 +128,16 @@ func (err ServiceBusyError) Error() string {
 
 func (err WorkflowExecutionAlreadyStartedError) Error() string {
 	sb := &strings.Builder{}
-	if err.Message != nil {
-		printField(sb, "Message", *err.Message)
-	}
-	if err.StartRequestID != nil {
-		printField(sb, "StartRequestID", *err.StartRequestID)
-	}
-	if err.RunID != nil {
-		printField(sb, "RunID", *err.RunID)
-	}
+	printField(sb, "Message", err.Message)
+	printField(sb, "StartRequestID", err.StartRequestID)
+	printField(sb, "RunID", err.RunID)
 	return fmt.Sprintf("WorkflowExecutionAlreadyStartedError{%s}", sb.String())
 }
 
 func (err ShardOwnershipLostError) Error() string {
 	sb := &strings.Builder{}
-	if err.Message != nil {
-		printField(sb, "Message", *err.Message)
-	}
-	if err.Owner != nil {
-		printField(sb, "Owner", *err.Owner)
-	}
+	printField(sb, "Message", err.Message)
+	printField(sb, "Owner", err.Owner)
 	return fmt.Sprintf("ShardOwnershipLostError{%s}", sb.String())
 }
 

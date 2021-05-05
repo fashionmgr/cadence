@@ -40,6 +40,7 @@ import (
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/persistence"
+	pt "github.com/uber/cadence/common/persistence/persistence-tests"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/environment"
 )
@@ -58,17 +59,29 @@ type (
 		testRawHistoryDomainName string
 		foreignDomainName        string
 		archivalDomainName       string
+		defaultTestCluster       pt.PersistenceTestCluster
+		visibilityTestCluster    pt.PersistenceTestCluster
+	}
+
+	IntegrationBaseParams struct {
+		DefaultTestCluster    pt.PersistenceTestCluster
+		VisibilityTestCluster pt.PersistenceTestCluster
+		TestClusterConfig     *TestClusterConfig
 	}
 )
 
-func (s *IntegrationBase) setupSuite(defaultClusterConfigFile string) {
+func NewIntegrationBase(params IntegrationBaseParams) IntegrationBase {
+	return IntegrationBase{
+		defaultTestCluster:    params.DefaultTestCluster,
+		visibilityTestCluster: params.VisibilityTestCluster,
+		testClusterConfig:     params.TestClusterConfig,
+	}
+}
+
+func (s *IntegrationBase) setupSuite() {
 	s.setupLogger()
 
-	clusterConfig, err := GetTestClusterConfig(defaultClusterConfigFile)
-	s.Require().NoError(err)
-	s.testClusterConfig = clusterConfig
-
-	if clusterConfig.FrontendAddress != "" {
+	if s.testClusterConfig.FrontendAddress != "" {
 		s.Logger.Info("Running integration test against specified frontend", tag.Address(TestFlags.FrontendAddr))
 		channel, err := tchannel.NewChannelTransport(tchannel.ServiceName("cadence-frontend"))
 		s.Require().NoError(err)
@@ -89,7 +102,13 @@ func (s *IntegrationBase) setupSuite(defaultClusterConfigFile string) {
 		s.adminClient = NewAdminClient(dispatcher)
 	} else {
 		s.Logger.Info("Running integration test against test cluster")
-		cluster, err := NewCluster(clusterConfig, s.Logger)
+		clusterMetadata := NewClusterMetadata(s.testClusterConfig, s.Logger)
+		params := pt.TestBaseParams{
+			DefaultTestCluster:    s.defaultTestCluster,
+			VisibilityTestCluster: s.visibilityTestCluster,
+			ClusterMetadata:       clusterMetadata,
+		}
+		cluster, err := NewCluster(s.testClusterConfig, s.Logger, params)
 		s.Require().NoError(err)
 		s.testCluster = cluster
 		s.engine = s.testCluster.GetFrontendClient()
@@ -142,7 +161,32 @@ func GetTestClusterConfig(configFile string) (*TestClusterConfig, error) {
 	if options.ESConfig != nil {
 		options.ESConfig.Indices[common.VisibilityAppName] += uuid.New()
 	}
+	if options.Persistence.DBName == "" {
+		options.Persistence.DBName = "test_" + pt.GenerateRandomDBName(10)
+	}
 	return &options, nil
+}
+
+// GetTestClusterConfigs return test cluster configs
+func GetTestClusterConfigs(configFile string) ([]*TestClusterConfig, error) {
+	environment.SetupEnv()
+
+	fileName := configFile
+	if TestFlags.TestClusterConfigFile != "" {
+		fileName = TestFlags.TestClusterConfigFile
+	}
+
+	confContent, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read test cluster config file %v: %v", fileName, err)
+	}
+	confContent = []byte(os.ExpandEnv(string(confContent)))
+
+	var clusterConfigs []*TestClusterConfig
+	if err := yaml.Unmarshal(confContent, &clusterConfigs); err != nil {
+		return nil, fmt.Errorf("failed to decode test cluster config %v", tag.Error(err))
+	}
+	return clusterConfigs, nil
 }
 
 func (s *IntegrationBase) tearDownSuite() {
@@ -165,13 +209,13 @@ func (s *IntegrationBase) registerDomain(
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return s.engine.RegisterDomain(ctx, &types.RegisterDomainRequest{
-		Name:                                   &domain,
-		Description:                            &domain,
-		WorkflowExecutionRetentionPeriodInDays: common.Int32Ptr(int32(retentionDays)),
+		Name:                                   domain,
+		Description:                            domain,
+		WorkflowExecutionRetentionPeriodInDays: int32(retentionDays),
 		HistoryArchivalStatus:                  &historyArchivalStatus,
-		HistoryArchivalURI:                     &historyArchivalURI,
+		HistoryArchivalURI:                     historyArchivalURI,
 		VisibilityArchivalStatus:               &visibilityArchivalStatus,
-		VisibilityArchivalURI:                  &visibilityArchivalURI,
+		VisibilityArchivalURI:                  visibilityArchivalURI,
 	})
 }
 
@@ -188,16 +232,16 @@ func (s *IntegrationBase) printWorkflowHistory(domain string, execution *types.W
 
 func (s *IntegrationBase) getHistory(domain string, execution *types.WorkflowExecution) []*types.HistoryEvent {
 	historyResponse, err := s.engine.GetWorkflowExecutionHistory(createContext(), &types.GetWorkflowExecutionHistoryRequest{
-		Domain:          common.StringPtr(domain),
+		Domain:          domain,
 		Execution:       execution,
-		MaximumPageSize: common.Int32Ptr(5), // Use small page size to force pagination code path
+		MaximumPageSize: 5, // Use small page size to force pagination code path
 	})
 	s.Require().NoError(err)
 
 	events := historyResponse.History.Events
 	for historyResponse.NextPageToken != nil {
 		historyResponse, err = s.engine.GetWorkflowExecutionHistory(createContext(), &types.GetWorkflowExecutionHistoryRequest{
-			Domain:        common.StringPtr(domain),
+			Domain:        domain,
 			Execution:     execution,
 			NextPageToken: historyResponse.NextPageToken,
 		})
