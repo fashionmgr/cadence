@@ -80,10 +80,10 @@ func (m *sqlTaskManager) LeaseTaskList(
 	if err != nil {
 		if err == sql.ErrNoRows {
 			tlInfo := &serialization.TaskListInfo{
-				AckLevel:        &ackLevel,
-				Kind:            common.Int16Ptr(int16(request.TaskListKind)),
-				ExpiryTimestamp: common.TimePtr(time.Unix(0, 0)),
-				LastUpdated:     common.TimePtr(time.Now()),
+				AckLevel:        ackLevel,
+				Kind:            int16(request.TaskListKind),
+				ExpiryTimestamp: time.Unix(0, 0),
+				LastUpdated:     time.Now(),
 			}
 			blob, err := m.parser.TaskListInfoToBlob(tlInfo)
 			if err != nil {
@@ -104,21 +104,15 @@ func (m *sqlTaskManager) LeaseTaskList(
 					TTL:          stickyTasksListsTTL,
 				}
 				if _, err := m.db.InsertIntoTaskListsWithTTL(ctx, &rowWithTTL); err != nil {
-					return nil, &types.InternalServiceError{
-						Message: fmt.Sprintf("LeaseTaskListWithTTL operation failed. Failed to make task list %v of type %v. Error: %v", request.TaskList, request.TaskType, err),
-					}
+					return nil, convertCommonErrors(m.db, "LeaseTaskListWithTTL", fmt.Sprintf("Failed to make task list %v of type %v.", request.TaskList, request.TaskType), err)
 				}
 			} else {
 				if _, err := m.db.InsertIntoTaskLists(ctx, &row); err != nil {
-					return nil, &types.InternalServiceError{
-						Message: fmt.Sprintf("LeaseTaskList operation failed. Failed to make task list %v of type %v. Error: %v", request.TaskList, request.TaskType, err),
-					}
+					return nil, convertCommonErrors(m.db, "LeaseTaskList", fmt.Sprintf("Failed to make task list %v of type %v.", request.TaskList, request.TaskType), err)
 				}
 			}
 		} else {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("LeaseTaskList operation failed. Failed to check if task list existed. Error: %v", err),
-			}
+			return nil, convertCommonErrors(m.db, "LeaseTaskList", "Failed to check if task list existed.", err)
 		}
 	}
 
@@ -147,7 +141,7 @@ func (m *sqlTaskManager) LeaseTaskList(
 			return err1
 		}
 		now := time.Now()
-		tlInfo.LastUpdated = common.TimePtr(now)
+		tlInfo.LastUpdated = now
 		blob, err1 := m.parser.TaskListInfoToBlob(tlInfo)
 		if err1 != nil {
 			return err1
@@ -201,13 +195,13 @@ func (m *sqlTaskManager) UpdateTaskList(
 	shardID := m.shardID(request.TaskListInfo.DomainID, request.TaskListInfo.Name)
 	domainID := serialization.MustParseUUID(request.TaskListInfo.DomainID)
 	tlInfo := &serialization.TaskListInfo{
-		AckLevel:        common.Int64Ptr(request.TaskListInfo.AckLevel),
-		Kind:            common.Int16Ptr(int16(request.TaskListInfo.Kind)),
-		ExpiryTimestamp: common.TimePtr(time.Unix(0, 0)),
-		LastUpdated:     common.TimePtr(time.Now()),
+		AckLevel:        request.TaskListInfo.AckLevel,
+		Kind:            int16(request.TaskListInfo.Kind),
+		ExpiryTimestamp: time.Unix(0, 0),
+		LastUpdated:     time.Now(),
 	}
 	if request.TaskListInfo.Kind == persistence.TaskListKindSticky {
-		tlInfo.ExpiryTimestamp = common.TimePtr(stickyTaskListExpiry())
+		tlInfo.ExpiryTimestamp = stickyTaskListExpiry()
 	}
 
 	var resp *persistence.UpdateTaskListResponse
@@ -288,7 +282,7 @@ func (m *sqlTaskManager) ListTaskList(
 			PageSize:            &request.PageSize,
 		})
 		if err != nil {
-			return nil, &types.InternalServiceError{Message: err.Error()}
+			return nil, convertCommonErrors(m.db, "ListTaskList", "", err)
 		}
 		if len(rows) > 0 {
 			break
@@ -350,7 +344,7 @@ func (m *sqlTaskManager) DeleteTaskList(
 		RangeID:  &request.RangeID,
 	})
 	if err != nil {
-		return &types.InternalServiceError{Message: err.Error()}
+		return convertCommonErrors(m.db, "DeleteTaskList", "", err)
 	}
 	nRows, err := result.RowsAffected()
 	if err != nil {
@@ -391,11 +385,11 @@ func (m *sqlTaskManager) CreateTasks(
 			expiryTime = time.Now().Add(ttl)
 		}
 		blob, err := m.parser.TaskInfoToBlob(&serialization.TaskInfo{
-			WorkflowID:       &v.Data.WorkflowID,
+			WorkflowID:       v.Data.WorkflowID,
 			RunID:            serialization.MustParseUUID(v.Data.RunID),
-			ScheduleID:       &v.Data.ScheduleID,
-			ExpiryTimestamp:  &expiryTime,
-			CreatedTimestamp: common.TimePtr(time.Now()),
+			ScheduleID:       v.Data.ScheduleID,
+			ExpiryTimestamp:  expiryTime,
+			CreatedTimestamp: time.Now(),
 		})
 		if err != nil {
 			return nil, err
@@ -463,9 +457,7 @@ func (m *sqlTaskManager) GetTasks(
 		PageSize:     &request.BatchSize,
 	})
 	if err != nil {
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("GetTasks operation failed. Failed to get rows. Error: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "GetTasks", "", err)
 	}
 
 	var tasks = make([]*persistence.InternalTaskInfo, len(rows))
@@ -501,7 +493,7 @@ func (m *sqlTaskManager) CompleteTask(
 		TaskType:     int64(taskList.TaskType),
 		TaskID:       &taskID})
 	if err != nil && err != sql.ErrNoRows {
-		return &types.InternalServiceError{Message: err.Error()}
+		return convertCommonErrors(m.db, "CompleteTask", "", err)
 	}
 	return nil
 }
@@ -519,7 +511,7 @@ func (m *sqlTaskManager) CompleteTasksLessThan(
 		Limit:                &request.Limit,
 	})
 	if err != nil {
-		return 0, &types.InternalServiceError{Message: err.Error()}
+		return 0, convertCommonErrors(m.db, "CompleteTasksLessThan", "", err)
 	}
 	nRows, err := result.RowsAffected()
 	if err != nil {
@@ -538,7 +530,7 @@ func (m *sqlTaskManager) GetOrphanTasks(ctx context.Context, request *persistenc
 		Limit: &request.Limit,
 	})
 	if err != nil {
-		return nil, &types.InternalServiceError{Message: err.Error()}
+		return nil, convertCommonErrors(m.db, "GetOrphanTasks", "", err)
 	}
 
 	var tasks = make([]*persistence.TaskKey, len(rows))
@@ -576,9 +568,7 @@ func lockTaskList(ctx context.Context, tx sqlplugin.Tx, shardID int, domainID se
 			Msg: "Task list does not exist.",
 		}
 	default:
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("Failed to lock task list. Error: %v", err),
-		}
+		return convertCommonErrors(tx, "lockTaskList", "", err)
 	}
 }
 

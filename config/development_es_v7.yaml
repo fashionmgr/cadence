@@ -5,11 +5,13 @@ persistence:
   numHistoryShards: 4
   datastores:
     cass-default:
-      cassandra:
+      nosql:
+        pluginName: "cassandra"
         hosts: "127.0.0.1"
         keyspace: "cadence"
     cass-visibility:
-      cassandra:
+      nosql:
+        pluginName: "cassandra"
         hosts: "127.0.0.1"
         keyspace: "cadence_visibility"
     es-visibility:
@@ -78,7 +80,7 @@ services:
 clusterMetadata:
   enableGlobalDomain: false
   failoverVersionIncrement: 10
-  masterClusterName: "active"
+  primaryClusterName: "active"
   currentClusterName: "active"
   clusterInformation:
     active:

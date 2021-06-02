@@ -65,6 +65,7 @@ type (
 		AddSearchAttribute(context.Context, *types.AddSearchAttributeRequest) error
 		CloseShard(context.Context, *types.CloseShardRequest) error
 		DescribeCluster(context.Context) (*types.DescribeClusterResponse, error)
+		DescribeShardDistribution(context.Context, *types.DescribeShardDistributionRequest) (*types.DescribeShardDistributionResponse, error)
 		DescribeHistoryHost(context.Context, *types.DescribeHistoryHostRequest) (*types.DescribeHistoryHostResponse, error)
 		DescribeQueue(context.Context, *types.DescribeQueueRequest) (*types.DescribeQueueResponse, error)
 		DescribeWorkflowExecution(context.Context, *types.AdminDescribeWorkflowExecutionRequest) (*types.AdminDescribeWorkflowExecutionResponse, error)
@@ -187,23 +188,29 @@ func (adh *adminHandlerImpl) AddSearchAttribute(
 	}
 
 	searchAttr := request.GetSearchAttribute()
-	currentValidAttr, _ := adh.params.DynamicConfig.GetMapValue(
+	currentValidAttr, err := adh.params.DynamicConfig.GetMapValue(
 		dynamicconfig.ValidSearchAttributes, nil, definition.GetDefaultIndexedKeys())
-	for k, v := range searchAttr {
-		if definition.IsSystemIndexedKey(k) {
-			return adh.error(&types.BadRequestError{Message: fmt.Sprintf("Key [%s] is reserved by system", k)}, scope)
-		}
-		if _, exist := currentValidAttr[k]; exist {
-			return adh.error(&types.BadRequestError{Message: fmt.Sprintf("Key [%s] is already whitelist", k)}, scope)
-		}
-
-		currentValidAttr[k] = int(v)
+	if err != nil {
+		return adh.error(&types.InternalServiceError{Message: fmt.Sprintf("Failed to get dynamic config, err: %v", err)}, scope)
 	}
 
-	// update dynamic config
-	err := adh.params.DynamicConfig.UpdateValue(dynamicconfig.ValidSearchAttributes, currentValidAttr)
+	for keyName, valueType := range searchAttr {
+		if definition.IsSystemIndexedKey(keyName) {
+			return adh.error(&types.BadRequestError{Message: fmt.Sprintf("Key [%s] is reserved by system", keyName)}, scope)
+		}
+		if currValType, exist := currentValidAttr[keyName]; exist {
+			if currValType != int(valueType) {
+				return adh.error(&types.BadRequestError{Message: fmt.Sprintf("Key [%s] is already whitelisted as a different type", keyName)}, scope)
+			}
+			adh.GetLogger().Warn("Adding a search attribute that is already existing in dynamicconfig, it's probably a noop if ElasticSearch is already added. Here will re-do it on ElasticSearch.")
+		}
+		currentValidAttr[keyName] = int(valueType)
+	}
+
+	// update dynamic config. Until the DB based dynamic config is implemented, we shouldn't fail the updating.
+	err = adh.params.DynamicConfig.UpdateValue(dynamicconfig.ValidSearchAttributes, currentValidAttr)
 	if err != nil {
-		return adh.error(&types.InternalServiceError{Message: fmt.Sprintf("Failed to update dynamic config, err: %v", err)}, scope)
+		adh.GetLogger().Warn("Failed to update dynamicconfig. This is only useful in local dev environment. Please ignore this warn if this is in a real Cluster, because you dynamicconfig MUST be updated separately")
 	}
 
 	// update elasticsearch mapping, new added field will not be able to remove or update
@@ -347,6 +354,35 @@ func (adh *adminHandlerImpl) DescribeQueue(
 	}
 
 	return adh.GetHistoryClient().DescribeQueue(ctx, request)
+}
+
+// DescribeShardDistribution returns information about history shard distribution
+func (adh *adminHandlerImpl) DescribeShardDistribution(
+	ctx context.Context,
+	request *types.DescribeShardDistributionRequest,
+) (resp *types.DescribeShardDistributionResponse, retError error) {
+
+	defer log.CapturePanic(adh.GetLogger(), &retError)
+	_, sw := adh.startRequestProfile(metrics.AdminDescribeShardDistributionScope)
+	defer sw.Stop()
+
+	numShards := adh.config.NumHistoryShards
+	resp = &types.DescribeShardDistributionResponse{
+		NumberOfShards: int32(numShards),
+		Shards:         make(map[int32]string),
+	}
+
+	offset := int(request.PageID * request.PageSize)
+	nextPageStart := offset + int(request.PageSize)
+	for shardID := offset; shardID < numShards && shardID < nextPageStart; shardID++ {
+		info, err := adh.GetHistoryServiceResolver().Lookup(string(rune(shardID)))
+		if err != nil {
+			resp.Shards[int32(shardID)] = "unknown"
+		} else {
+			resp.Shards[int32(shardID)] = info.Identity()
+		}
+	}
+	return resp, nil
 }
 
 // DescribeHistoryHost returns information about the internal states of a history host
@@ -651,14 +687,10 @@ func (adh *adminHandlerImpl) GetDomainReplicationMessages(
 	if request.LastProcessedMessageID != nil {
 		lastProcessedMessageID = request.GetLastProcessedMessageID()
 	}
-
-	if lastProcessedMessageID != defaultLastMessageID {
-		err := adh.GetDomainReplicationQueue().UpdateAckLevel(ctx, lastProcessedMessageID, request.GetClusterName())
-		if err != nil {
-			adh.GetLogger().Warn("Failed to update domain replication queue ack level.",
-				tag.TaskID(int64(lastProcessedMessageID)),
-				tag.ClusterName(request.GetClusterName()))
-		}
+	if err := adh.GetDomainReplicationQueue().UpdateAckLevel(ctx, lastProcessedMessageID, request.GetClusterName()); err != nil {
+		adh.GetLogger().Warn("Failed to update domain replication queue ack level.",
+			tag.TaskID(int64(lastProcessedMessageID)),
+			tag.ClusterName(request.GetClusterName()))
 	}
 
 	return &types.GetDomainReplicationMessagesResponse{

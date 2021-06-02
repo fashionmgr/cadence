@@ -139,9 +139,10 @@ const (
 )
 
 const (
-	DefaultScannerGetOrphanTasksPageSize                    = 1000
-	DefaultScannerBatchSizeForCompleteTasksLessThanAckLevel = 16
-	DefaultScannerMaxTasksProcessedPerTasklistJob           = 256
+	// DefaultIDLengthWarnLimit is the warning length for various ID types
+	DefaultIDLengthWarnLimit = 128
+	// DefaultIDLengthErrorLimit is the maximum length allowed for various ID types
+	DefaultIDLengthErrorLimit = 1000
 )
 
 const (
@@ -163,8 +164,12 @@ const (
 	AdvancedVisibilityWritingModeDual = "dual"
 )
 
-// DomainDataKeyForManagedFailover is key of DomainData for managed failover
-const DomainDataKeyForManagedFailover = "IsManagedByCadence"
+const (
+	// DomainDataKeyForManagedFailover is key of DomainData for managed failover
+	DomainDataKeyForManagedFailover = "IsManagedByCadence"
+	// DomainDataKeyForPreferredCluster is the key of DomainData for domain rebalance
+	DomainDataKeyForPreferredCluster = "PreferredCluster"
+)
 
 type (
 	// TaskType is the enum for representing different task types

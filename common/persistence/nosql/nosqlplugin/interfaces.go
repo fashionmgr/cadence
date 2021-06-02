@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -35,29 +34,50 @@ type (
 		PluginName() string
 		Close()
 
-		IsConditionFailedError(err error) bool
-		gocql.ErrorChecker
-
+		NoSQLErrorChecker
 		tableCRUD
 	}
 	// tableCRUD defines the API for interacting with the database tables
-	// NOTE: All SELECT interfaces require strong consistency. Using eventual consistency will not work.
+	// NOTE 1: All SELECT interfaces require strong consistency (eventual consistency will not work) unless specify in the method.
+	//
+	// NOTE 2: About schema: only the columns that need to be used directly in queries are considered 'significant',
+	// including partition key, range key or index key and conditional columns, are required to be in the schema.
+	// All other non 'significant' columns are opaque for implementation.
+	// Therefore, it's recommended to use a data blob to store all the other columns, so that adding new
+	// column will not require schema changes. This approach has been proved very successful in MySQL/Postgres implementation of SQL interfaces.
+	// Cassandra implementation cannot do it due to backward-compatibility. Any other NoSQL implementation should use datablob for non-significant columns.
+	// Follow the comment for each tableCRUD for what are 'significant' columns.
 	tableCRUD interface {
 		historyEventsCRUD
 		messageQueueCRUD
 		domainCRUD
+		shardCRUD
+		visibilityCRUD
 	}
 
-	// historyEventsCRUD is for History events storage system
-	historyEventsCRUD interface {
-		/**
-		* It can be implemented with two tables(history_tree for branch records and history_node for node records)
-		* ShardID is passed from application layer as the same shardID of the workflow. But it is not required for History events
-		* to be in the same shard as workflows. The pro of being the same shard is that when one DB partition goes down, the impact is lower.
-		* However, being in the same shard can cause some hot partition issue. Because sometimes history can grow very large, this could be worse.
-		* Therefore, Cadence built-in Cassandra plugin doesn't take use of ShardID at all.
-		**/
+	// NoSQLErrorChecker checks for common nosql errors
+	NoSQLErrorChecker interface {
+		IsConditionFailedError(err error) bool
+		ClientErrorChecker
+	}
 
+	// ClientErrorChecker checks for common nosql errors on client
+	ClientErrorChecker interface {
+		IsTimeoutError(error) bool
+		IsNotFoundError(error) bool
+		IsThrottlingError(error) bool
+	}
+
+	/**
+	 * historyEventsCRUD is for History events storage system
+	 * Recommendation: use two tables: history_tree for branch records and history_node for node records
+	 * if a single update query can operate on two tables.
+	 *
+	 * Significant columns:
+	 * history_tree partition key: (shardID, treeID), range key: (branchID)
+	 * history_node partition key: (shardID, treeID), range key: (branchID, nodeID ASC, txnID DESC)
+	 */
+	historyEventsCRUD interface {
 		// InsertIntoHistoryTreeAndNode inserts one or two rows: tree row and node row(at least one of them)
 		InsertIntoHistoryTreeAndNode(ctx context.Context, treeRow *HistoryTreeRow, nodeRow *HistoryNodeRow) error
 
@@ -76,8 +96,15 @@ type (
 		SelectFromHistoryTree(ctx context.Context, filter *HistoryTreeFilter) ([]*HistoryTreeRow, error)
 	}
 
-	// messageQueueCRUD is for the message queue storage system
-	// Typically two tables(queue_message,and queue_metadata) are needed to implement this interface
+	/***
+	 * messageQueueCRUD is for the message queue storage system
+	 *
+	 * Recommendation: use two tables(queue_message,and queue_metadata) to implement this interface
+	 *
+	 * Significant columns:
+	 * queue_message partition key: (queueType), range key: (messageID)
+	 * queue_metadata partition key: (queueType), range key: N/A, query condition column(version)
+	 */
 	messageQueueCRUD interface {
 		//Insert message into queue, return error if failed or already exists
 		// Must return conditionFailed error if row already exists
@@ -107,17 +134,29 @@ type (
 		GetQueueSize(ctx context.Context, queueType persistence.QueueType) (int64, error)
 	}
 
-	// domainCRUD is for domain + domain metadata storage system
-	// Ideally a domain operation should be implemented in transaction to be atomic if using multiple tables.
-	// For example, Cassandra uses two table, domains and domains_by_name_v2.
-	// But it is okay if not, as the nosqlMetadataManager will handle the edge cases.
-	//
-	// However, there is a special record as "domain metadata". Right now it is an integer number as notification version.
-	// The main purpose of it is to notify clusters that there is some changes in domains, so domain cache needs to refresh.
-	// It always increase by one, whenever a domain is updated or inserted.
-	// Updating this failover metadata with domain insert/update needs to be atomic.
-	// Because Batch LWTs is only allowed within one table and same partition.
-	// The Cassandra implementation stores it in the same table as domain in domains_by_name_v2.
+	/***
+	* domainCRUD is for domain + domain metadata storage system
+	*
+	* Recommendation: two tables(domain, domain_metadata) to implement if conditional updates on two tables is supported
+	*
+	* Significant columns:
+	* domain: partition key( a constant value), range key(domainName), local secondary index(domainID)
+	* domain_metadata: partition key( a constant value), range key(N/A), query condition column(notificationVersion)
+	*
+	* Note 1: About Cassandra's implementation: Because of historical reasons, Cassandra uses two table,
+	* domains and domains_by_name_v2. Therefore, Cassandra implementation lost the atomicity causing some edge cases,
+	* and the implementation is more complicated than it should be.
+	*
+	* Note 2: Cassandra doesn't support conditional updates on multiple tables. Hence the domain_metadata table is implemented
+	* as a special record as "domain metadata". It is an integer number as notification version.
+	* The main purpose of it is to notify clusters that there is some changes in domains, so domain cache needs to refresh.
+	* It always increase by one, whenever a domain is updated or inserted.
+	* Updating this failover metadata with domain insert/update needs to be atomic.
+	* Because Batch LWTs is only allowed within one table and same partition.
+	* The Cassandra implementation stores it in the same table as domain in domains_by_name_v2.
+	*
+	* Note 3: It's okay to use a constant value for partition key because domain table is serving very small volume of traffic.
+	 */
 	domainCRUD interface {
 		// Insert a new record to domain, return error if failed or already exists
 		// Must return conditionFailed error if domainName already exists
@@ -132,6 +171,122 @@ type (
 		DeleteDomain(ctx context.Context, domainID *string, domainName *string) error
 		// right now domain metadata is just an integer as notification version
 		SelectDomainMetadata(ctx context.Context) (int64, error)
+	}
+
+	/**
+	* shardCRUD is for shard storage of workflow execution.
+
+	* Recommendation: use one table if database support batch conditional update on multiple tables, otherwise combine with workflowCRUD (likeCassandra)
+	*
+	* Significant columns:
+	* domain: partition key(shardID), range key(N/A), local secondary index(domainID), query condition column(rangeID)
+	*
+	* Note 1: shard will be required to run conditional update with workflowCRUD. So in some nosql database like Cassandra,
+	* shardCRUD and workflowCRUD must be implemented within the same table. Because Cassandra only allows LightWeight transaction
+	* executed within a single table.
+	* Note 2: unlike Cassandra, most NoSQL databases don't return the previous rows when conditional write fails. In this case,
+	* an extra read query is needed to get the previous row.
+	 */
+	shardCRUD interface {
+		// InsertShard creates a new shard.
+		// Return error is there is any thing wrong
+		// When error IsConditionFailedError, also return the row that doesn't meet the condition
+		InsertShard(ctx context.Context, row *ShardRow) (previous *ConflictedShardRow, err error)
+		// SelectShard gets a shard, rangeID is the current rangeID in shard row
+		SelectShard(ctx context.Context, shardID int, currentClusterName string) (rangeID int64, shard *ShardRow, err error)
+		// UpdateRangeID updates the rangeID
+		// Return error is there is any thing wrong
+		// When error IsConditionFailedError, also return the row that doesn't meet the condition
+		UpdateRangeID(ctx context.Context, shardID int, rangeID int64, previousRangeID int64) (previous *ConflictedShardRow, err error)
+		// UpdateShard updates a shard
+		// Return error is there is any thing wrong
+		// When error IsConditionFailedError, also return the row that doesn't meet the condition
+		UpdateShard(ctx context.Context, row *ShardRow, previousRangeID int64) (previous *ConflictedShardRow, err error)
+	}
+
+	/**
+	* visibilityCRUD is for visibility storage
+	*
+	* Recommendation: use one table with multiple indexes
+	*
+	* Significant columns:
+	* domain: partition key(domainID), range key(workflowID, runID),
+	*         local secondary index #1(startTime),
+	*         local secondary index #2(closedTime),
+	*         local secondary index #3(workflowType, startTime),
+	*         local secondary index #4(workflowType, closedTime),
+	*         local secondary index #5(workflowID, startTime),
+	*         local secondary index #6(workflowID, closedTime),
+	*         local secondary index #7(closeStatus, closedTime),
+	*
+	* NOTE 1: Cassandra implementation of visibility uses three tables: open_executions, closed_executions and closed_executions_v2,
+	* because Cassandra doesn't support cross-partition indexing.
+	* Records in open_executions and closed_executions are clustered by start_time. Records in  closed_executions_v2 are by close_time.
+	* This optimizes the performance, but introduce a lot of complexity.
+	* In some other databases, this may be be necessary. Please refer to MySQL/Postgres implementation which uses only
+	* one table with multiple indexes.
+	*
+	* NOTE 2: TTL(time to live records) is for auto-deleting expired records in visibility. For databases that don't support TTL,
+	* please implement DeleteVisibility method. If TTL is supported, then DeleteVisibility can be a noop.
+	 */
+	visibilityCRUD interface {
+		InsertVisibility(ctx context.Context, ttlSeconds int64, row *VisibilityRowForInsert) error
+		UpdateVisibility(ctx context.Context, ttlSeconds int64, row *VisibilityRowForUpdate) error
+		SelectVisibility(ctx context.Context, filter *VisibilityFilter) (*SelectVisibilityResponse, error)
+		DeleteVisibility(ctx context.Context, domainID, workflowID, runID string) error
+		// TODO deprecated this in the future in favor of SelectVisibility
+		// Special case: return nil,nil if not found(since we will deprecate it, it's not worth refactor to be consistent)
+		SelectOneClosedWorkflow(ctx context.Context, domainID, workflowID, runID string) (*VisibilityRow, error)
+	}
+
+	VisibilityRowForInsert struct {
+		VisibilityRow
+		DomainID string
+	}
+
+	VisibilityRowForUpdate struct {
+		VisibilityRow
+		DomainID string
+		// NOTE: this is only for some implementation (e.g. Cassandra) that uses multiple tables,
+		// they needs to delete record from the open execution table. Ignore this field if not need it
+		UpdateOpenToClose bool
+		//  Similar as UpdateOpenToClose
+		UpdateCloseToOpen bool
+	}
+
+	// TODO separate in the future when need it
+	VisibilityRow = persistence.InternalVisibilityWorkflowExecutionInfo
+
+	SelectVisibilityResponse struct {
+		Executions    []*VisibilityRow
+		NextPageToken []byte
+	}
+
+	// VisibilityFilter contains the column names within executions_visibility table that
+	// can be used to filter results through a WHERE clause
+	VisibilityFilter struct {
+		ListRequest  persistence.InternalListWorkflowExecutionsRequest
+		FilterType   VisibilityFilterType
+		SortType     VisibilitySortType
+		WorkflowType string
+		WorkflowID   string
+		CloseStatus  int32
+	}
+
+	VisibilityFilterType int
+	VisibilitySortType   int
+
+	// For now ShardRow is the same as persistence.InternalShardInfo
+	// Separate them later when there is a need.
+	ShardRow = persistence.InternalShardInfo
+
+	// ConflictedShardRow contains the partial information about a shard returned when a conditional write fails
+	ConflictedShardRow struct {
+		ShardID int
+		// PreviousRangeID is the condition of previous change that used for conditional update
+		PreviousRangeID int64
+		// optional detailed information for logging purpose
+		Details string
 	}
 
 	// DomainRow defines the row struct for queue message
@@ -234,4 +389,19 @@ type (
 		TreeID   string
 		BranchID *string
 	}
+)
+
+const (
+	AllOpen VisibilityFilterType = iota
+	AllClosed
+	OpenByWorkflowType
+	ClosedByWorkflowType
+	OpenByWorkflowID
+	ClosedByWorkflowID
+	ClosedByClosedStatus
+)
+
+const (
+	SortByStartTime VisibilitySortType = iota
+	SortByClosedTime
 )

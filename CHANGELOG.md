@@ -11,10 +11,12 @@ You can find a list of previous releases on the [github releases](https://github
 - Added GRPC support. Cadence server will accept requests on both TChannel and GRPC. With dynamic config flag `system.enableGRPCOutbound` it will also switch to GRPC communication internally between server components.
 
 ### Fixed
-- Fixed a bug where an error message is always displayed in Cadence UI `persistence max qps reached for list operations` on the workflow list screen (#3958)
+- This change contains breaking change on user config. The masterClusterName config key is deprecated and is replaced with primaryClusterName key. (#4185)
 
 ### Changed
-- Bump CLI version to v0.18.3 (#3959)
+- Bump CLI version to v0.19.0
+- Change `--connect-attributes` in `cadence-sql-tool` from URL encoding to the format of k1=v1,k2=v2...
+- Change `--domain_data` in `cadence domain update/register` from the format of k1:v1,k2:v2... to the format of k1=v1,k2=v2...
 
 ## [0.18.0] - 2021-01-22
 

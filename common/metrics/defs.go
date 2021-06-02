@@ -166,6 +166,12 @@ const (
 	PersistenceCompleteTransferTaskScope
 	// PersistenceRangeCompleteTransferTaskScope tracks CompleteTransferTasks calls made by service to persistence layer
 	PersistenceRangeCompleteTransferTaskScope
+	// PersistenceGetCrossClusterTasksScope tracks GetCrossClusterTasks calls made by service to persistence layer
+	PersistenceGetCrossClusterTasksScope
+	// PersistenceCompleteCrossClusterTaskScope tracks CompleteCrossClusterTasks calls made by service to persistence layer
+	PersistenceCompleteCrossClusterTaskScope
+	// PersistenceRangeCompleteCrossClusterTaskScope tracks CompleteCrossClusterTasks calls made by service to persistence layer
+	PersistenceRangeCompleteCrossClusterTaskScope
 	// PersistenceGetReplicationTasksScope tracks GetReplicationTasks calls made by service to persistence layer
 	PersistenceGetReplicationTasksScope
 	// PersistenceCompleteReplicationTaskScope tracks CompleteReplicationTasks calls made by service to persistence layer
@@ -478,6 +484,8 @@ const (
 	AdminClientDescribeQueueScope
 	// AdminClientDescribeHistoryHostScope tracks RPC calls to admin service
 	AdminClientDescribeHistoryHostScope
+	// AdminClientDescribeShardDistributionScope tracks RPC calls to admin service
+	AdminClientDescribeShardDistributionScope
 	// AdminClientDescribeWorkflowExecutionScope tracks RPC calls to admin service
 	AdminClientDescribeWorkflowExecutionScope
 	// AdminClientGetWorkflowExecutionRawHistoryV2Scope tracks RPC calls to admin service
@@ -716,6 +724,8 @@ const (
 	AdminPurgeDLQMessagesScope
 	// AdminMergeDLQMessagesScope is the metric scope for admin.AdminMergeDLQMessagesScope
 	AdminMergeDLQMessagesScope
+	// AdminDescribeShardDistributionScope is the metric scope for admin.DescribeShardDistribution
+	AdminDescribeShardDistributionScope
 
 	NumAdminScopes
 )
@@ -1109,6 +1119,9 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		PersistenceGetTransferTasksScope:                         {operation: "GetTransferTasks"},
 		PersistenceCompleteTransferTaskScope:                     {operation: "CompleteTransferTask"},
 		PersistenceRangeCompleteTransferTaskScope:                {operation: "RangeCompleteTransferTask"},
+		PersistenceGetCrossClusterTasksScope:                     {operation: "GetCrossClusterTasks"},
+		PersistenceCompleteCrossClusterTaskScope:                 {operation: "GetCrossClusterTasks"},
+		PersistenceRangeCompleteCrossClusterTaskScope:            {operation: "GetCrossClusterTasks"},
 		PersistenceGetReplicationTasksScope:                      {operation: "GetReplicationTasks"},
 		PersistenceCompleteReplicationTaskScope:                  {operation: "CompleteReplicationTask"},
 		PersistenceRangeCompleteReplicationTaskScope:             {operation: "RangeCompleteReplicationTask"},
@@ -1271,6 +1284,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		FrontendClientListTaskListPartitionsScope:             {operation: "FrontendClientListTaskListPartitions", tags: map[string]string{CadenceRoleTagName: FrontendClientRoleTagValue}},
 		AdminClientAddSearchAttributeScope:                    {operation: "AdminClientAddSearchAttribute", tags: map[string]string{CadenceRoleTagName: AdminClientRoleTagValue}},
 		AdminClientDescribeHistoryHostScope:                   {operation: "AdminClientDescribeHistoryHost", tags: map[string]string{CadenceRoleTagName: AdminClientRoleTagValue}},
+		AdminClientDescribeShardDistributionScope:             {operation: "AdminClientDescribeShardDistribution", tags: map[string]string{CadenceRoleTagName: AdminClientRoleTagValue}},
 		AdminClientDescribeWorkflowExecutionScope:             {operation: "AdminClientDescribeWorkflowExecution", tags: map[string]string{CadenceRoleTagName: AdminClientRoleTagValue}},
 		AdminClientGetWorkflowExecutionRawHistoryV2Scope:      {operation: "AdminClientGetWorkflowExecutionRawHistoryV2", tags: map[string]string{CadenceRoleTagName: AdminClientRoleTagValue}},
 		AdminClientDescribeClusterScope:                       {operation: "AdminClientDescribeCluster", tags: map[string]string{CadenceRoleTagName: AdminClientRoleTagValue}},
@@ -1377,6 +1391,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		AdminPurgeDLQMessagesScope:                 {operation: "AdminPurgeDLQMessages"},
 		AdminMergeDLQMessagesScope:                 {operation: "AdminMergeDLQMessages"},
 		AdminDescribeHistoryHostScope:              {operation: "DescribeHistoryHost"},
+		AdminDescribeShardDistributionScope:        {operation: "AdminShardList"},
 		AdminAddSearchAttributeScope:               {operation: "AddSearchAttribute"},
 		AdminDescribeWorkflowExecutionScope:        {operation: "DescribeWorkflowExecution"},
 		AdminGetWorkflowExecutionRawHistoryScope:   {operation: "GetWorkflowExecutionRawHistory"},
@@ -1597,7 +1612,17 @@ const (
 	CadenceErrUnauthorizedCounter
 	CadenceErrAuthorizeFailedCounter
 	CadenceErrRemoteSyncMatchFailedCounter
-	CadenceErrIDLengthExceededWarnLimit
+	CadenceErrDomainNameExceededWarnLimit
+	CadenceErrIdentityExceededWarnLimit
+	CadenceErrWorkflowIDExceededWarnLimit
+	CadenceErrSignalNameExceededWarnLimit
+	CadenceErrWorkflowTypeExceededWarnLimit
+	CadenceErrRequestIDExceededWarnLimit
+	CadenceErrTaskListNameExceededWarnLimit
+	CadenceErrActivityIDExceededWarnLimit
+	CadenceErrActivityTypeExceededWarnLimit
+	CadenceErrMarkerNameExceededWarnLimit
+	CadenceErrTimerIDExceededWarnLimit
 	PersistenceRequests
 	PersistenceFailures
 	PersistenceLatency
@@ -1666,6 +1691,7 @@ const (
 	HistoryArchiverHistoryMutatedCount
 	HistoryArchiverTotalUploadSize
 	HistoryArchiverHistorySize
+	HistoryArchiverDuplicateArchivalsCount
 
 	// The following metrics are only used by internal history archiver implemention.
 	// TODO: move them to internal repo once cadence plugin model is in place.
@@ -1675,7 +1701,6 @@ const (
 	HistoryArchiverDeterministicConstructionCheckFailedCount
 	HistoryArchiverRunningBlobIntegrityCheckCount
 	HistoryArchiverBlobIntegrityCheckFailedCount
-	HistoryArchiverDuplicateArchivalsCount
 
 	VisibilityArchiverArchiveNonRetryableErrorCount
 	VisibilityArchiverArchiveTransientErrorCount
@@ -2071,7 +2096,17 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		CadenceErrUnauthorizedCounter:                       {metricName: "cadence_errors_unauthorized", metricType: Counter},
 		CadenceErrAuthorizeFailedCounter:                    {metricName: "cadence_errors_authorize_failed", metricType: Counter},
 		CadenceErrRemoteSyncMatchFailedCounter:              {metricName: "cadence_errors_remote_syncmatch_failed", metricType: Counter},
-		CadenceErrIDLengthExceededWarnLimit:                 {metricName: "cadence_errors_id_length_exceeded_warn_limit", metricType: Counter},
+		CadenceErrDomainNameExceededWarnLimit:               {metricName: "cadence_errors_domain_name_exceeded_warn_limit", metricType: Counter},
+		CadenceErrIdentityExceededWarnLimit:                 {metricName: "cadence_errors_identity_exceeded_warn_limit", metricType: Counter},
+		CadenceErrWorkflowIDExceededWarnLimit:               {metricName: "cadence_errors_workflow_id_exceeded_warn_limit", metricType: Counter},
+		CadenceErrSignalNameExceededWarnLimit:               {metricName: "cadence_errors_signal_name_exceeded_warn_limit", metricType: Counter},
+		CadenceErrWorkflowTypeExceededWarnLimit:             {metricName: "cadence_errors_workflow_type_exceeded_warn_limit", metricType: Counter},
+		CadenceErrRequestIDExceededWarnLimit:                {metricName: "cadence_errors_request_id_exceeded_warn_limit", metricType: Counter},
+		CadenceErrTaskListNameExceededWarnLimit:             {metricName: "cadence_errors_task_list_name_exceeded_warn_limit", metricType: Counter},
+		CadenceErrActivityIDExceededWarnLimit:               {metricName: "cadence_errors_activity_id_exceeded_warn_limit", metricType: Counter},
+		CadenceErrActivityTypeExceededWarnLimit:             {metricName: "cadence_errors_activity_type_exceeded_warn_limit", metricType: Counter},
+		CadenceErrMarkerNameExceededWarnLimit:               {metricName: "cadence_errors_marker_name_exceeded_warn_limit", metricType: Counter},
+		CadenceErrTimerIDExceededWarnLimit:                  {metricName: "cadence_errors_timer_id_exceeded_warn_limit", metricType: Counter},
 		PersistenceRequests:                                 {metricName: "persistence_requests", metricType: Counter},
 		PersistenceFailures:                                 {metricName: "persistence_errors", metricType: Counter},
 		PersistenceLatency:                                  {metricName: "persistence_latency", metricType: Timer},
@@ -2129,13 +2164,13 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		HistoryArchiverHistoryMutatedCount:                        {metricName: "history_archiver_history_mutated", metricType: Counter},
 		HistoryArchiverTotalUploadSize:                            {metricName: "history_archiver_total_upload_size", metricType: Timer},
 		HistoryArchiverHistorySize:                                {metricName: "history_archiver_history_size", metricType: Timer},
+		HistoryArchiverDuplicateArchivalsCount:                    {metricName: "history_archiver_duplicate_archivals", metricType: Counter},
 		HistoryArchiverBlobExistsCount:                            {metricName: "history_archiver_blob_exists", metricType: Counter},
 		HistoryArchiverBlobSize:                                   {metricName: "history_archiver_blob_size", metricType: Timer},
 		HistoryArchiverRunningDeterministicConstructionCheckCount: {metricName: "history_archiver_running_deterministic_construction_check", metricType: Counter},
 		HistoryArchiverDeterministicConstructionCheckFailedCount:  {metricName: "history_archiver_deterministic_construction_check_failed", metricType: Counter},
 		HistoryArchiverRunningBlobIntegrityCheckCount:             {metricName: "history_archiver_running_blob_integrity_check", metricType: Counter},
 		HistoryArchiverBlobIntegrityCheckFailedCount:              {metricName: "history_archiver_blob_integrity_check_failed", metricType: Counter},
-		HistoryArchiverDuplicateArchivalsCount:                    {metricName: "history_archiver_duplicate_archivals", metricType: Counter},
 		VisibilityArchiverArchiveNonRetryableErrorCount:           {metricName: "visibility_archiver_archive_non_retryable_error", metricType: Counter},
 		VisibilityArchiverArchiveTransientErrorCount:              {metricName: "visibility_archiver_archive_transient_error", metricType: Counter},
 		VisibilityArchiveSuccessCount:                             {metricName: "visibility_archiver_archive_success", metricType: Counter},

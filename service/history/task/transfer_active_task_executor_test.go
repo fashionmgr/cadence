@@ -165,16 +165,16 @@ func (s *transferActiveTaskExecutorSuite) SetupTest() {
 	s.mockDomainCache = s.mockShard.Resource.DomainCache
 	s.mockDomainCache.EXPECT().GetDomainByID(constants.TestDomainID).Return(constants.TestGlobalDomainEntry, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomainName(constants.TestDomainID).Return(constants.TestDomainName, nil).AnyTimes()
-	s.mockDomainCache.EXPECT().GetDomain(constants.TestDomainName).Return(constants.TestGlobalDomainEntry, nil).AnyTimes()
+	s.mockDomainCache.EXPECT().GetDomainID(constants.TestDomainName).Return(constants.TestDomainID, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomainByID(constants.TestTargetDomainID).Return(constants.TestGlobalTargetDomainEntry, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomainName(constants.TestTargetDomainID).Return(constants.TestTargetDomainName, nil).AnyTimes()
-	s.mockDomainCache.EXPECT().GetDomain(constants.TestTargetDomainName).Return(constants.TestGlobalTargetDomainEntry, nil).AnyTimes()
+	s.mockDomainCache.EXPECT().GetDomainID(constants.TestTargetDomainName).Return(constants.TestTargetDomainID, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomainByID(constants.TestParentDomainID).Return(constants.TestGlobalParentDomainEntry, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomainName(constants.TestParentDomainID).Return(constants.TestParentDomainName, nil).AnyTimes()
-	s.mockDomainCache.EXPECT().GetDomain(constants.TestParentDomainName).Return(constants.TestGlobalParentDomainEntry, nil).AnyTimes()
+	s.mockDomainCache.EXPECT().GetDomainID(constants.TestParentDomainName).Return(constants.TestParentDomainID, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomainByID(constants.TestChildDomainID).Return(constants.TestGlobalChildDomainEntry, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomainName(constants.TestChildDomainID).Return(constants.TestChildDomainName, nil).AnyTimes()
-	s.mockDomainCache.EXPECT().GetDomain(constants.TestChildDomainName).Return(constants.TestGlobalChildDomainEntry, nil).AnyTimes()
+	s.mockDomainCache.EXPECT().GetDomainID(constants.TestChildDomainName).Return(constants.TestChildDomainID, nil).AnyTimes()
 	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
 	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestAllClusterInfo).AnyTimes()
 	s.mockClusterMetadata.EXPECT().IsGlobalDomainEnabled().Return(true).AnyTimes()
@@ -2155,6 +2155,7 @@ func (s *transferActiveTaskExecutorSuite) createRecordWorkflowExecutionStartedRe
 	}
 	executionInfo := mutableState.GetExecutionInfo()
 	executionTimestamp := time.Unix(0, startEvent.GetTimestamp()).Add(time.Duration(backoffSeconds) * time.Second)
+	isCron := len(executionInfo.CronSchedule) > 0
 
 	return &persistence.RecordWorkflowExecutionStartedRequest{
 		Domain:             domainName,
@@ -2166,6 +2167,7 @@ func (s *transferActiveTaskExecutorSuite) createRecordWorkflowExecutionStartedRe
 		WorkflowTimeout:    int64(executionInfo.WorkflowTimeout),
 		TaskID:             task.TaskID,
 		TaskList:           task.TaskList,
+		IsCron:             isCron,
 	}
 }
 
@@ -2267,11 +2269,8 @@ func (s *transferActiveTaskExecutorSuite) createChildWorkflowExecutionRequest(
 		InitiatedID: task.ScheduleID,
 	}
 
-	historyStartReq, err := common.CreateHistoryStartWorkflowRequest(
+	historyStartReq := common.CreateHistoryStartWorkflowRequest(
 		task.TargetDomainID, frontendStartReq, now)
-	if err != nil {
-		return nil, err
-	}
 
 	historyStartReq.ParentExecutionInfo = parentInfo
 	return historyStartReq, nil

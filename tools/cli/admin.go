@@ -22,13 +22,16 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/urfave/cli"
 
+	"github.com/uber/cadence/common/persistence/sql"
 	"github.com/uber/cadence/common/reconciliation/invariant"
 	"github.com/uber/cadence/service/worker/scanner/executions"
+	"github.com/uber/cadence/tools/common/flag"
 )
 
 func newAdminWorkflowCommands() []cli.Command {
@@ -135,6 +138,26 @@ func newAdminShardManagementCommands() []cli.Command {
 			),
 			Action: func(c *cli.Context) {
 				AdminDescribeShard(c)
+			},
+		},
+		{
+			Name:    "list",
+			Aliases: []string{"l"},
+			Usage:   "List shard distribution",
+			Flags: []cli.Flag{
+				cli.IntFlag{
+					Name:  FlagPageSize,
+					Value: 100,
+					Usage: "Max number of results to return",
+				},
+				cli.IntFlag{
+					Name:  FlagPageID,
+					Value: 0,
+					Usage: "Option to show results offset from pagesize * page_id",
+				},
+			},
+			Action: func(c *cli.Context) {
+				AdminDescribeShardDistribution(c)
 			},
 		},
 		{
@@ -688,6 +711,12 @@ func newAdminClusterCommands() []cli.Command {
 				newDomainCLI(c, false).FailoverDomains(c)
 			},
 		},
+		{
+			Name:        "rebalance",
+			Aliases:     []string{"rb"},
+			Usage:       "Rebalance the domains active cluster",
+			Subcommands: newAdminRebalanceCommands(),
+		},
 	}
 }
 
@@ -902,13 +931,13 @@ func newDBCommands() []cli.Command {
 	}
 }
 
-// TODO need to support other database: https://github.com/uber/cadence/issues/2777
 func getDBFlags() []cli.Flag {
+	supportedDBs := append(sql.GetRegisteredPluginNames(), "cassandra")
 	return []cli.Flag{
 		cli.StringFlag{
 			Name:  FlagDBType,
 			Value: "cassandra",
-			Usage: "persistence type. Current supported options are cassandra, mysql, postgres",
+			Usage: fmt.Sprintf("persistence type. Current supported options are %v", supportedDBs),
 		},
 		cli.StringFlag{
 			Name:  FlagDBAddress,
@@ -974,6 +1003,11 @@ func getDBFlags() []cli.Flag {
 			Name:  FlagTLSEnableHostVerification,
 			Usage: "cassandra tls verify hostname and server cert (tls must be enabled)",
 		},
+		cli.GenericFlag{
+			Name:  FlagConnectionAttributes,
+			Usage: "a key-value set of sql database connection attributes (must be in key1=value1,key2=value2,...,keyN=valueN format, e.g. cluster=dca or cluster=dca,instance=cadence)",
+			Value: &flag.StringMap{},
+		},
 	}
 }
 
@@ -1029,6 +1063,17 @@ func newAdminFailoverCommands() []cli.Command {
 					Usage: "Optional domains to failover, eg d1,d2..,dn. " +
 						"Only provided domains in source cluster will be failover.",
 				},
+				cli.IntFlag{
+					Name: FlagFailoverDrillWaitTimeWithAlias,
+					Usage: "Optional failover drill wait time. " +
+						"After the wait time, the domains will be reset to original regions." +
+						"This field is required if the cron schedule is specified.",
+				},
+				cli.StringFlag{
+					Name: FlagCronSchedule,
+					Usage: "Optional cron schedule on failover drill. Please specify failover drill wait time " +
+						"if this field is specific",
+				},
 			},
 			Action: func(c *cli.Context) {
 				AdminFailoverStart(c)
@@ -1043,7 +1088,13 @@ func newAdminFailoverCommands() []cli.Command {
 					Name:  FlagRunIDWithAlias,
 					Usage: "Optional Failover workflow runID, default is latest runID",
 				},
+				cli.BoolFlag{
+					Name: FlagFailoverDrillWithAlias,
+					Usage: "Optional to pause failover workflow or failover drill workflow." +
+						" The default is normal failover workflow",
+				},
 			},
+
 			Action: func(c *cli.Context) {
 				AdminFailoverPause(c)
 			},
@@ -1057,6 +1108,11 @@ func newAdminFailoverCommands() []cli.Command {
 					Name:  FlagRunIDWithAlias,
 					Usage: "Optional Failover workflow runID, default is latest runID",
 				},
+				cli.BoolFlag{
+					Name: FlagFailoverDrillWithAlias,
+					Usage: "Optional to resume failover workflow or failover drill workflow." +
+						" The default is normal failover workflow",
+				},
 			},
 			Action: func(c *cli.Context) {
 				AdminFailoverResume(c)
@@ -1067,6 +1123,11 @@ func newAdminFailoverCommands() []cli.Command {
 			Aliases: []string{"q"},
 			Usage:   "query failover workflow state",
 			Flags: []cli.Flag{
+				cli.BoolFlag{
+					Name: FlagFailoverDrillWithAlias,
+					Usage: "Optional to query failover workflow or failover drill workflow." +
+						" The default is normal failover workflow",
+				},
 				cli.StringFlag{
 					Name:  FlagRunIDWithAlias,
 					Usage: "Optional Failover workflow runID, default is latest runID",
@@ -1088,6 +1149,11 @@ func newAdminFailoverCommands() []cli.Command {
 				cli.StringFlag{
 					Name:  FlagReasonWithAlias,
 					Usage: "Optional reason why abort",
+				},
+				cli.BoolFlag{
+					Name: FlagFailoverDrillWithAlias,
+					Usage: "Optional to abort failover workflow or failover drill workflow." +
+						" The default is normal failover workflow",
 				},
 			},
 			Action: func(c *cli.Context) {
@@ -1141,11 +1207,48 @@ func newAdminFailoverCommands() []cli.Command {
 					Name:  FlagWorkflowIDWithAlias,
 					Usage: "Ignore this. It is a dummy flag which will be forced overwrite",
 				},
+				cli.BoolFlag{
+					Name: FlagFailoverDrillWithAlias,
+					Usage: "Optional to query failover workflow or failover drill workflow." +
+						" The default is normal failover workflow",
+				},
 			},
 			Action: func(c *cli.Context) {
 				AdminFailoverList(c)
 			},
 		},
 	}
+}
 
+func newAdminRebalanceCommands() []cli.Command {
+	return []cli.Command{
+		{
+			Name:    "start",
+			Aliases: []string{"s"},
+			Usage:   "start rebalance workflow",
+			Flags:   []cli.Flag{},
+			Action: func(c *cli.Context) {
+				AdminRebalanceStart(c)
+			},
+		},
+		{
+			Name:    "list",
+			Aliases: []string{"l"},
+			Usage:   "list rebalance workflow runs closed/open.",
+			Flags: []cli.Flag{
+				cli.BoolFlag{
+					Name:  FlagOpenWithAlias,
+					Usage: "List for open workflow executions, default is to list for closed ones",
+				},
+				cli.IntFlag{
+					Name:  FlagPageSizeWithAlias,
+					Value: 10,
+					Usage: "Result page size",
+				},
+			},
+			Action: func(c *cli.Context) {
+				AdminRebalanceList(c)
+			},
+		},
+	}
 }

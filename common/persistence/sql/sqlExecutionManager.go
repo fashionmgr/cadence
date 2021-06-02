@@ -237,9 +237,7 @@ func (m *sqlExecutionManager) GetWorkflowExecution(
 				),
 			}
 		}
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("GetWorkflowExecution: failed. Error: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "GetWorkflowExecution", "", err)
 	}
 
 	if len(executions) == 0 {
@@ -276,9 +274,7 @@ func (m *sqlExecutionManager) GetWorkflowExecution(
 			runID,
 			m.parser)
 		if err != nil {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetWorkflowExecution: failed to get activity info. Error: %v", err),
-			}
+			return nil, err
 		}
 	}
 
@@ -293,9 +289,7 @@ func (m *sqlExecutionManager) GetWorkflowExecution(
 			runID,
 			m.parser)
 		if err != nil {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetWorkflowExecution: failed to get timer info. Error: %v", err),
-			}
+			return nil, err
 		}
 	}
 
@@ -310,9 +304,7 @@ func (m *sqlExecutionManager) GetWorkflowExecution(
 			runID,
 			m.parser)
 		if err != nil {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetWorkflowExecution: failed to get child execution info. Error: %v", err),
-			}
+			return nil, err
 		}
 	}
 
@@ -327,9 +319,7 @@ func (m *sqlExecutionManager) GetWorkflowExecution(
 			runID,
 			m.parser)
 		if err != nil {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetWorkflowExecution: failed to get request cancel info. Error: %v", err),
-			}
+			return nil, err
 		}
 	}
 
@@ -344,9 +334,7 @@ func (m *sqlExecutionManager) GetWorkflowExecution(
 			runID,
 			m.parser)
 		if err != nil {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetWorkflowExecution: failed to get signal info. Error: %v", err),
-			}
+			return nil, err
 		}
 	}
 
@@ -360,9 +348,7 @@ func (m *sqlExecutionManager) GetWorkflowExecution(
 			wfID,
 			runID)
 		if err != nil {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetWorkflowExecution: failed to get buffered events. Error: %v", err),
-			}
+			return nil, err
 		}
 	}
 
@@ -376,9 +362,7 @@ func (m *sqlExecutionManager) GetWorkflowExecution(
 			wfID,
 			runID)
 		if err != nil {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetWorkflowExecution: failed to get signals requested. Error: %v", err),
-			}
+			return nil, err
 		}
 	}
 
@@ -457,9 +441,7 @@ func (m *sqlExecutionManager) updateWorkflowExecutionTx(
 				newWorkflow.ExecutionInfo.CloseStatus,
 				startVersion,
 				lastWriteVersion); err != nil {
-				return &types.InternalServiceError{
-					Message: fmt.Sprintf("UpdateWorkflowExecution: failed to continue as new current execution. Error: %v", err),
-				}
+				return err
 			}
 		} else {
 			startVersion := updateWorkflow.StartVersion
@@ -478,9 +460,7 @@ func (m *sqlExecutionManager) updateWorkflowExecutionTx(
 				executionInfo.CloseStatus,
 				startVersion,
 				lastWriteVersion); err != nil {
-				return &types.InternalServiceError{
-					Message: fmt.Sprintf("UpdateWorkflowExecution: failed to update current execution. Error: %v", err),
-				}
+				return err
 			}
 		}
 
@@ -499,97 +479,6 @@ func (m *sqlExecutionManager) updateWorkflowExecutionTx(
 		}
 	}
 	return nil
-}
-
-func (m *sqlExecutionManager) ResetWorkflowExecution(
-	ctx context.Context,
-	request *p.InternalResetWorkflowExecutionRequest,
-) error {
-
-	return m.txExecuteShardLocked(ctx, "ResetWorkflowExecution", request.RangeID, func(tx sqlplugin.Tx) error {
-		return m.resetWorkflowExecutionTx(ctx, tx, request)
-	})
-}
-
-func (m *sqlExecutionManager) resetWorkflowExecutionTx(
-	ctx context.Context,
-	tx sqlplugin.Tx,
-	request *p.InternalResetWorkflowExecutionRequest,
-) error {
-
-	shardID := m.shardID
-
-	domainID := serialization.MustParseUUID(request.NewWorkflowSnapshot.ExecutionInfo.DomainID)
-	workflowID := request.NewWorkflowSnapshot.ExecutionInfo.WorkflowID
-
-	baseRunID := serialization.MustParseUUID(request.BaseRunID)
-	baseRunNextEventID := request.BaseRunNextEventID
-
-	currentRunID := serialization.MustParseUUID(request.CurrentRunID)
-	currentRunNextEventID := request.CurrentRunNextEventID
-
-	newWorkflowRunID := serialization.MustParseUUID(request.NewWorkflowSnapshot.ExecutionInfo.RunID)
-	newExecutionInfo := request.NewWorkflowSnapshot.ExecutionInfo
-	startVersion := request.NewWorkflowSnapshot.StartVersion
-	lastWriteVersion := request.NewWorkflowSnapshot.LastWriteVersion
-
-	// 1. update current execution
-	if err := updateCurrentExecution(
-		ctx,
-		tx,
-		shardID,
-		domainID,
-		workflowID,
-		newWorkflowRunID,
-		newExecutionInfo.CreateRequestID,
-		newExecutionInfo.State,
-		newExecutionInfo.CloseStatus,
-		startVersion,
-		lastWriteVersion,
-	); err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("ResetWorkflowExecution operation failed. Failed at updateCurrentExecution. Error: %v", err),
-		}
-	}
-
-	// 2. lock base run: we want to grab a read-lock for base run to prevent race condition
-	// It is only needed when base run is not current run. Because we will obtain a lock on current run anyway.
-	if !bytes.Equal(baseRunID, currentRunID) {
-		if err := lockAndCheckNextEventID(ctx, tx, shardID, domainID, workflowID, baseRunID, baseRunNextEventID); err != nil {
-			switch err.(type) {
-			case *p.ConditionFailedError:
-				return err
-			default:
-				return &types.InternalServiceError{
-					Message: fmt.Sprintf("ResetWorkflowExecution operation failed. Failed to lock executions row. Error: %v", err),
-				}
-			}
-		}
-	}
-
-	// 3. update or lock current run
-	if request.CurrentWorkflowMutation != nil {
-		if err := applyWorkflowMutationTx(ctx, tx, m.shardID, request.CurrentWorkflowMutation, m.parser); err != nil {
-			return err
-		}
-	} else {
-		// even the current run is not running, we need to lock the current run:
-		// 1). in case it is changed by conflict resolution
-		// 2). in case delete history timer kicks in if the base is current
-		if err := lockAndCheckNextEventID(ctx, tx, shardID, domainID, workflowID, currentRunID, currentRunNextEventID); err != nil {
-			switch err.(type) {
-			case *p.ConditionFailedError:
-				return err
-			default:
-				return &types.InternalServiceError{
-					Message: fmt.Sprintf("ResetWorkflowExecution operation failed. Failed to lock executions row. Error: %v", err),
-				}
-			}
-		}
-	}
-
-	// 4. create the new reset workflow
-	return m.applyWorkflowSnapshotTxAsNew(ctx, tx, m.shardID, &request.NewWorkflowSnapshot, m.parser)
 }
 
 func (m *sqlExecutionManager) ConflictResolveWorkflowExecution(
@@ -668,10 +557,7 @@ func (m *sqlExecutionManager) conflictResolveWorkflowExecutionTx(
 				closeStatus,
 				startVersion,
 				lastWriteVersion); err != nil {
-				return &types.InternalServiceError{Message: fmt.Sprintf(
-					"ConflictResolveWorkflowExecution. Failed to comare and swap the current record. Error: %v",
-					err,
-				)}
+				return err
 			}
 		} else {
 			// reset workflow is current
@@ -690,10 +576,7 @@ func (m *sqlExecutionManager) conflictResolveWorkflowExecutionTx(
 				closeStatus,
 				startVersion,
 				lastWriteVersion); err != nil {
-				return &types.InternalServiceError{Message: fmt.Sprintf(
-					"ConflictResolveWorkflowExecution. Failed to comare and swap the current record. Error: %v",
-					err,
-				)}
+				return err
 			}
 		}
 
@@ -732,7 +615,10 @@ func (m *sqlExecutionManager) DeleteWorkflowExecution(
 		WorkflowID: request.WorkflowID,
 		RunID:      runID,
 	})
-	return err
+	if err != nil {
+		return convertCommonErrors(m.db, "DeleteWorkflowExecution", "", err)
+	}
+	return nil
 }
 
 // its possible for a new run of the same workflow to have started after the run we are deleting
@@ -752,7 +638,10 @@ func (m *sqlExecutionManager) DeleteCurrentWorkflowExecution(
 		WorkflowID: request.WorkflowID,
 		RunID:      runID,
 	})
-	return err
+	if err != nil {
+		return convertCommonErrors(m.db, "DeleteCurrentWorkflowExecution", "", err)
+	}
+	return nil
 }
 
 func (m *sqlExecutionManager) GetCurrentExecution(
@@ -766,12 +655,7 @@ func (m *sqlExecutionManager) GetCurrentExecution(
 		WorkflowID: request.WorkflowID,
 	})
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, &types.EntityNotExistsError{Message: err.Error()}
-		}
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("GetCurrentExecution operation failed. Error: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "GetCurrentExecution", "", err)
 	}
 	return &p.GetCurrentExecutionResponse{
 		StartRequestID:   row.CreateRequestID,
@@ -822,9 +706,7 @@ func (m *sqlExecutionManager) ListConcreteExecutions(
 		if err == sql.ErrNoRows {
 			return &p.InternalListConcreteExecutionsResponse{}, nil
 		}
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("ListConcreteExecutions failed. Error: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "ListConcreteExecutions", "", err)
 	}
 
 	if len(executions) == 0 {
@@ -863,9 +745,7 @@ func (m *sqlExecutionManager) GetTransferTasks(
 		ShardID: m.shardID, MinTaskID: &request.ReadLevel, MaxTaskID: &request.MaxReadLevel})
 	if err != nil {
 		if err != sql.ErrNoRows {
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetTransferTasks operation failed. Select failed. Error: %v", err),
-			}
+			return nil, convertCommonErrors(m.db, "GetTransferTasks", "", err)
 		}
 	}
 	resp := &p.GetTransferTasksResponse{Tasks: make([]*p.TransferTaskInfo, len(rows))}
@@ -902,9 +782,7 @@ func (m *sqlExecutionManager) CompleteTransferTask(
 		ShardID: m.shardID,
 		TaskID:  &request.TaskID,
 	}); err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("CompleteTransferTask operation failed. Error: %v", err),
-		}
+		return convertCommonErrors(m.db, "CompleteTransferTask", "", err)
 	}
 	return nil
 }
@@ -918,11 +796,33 @@ func (m *sqlExecutionManager) RangeCompleteTransferTask(
 		ShardID:   m.shardID,
 		MinTaskID: &request.ExclusiveBeginTaskID,
 		MaxTaskID: &request.InclusiveEndTaskID}); err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("RangeCompleteTransferTask operation failed. Error: %v", err),
-		}
+		return convertCommonErrors(m.db, "RangeCompleteTransferTask", "", err)
 	}
 	return nil
+}
+
+func (m *sqlExecutionManager) GetCrossClusterTasks(
+	ctx context.Context,
+	request *p.GetCrossClusterTasksRequest,
+) (*p.GetCrossClusterTasksResponse, error) {
+	// TODO: Implement GetCrossClusterTasks
+	panic("not implemented")
+}
+
+func (m *sqlExecutionManager) CompleteCrossClusterTask(
+	ctx context.Context,
+	request *p.CompleteCrossClusterTaskRequest,
+) error {
+	// TODO: Implement CompleteCrossClusterTask
+	panic("not implemented")
+}
+
+func (m *sqlExecutionManager) RangeCompleteCrossClusterTask(
+	ctx context.Context,
+	request *p.RangeCompleteCrossClusterTaskRequest,
+) error {
+	// TODO: Implement RangeCompleteCrossClusterTask
+	panic("not implemented")
 }
 
 func (m *sqlExecutionManager) GetReplicationTasks(
@@ -950,9 +850,7 @@ func (m *sqlExecutionManager) GetReplicationTasks(
 	case sql.ErrNoRows:
 		return &p.InternalGetReplicationTasksResponse{}, nil
 	default:
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("GetReplicationTasks operation failed. Select failed: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "GetReplicationTasks", "", err)
 	}
 }
 
@@ -1019,9 +917,7 @@ func (m *sqlExecutionManager) CompleteReplicationTask(
 		ShardID: m.shardID,
 		TaskID:  request.TaskID,
 	}); err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("CompleteReplicationTask operation failed. Error: %v", err),
-		}
+		return convertCommonErrors(m.db, "CompleteReplicationTask", "", err)
 	}
 	return nil
 }
@@ -1035,9 +931,7 @@ func (m *sqlExecutionManager) RangeCompleteReplicationTask(
 		ShardID: m.shardID,
 		TaskID:  request.InclusiveEndTaskID,
 	}); err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("RangeCompleteReplicationTask operation failed. Error: %v", err),
-		}
+		return convertCommonErrors(m.db, "RangeCompleteReplicationTask", "", err)
 	}
 	return nil
 }
@@ -1069,9 +963,7 @@ func (m *sqlExecutionManager) GetReplicationTasksFromDLQ(
 	case sql.ErrNoRows:
 		return &p.InternalGetReplicationTasksResponse{}, nil
 	default:
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("GetReplicationTasks operation failed. Select failed: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "GetReplicationTasksFromDLQ", "", err)
 	}
 }
 
@@ -1095,9 +987,7 @@ func (m *sqlExecutionManager) GetReplicationDLQSize(
 			Size: 0,
 		}, nil
 	default:
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("GetReplicationDLQSize operation failed. Select failed: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "GetReplicationDLQSize", "", err)
 	}
 }
 
@@ -1115,7 +1005,7 @@ func (m *sqlExecutionManager) DeleteReplicationTaskFromDLQ(
 		ReplicationTasksFilter: filter,
 		SourceClusterName:      request.SourceClusterName,
 	}); err != nil {
-		return err
+		return convertCommonErrors(m.db, "DeleteReplicationTaskFromDLQ", "", err)
 	}
 	return nil
 }
@@ -1135,7 +1025,7 @@ func (m *sqlExecutionManager) RangeDeleteReplicationTaskFromDLQ(
 		ReplicationTasksFilter: filter,
 		SourceClusterName:      request.SourceClusterName,
 	}); err != nil {
-		return err
+		return convertCommonErrors(m.db, "RangeDeleteReplicationTaskFromDLQ", "", err)
 	}
 	return nil
 }
@@ -1162,10 +1052,7 @@ func (m *sqlExecutionManager) CreateFailoverMarkerTasks(
 				if rollBackErr != nil {
 					m.logger.Error("transaction rollback error", tag.Error(rollBackErr))
 				}
-
-				return &types.InternalServiceError{
-					Message: fmt.Sprintf("%v: %v", "CreateFailoverMarkerTasks", err),
-				}
+				return err
 			}
 		}
 		return nil
@@ -1208,9 +1095,7 @@ func (m *sqlExecutionManager) GetTimerIndexTasks(
 	})
 
 	if err != nil && err != sql.ErrNoRows {
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("GetTimerTasks operation failed. Select failed. Error: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "GetTimerIndexTasks", "", err)
 	}
 
 	resp := &p.GetTimerIndexTasksResponse{Timers: make([]*p.TimerTaskInfo, len(rows))}
@@ -1261,9 +1146,7 @@ func (m *sqlExecutionManager) CompleteTimerTask(
 		VisibilityTimestamp: &request.VisibilityTimestamp,
 		TaskID:              request.TaskID,
 	}); err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("CompleteTimerTask operation failed. Error: %v", err),
-		}
+		return convertCommonErrors(m.db, "CompleteTimerTask", "", err)
 	}
 	return nil
 }
@@ -1280,9 +1163,7 @@ func (m *sqlExecutionManager) RangeCompleteTimerTask(
 		MinVisibilityTimestamp: &start,
 		MaxVisibilityTimestamp: &end,
 	}); err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("CompleteTimerTask operation failed. Error: %v", err),
-		}
+		return convertCommonErrors(m.db, "RangeCompleteTimerTask", "", err)
 	}
 	return nil
 }
@@ -1293,16 +1174,19 @@ func (m *sqlExecutionManager) PutReplicationTaskToDLQ(
 ) error {
 	replicationTask := request.TaskInfo
 	blob, err := m.parser.ReplicationTaskInfoToBlob(&serialization.ReplicationTaskInfo{
-		DomainID:          serialization.MustParseUUID(replicationTask.DomainID),
-		WorkflowID:        &replicationTask.WorkflowID,
-		RunID:             serialization.MustParseUUID(replicationTask.RunID),
-		TaskType:          common.Int16Ptr(int16(replicationTask.TaskType)),
-		FirstEventID:      &replicationTask.FirstEventID,
-		NextEventID:       &replicationTask.NextEventID,
-		Version:           &replicationTask.Version,
-		ScheduledID:       &replicationTask.ScheduledID,
-		BranchToken:       replicationTask.BranchToken,
-		NewRunBranchToken: replicationTask.NewRunBranchToken,
+		DomainID:                serialization.MustParseUUID(replicationTask.DomainID),
+		WorkflowID:              replicationTask.WorkflowID,
+		RunID:                   serialization.MustParseUUID(replicationTask.RunID),
+		TaskType:                int16(replicationTask.TaskType),
+		FirstEventID:            replicationTask.FirstEventID,
+		NextEventID:             replicationTask.NextEventID,
+		Version:                 replicationTask.Version,
+		ScheduledID:             replicationTask.ScheduledID,
+		EventStoreVersion:       p.EventStoreVersion,
+		NewRunEventStoreVersion: p.EventStoreVersion,
+		BranchToken:             replicationTask.BranchToken,
+		NewRunBranchToken:       replicationTask.NewRunBranchToken,
+		CreationTimestamp:       replicationTask.CreationTime,
 	})
 	if err != nil {
 		return err
@@ -1321,9 +1205,7 @@ func (m *sqlExecutionManager) PutReplicationTaskToDLQ(
 	// Tasks are immutable. So it's fine if we already persisted it before.
 	// This can happen when tasks are retried (ack and cleanup can have lag on source side).
 	if err != nil && !m.db.IsDupEntryError(err) {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("Failed to create replication tasks. Error: %v", err),
-		}
+		return convertCommonErrors(m.db, "PutReplicationTaskToDLQ", "", err)
 	}
 
 	return nil
@@ -1408,9 +1290,7 @@ func (m *sqlExecutionManager) populateWorkflowMutableState(
 		state.ExecutionInfo.ParentWorkflowID = info.GetParentWorkflowID()
 		state.ExecutionInfo.ParentRunID = info.ParentRunID.String()
 		state.ExecutionInfo.InitiatedID = info.GetInitiatedID()
-		if state.ExecutionInfo.CompletionEvent != nil {
-			state.ExecutionInfo.CompletionEvent = nil
-		}
+		state.ExecutionInfo.CompletionEvent = nil
 	}
 
 	if info.GetCancelRequested() {

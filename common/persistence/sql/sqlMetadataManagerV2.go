@@ -58,9 +58,7 @@ func newMetadataPersistenceV2(
 func updateMetadata(ctx context.Context, tx sqlplugin.Tx, oldNotificationVersion int64) error {
 	result, err := tx.UpdateDomainMetadata(ctx, &sqlplugin.DomainMetadataRow{NotificationVersion: oldNotificationVersion})
 	if err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("Failed to update domain metadata. Error: %v", err),
-		}
+		return convertCommonErrors(tx, "updateDomainMetadata", "", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
@@ -70,7 +68,7 @@ func updateMetadata(ctx context.Context, tx sqlplugin.Tx, oldNotificationVersion
 		}
 	} else if rowsAffected != 1 {
 		return &types.InternalServiceError{
-			Message: fmt.Sprintf("Failed to update domain metadata. <>1 rows affected. Error: %v", err),
+			Message: fmt.Sprintf("Failed to update domain metadata. <>1 rows affected."),
 		}
 	}
 
@@ -80,9 +78,7 @@ func updateMetadata(ctx context.Context, tx sqlplugin.Tx, oldNotificationVersion
 func lockMetadata(ctx context.Context, tx sqlplugin.Tx) error {
 	err := tx.LockDomainMetadata(ctx)
 	if err != nil {
-		return &types.InternalServiceError{
-			Message: fmt.Sprintf("Failed to lock domain metadata. Error: %v", err),
-		}
+		return convertCommonErrors(tx, "lockDomainMetadata", "", err)
 	}
 	return nil
 }
@@ -102,33 +98,34 @@ func (m *sqlMetadataManagerV2) CreateDomain(
 	}
 
 	var badBinaries []byte
-	var badBinariesEncoding *string
+	badBinariesEncoding := string(common.EncodingTypeEmpty)
 	if request.Config.BadBinaries != nil {
 		badBinaries = request.Config.BadBinaries.Data
-		badBinariesEncoding = common.StringPtr(string(request.Config.BadBinaries.GetEncoding()))
+		badBinariesEncoding = string(request.Config.BadBinaries.GetEncoding())
 	}
 
 	domainInfo := &serialization.DomainInfo{
-		Status:                      common.Int32Ptr(int32(request.Info.Status)),
-		Description:                 &request.Info.Description,
-		Owner:                       &request.Info.OwnerEmail,
+		Name:                        request.Info.Name,
+		Status:                      int32(request.Info.Status),
+		Description:                 request.Info.Description,
+		Owner:                       request.Info.OwnerEmail,
 		Data:                        request.Info.Data,
-		Retention:                   &request.Config.Retention,
-		EmitMetric:                  &request.Config.EmitMetric,
-		ArchivalBucket:              &request.Config.ArchivalBucket,
-		ArchivalStatus:              common.Int16Ptr(int16(request.Config.ArchivalStatus)),
-		HistoryArchivalStatus:       common.Int16Ptr(int16(request.Config.HistoryArchivalStatus)),
-		HistoryArchivalURI:          &request.Config.HistoryArchivalURI,
-		VisibilityArchivalStatus:    common.Int16Ptr(int16(request.Config.VisibilityArchivalStatus)),
-		VisibilityArchivalURI:       &request.Config.VisibilityArchivalURI,
-		ActiveClusterName:           &request.ReplicationConfig.ActiveClusterName,
+		Retention:                   request.Config.Retention,
+		EmitMetric:                  request.Config.EmitMetric,
+		ArchivalBucket:              request.Config.ArchivalBucket,
+		ArchivalStatus:              int16(request.Config.ArchivalStatus),
+		HistoryArchivalStatus:       int16(request.Config.HistoryArchivalStatus),
+		HistoryArchivalURI:          request.Config.HistoryArchivalURI,
+		VisibilityArchivalStatus:    int16(request.Config.VisibilityArchivalStatus),
+		VisibilityArchivalURI:       request.Config.VisibilityArchivalURI,
+		ActiveClusterName:           request.ReplicationConfig.ActiveClusterName,
 		Clusters:                    clusters,
-		ConfigVersion:               common.Int64Ptr(request.ConfigVersion),
-		FailoverVersion:             common.Int64Ptr(request.FailoverVersion),
-		NotificationVersion:         common.Int64Ptr(metadata.NotificationVersion),
-		FailoverNotificationVersion: common.Int64Ptr(persistence.InitialFailoverNotificationVersion),
-		PreviousFailoverVersion:     common.Int64Ptr(common.InitialPreviousFailoverVersion),
-		LastUpdatedTimestamp:        &request.LastUpdatedTime,
+		ConfigVersion:               request.ConfigVersion,
+		FailoverVersion:             request.FailoverVersion,
+		NotificationVersion:         metadata.NotificationVersion,
+		FailoverNotificationVersion: persistence.InitialFailoverNotificationVersion,
+		PreviousFailoverVersion:     common.InitialPreviousFailoverVersion,
+		LastUpdatedTimestamp:        request.LastUpdatedTime,
 		BadBinaries:                 badBinaries,
 		BadBinariesEncoding:         badBinariesEncoding,
 	}
@@ -200,9 +197,7 @@ func (m *sqlMetadataManagerV2) GetDomain(
 				Message: fmt.Sprintf("Domain %s does not exist.", identity),
 			}
 		default:
-			return nil, &types.InternalServiceError{
-				Message: fmt.Sprintf("GetDomain operation failed. Error %v", err),
-			}
+			return nil, convertCommonErrors(m.db, "GetDomain", "", err)
 		}
 	}
 
@@ -227,7 +222,7 @@ func (m *sqlMetadataManagerV2) domainRowToGetDomainResponse(row *sqlplugin.Domai
 
 	var badBinaries *persistence.DataBlob
 	if domainInfo.BadBinaries != nil {
-		badBinaries = persistence.NewDataBlob(domainInfo.BadBinaries, common.EncodingType(*domainInfo.BadBinariesEncoding))
+		badBinaries = persistence.NewDataBlob(domainInfo.BadBinaries, common.EncodingType(domainInfo.GetBadBinariesEncoding()))
 	}
 
 	return &persistence.InternalGetDomainResponse{
@@ -243,10 +238,10 @@ func (m *sqlMetadataManagerV2) domainRowToGetDomainResponse(row *sqlplugin.Domai
 			Retention:                domainInfo.GetRetention(),
 			EmitMetric:               domainInfo.GetEmitMetric(),
 			ArchivalBucket:           domainInfo.GetArchivalBucket(),
-			ArchivalStatus:           types.ArchivalStatus(*domainInfo.ArchivalStatus),
-			HistoryArchivalStatus:    types.ArchivalStatus(*domainInfo.HistoryArchivalStatus),
+			ArchivalStatus:           types.ArchivalStatus(domainInfo.GetArchivalStatus()),
+			HistoryArchivalStatus:    types.ArchivalStatus(domainInfo.GetHistoryArchivalStatus()),
 			HistoryArchivalURI:       domainInfo.GetHistoryArchivalURI(),
-			VisibilityArchivalStatus: types.ArchivalStatus(*domainInfo.VisibilityArchivalStatus),
+			VisibilityArchivalStatus: types.ArchivalStatus(domainInfo.GetVisibilityArchivalStatus()),
 			VisibilityArchivalURI:    domainInfo.GetVisibilityArchivalURI(),
 			BadBinaries:              badBinaries,
 		},
@@ -276,34 +271,34 @@ func (m *sqlMetadataManagerV2) UpdateDomain(
 	}
 
 	var badBinaries []byte
-	var badBinariesEncoding *string
+	badBinariesEncoding := string(common.EncodingTypeEmpty)
 	if request.Config.BadBinaries != nil {
 		badBinaries = request.Config.BadBinaries.Data
-		badBinariesEncoding = common.StringPtr(string(request.Config.BadBinaries.GetEncoding()))
+		badBinariesEncoding = string(request.Config.BadBinaries.GetEncoding())
 	}
 
 	domainInfo := &serialization.DomainInfo{
-		Status:                      common.Int32Ptr(int32(request.Info.Status)),
-		Description:                 &request.Info.Description,
-		Owner:                       &request.Info.OwnerEmail,
+		Status:                      int32(request.Info.Status),
+		Description:                 request.Info.Description,
+		Owner:                       request.Info.OwnerEmail,
 		Data:                        request.Info.Data,
-		Retention:                   &request.Config.Retention,
-		EmitMetric:                  &request.Config.EmitMetric,
-		ArchivalBucket:              &request.Config.ArchivalBucket,
-		ArchivalStatus:              common.Int16Ptr(int16(request.Config.ArchivalStatus)),
-		HistoryArchivalStatus:       common.Int16Ptr(int16(request.Config.HistoryArchivalStatus)),
-		HistoryArchivalURI:          &request.Config.HistoryArchivalURI,
-		VisibilityArchivalStatus:    common.Int16Ptr(int16(request.Config.VisibilityArchivalStatus)),
-		VisibilityArchivalURI:       &request.Config.VisibilityArchivalURI,
-		ActiveClusterName:           &request.ReplicationConfig.ActiveClusterName,
+		Retention:                   request.Config.Retention,
+		EmitMetric:                  request.Config.EmitMetric,
+		ArchivalBucket:              request.Config.ArchivalBucket,
+		ArchivalStatus:              int16(request.Config.ArchivalStatus),
+		HistoryArchivalStatus:       int16(request.Config.HistoryArchivalStatus),
+		HistoryArchivalURI:          request.Config.HistoryArchivalURI,
+		VisibilityArchivalStatus:    int16(request.Config.VisibilityArchivalStatus),
+		VisibilityArchivalURI:       request.Config.VisibilityArchivalURI,
+		ActiveClusterName:           request.ReplicationConfig.ActiveClusterName,
 		Clusters:                    clusters,
-		ConfigVersion:               common.Int64Ptr(request.ConfigVersion),
-		FailoverVersion:             common.Int64Ptr(request.FailoverVersion),
-		NotificationVersion:         common.Int64Ptr(request.NotificationVersion),
-		FailoverNotificationVersion: common.Int64Ptr(request.FailoverNotificationVersion),
-		PreviousFailoverVersion:     common.Int64Ptr(request.PreviousFailoverVersion),
+		ConfigVersion:               request.ConfigVersion,
+		FailoverVersion:             request.FailoverVersion,
+		NotificationVersion:         request.NotificationVersion,
+		FailoverNotificationVersion: request.FailoverNotificationVersion,
+		PreviousFailoverVersion:     request.PreviousFailoverVersion,
 		FailoverEndTimestamp:        request.FailoverEndTime,
-		LastUpdatedTimestamp:        &request.LastUpdatedTime,
+		LastUpdatedTimestamp:        request.LastUpdatedTime,
 		BadBinaries:                 badBinaries,
 		BadBinariesEncoding:         badBinariesEncoding,
 	}
@@ -362,9 +357,7 @@ func (m *sqlMetadataManagerV2) GetMetadata(
 ) (*persistence.GetMetadataResponse, error) {
 	row, err := m.db.SelectFromDomainMetadata(ctx)
 	if err != nil {
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("GetMetadata operation failed. Error: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "GetMetadata", "", err)
 	}
 	return &persistence.GetMetadataResponse{NotificationVersion: row.NotificationVersion}, nil
 }
@@ -386,9 +379,7 @@ func (m *sqlMetadataManagerV2) ListDomains(
 		if err == sql.ErrNoRows {
 			return &persistence.InternalListDomainsResponse{}, nil
 		}
-		return nil, &types.InternalServiceError{
-			Message: fmt.Sprintf("ListDomains operation failed. Failed to get domain rows. Error: %v", err),
-		}
+		return nil, convertCommonErrors(m.db, "ListDomains", "Failed to get domain rows.", err)
 	}
 
 	var domains []*persistence.InternalGetDomainResponse

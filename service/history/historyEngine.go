@@ -542,7 +542,7 @@ func (e *historyEngineImpl) startWorkflowHelper(
 	}
 
 	request := startRequest.StartRequest
-	err := validateStartWorkflowExecutionRequest(request, e.config.MaxIDLengthLimit())
+	err := e.validateStartWorkflowExecutionRequest(request, metricsScope)
 	if err != nil {
 		return nil, err
 	}
@@ -1470,6 +1470,7 @@ func (e *historyEngineImpl) DescribeWorkflowExecution(
 			HistoryLength:    mutableState.GetNextEventID() - common.FirstEventID,
 			AutoResetPoints:  executionInfo.AutoResetPoints,
 			Memo:             &types.Memo{Fields: executionInfo.Memo},
+			IsCron:           len(executionInfo.CronSchedule) > 0,
 			SearchAttributes: &types.SearchAttributes{IndexedFields: executionInfo.SearchAttributes},
 		},
 	}
@@ -1491,9 +1492,11 @@ func (e *historyEngineImpl) DescribeWorkflowExecution(
 		}
 		result.WorkflowExecutionInfo.ParentDomainID = common.StringPtr(executionInfo.ParentDomainID)
 		result.WorkflowExecutionInfo.ParentInitiatedID = common.Int64Ptr(executionInfo.InitiatedID)
-		if entry, err := e.shard.GetDomainCache().GetActiveDomainByID(executionInfo.ParentDomainID); err == nil {
-			result.WorkflowExecutionInfo.ParentDomain = common.StringPtr(entry.GetInfo().Name)
+		parentDomain, err := e.shard.GetDomainCache().GetDomainName(executionInfo.ParentDomainID)
+		if err != nil {
+			return nil, err
 		}
+		result.WorkflowExecutionInfo.ParentDomain = common.StringPtr(parentDomain)
 	}
 	if executionInfo.State == persistence.WorkflowStateCompleted {
 		// for closed workflow
@@ -2141,18 +2144,27 @@ func (e *historyEngineImpl) SignalWorkflowExecution(
 		workflowExecution,
 		e.timeSource.Now(),
 		func(wfContext execution.Context, mutableState execution.MutableState) (*workflow.UpdateAction, error) {
+			// first deduplicate by request id for signal decision
+			// this is done before workflow running check so that already completed error
+			// won't be returned for duplicated signals even if the workflow is closed.
+			if requestID := request.GetRequestID(); requestID != "" {
+				if mutableState.IsSignalRequested(requestID) {
+					return &workflow.UpdateAction{
+						Noop:           true,
+						CreateDecision: false,
+					}, nil
+				}
+			}
+
+			if !mutableState.IsWorkflowExecutionRunning() {
+				return nil, workflow.ErrAlreadyCompleted
+			}
+
 			executionInfo := mutableState.GetExecutionInfo()
 			createDecisionTask := true
 			// Do not create decision task when the workflow is cron and the cron has not been started yet
 			if mutableState.GetExecutionInfo().CronSchedule != "" && !mutableState.HasProcessedOrPendingDecision() {
 				createDecisionTask = false
-			}
-			postActions := &workflow.UpdateAction{
-				CreateDecision: createDecisionTask,
-			}
-
-			if !mutableState.IsWorkflowExecutionRunning() {
-				return nil, workflow.ErrAlreadyCompleted
 			}
 
 			maxAllowedSignals := e.config.MaximumSignalsPerExecution(domainEntry.GetInfo().Name)
@@ -2173,11 +2185,7 @@ func (e *historyEngineImpl) SignalWorkflowExecution(
 				}
 			}
 
-			// deduplicate by request id for signal decision
 			if requestID := request.GetRequestID(); requestID != "" {
-				if mutableState.IsSignalRequested(requestID) {
-					return postActions, nil
-				}
 				mutableState.AddSignalRequested(requestID)
 			}
 
@@ -2188,7 +2196,10 @@ func (e *historyEngineImpl) SignalWorkflowExecution(
 				return nil, &types.InternalServiceError{Message: "Unable to signal workflow execution."}
 			}
 
-			return postActions, nil
+			return &workflow.UpdateAction{
+				Noop:           false,
+				CreateDecision: createDecisionTask,
+			}, nil
 		})
 }
 
@@ -2701,9 +2712,9 @@ func (e *historyEngineImpl) serializeQueueState(
 	return fmt.Sprintf("%v", state)
 }
 
-func validateStartWorkflowExecutionRequest(
+func (e *historyEngineImpl) validateStartWorkflowExecutionRequest(
 	request *types.StartWorkflowExecutionRequest,
-	maxIDLengthLimit int,
+	metricsScope int,
 ) error {
 
 	if len(request.GetRequestID()) == 0 {
@@ -2721,16 +2732,38 @@ func validateStartWorkflowExecutionRequest(
 	if request.WorkflowType == nil || request.WorkflowType.GetName() == "" {
 		return &types.BadRequestError{Message: "Missing WorkflowType."}
 	}
-	if len(request.GetDomain()) > maxIDLengthLimit {
+
+	if !common.ValidIDLength(
+		request.GetDomain(),
+		e.metricsClient.Scope(metricsScope),
+		e.config.MaxIDLengthWarnLimit(),
+		e.config.DomainNameMaxLength(request.GetDomain()),
+		metrics.CadenceErrDomainNameExceededWarnLimit) {
 		return &types.BadRequestError{Message: "Domain exceeds length limit."}
 	}
-	if len(request.GetWorkflowID()) > maxIDLengthLimit {
+
+	if !common.ValidIDLength(
+		request.GetWorkflowID(),
+		e.metricsClient.Scope(metricsScope),
+		e.config.MaxIDLengthWarnLimit(),
+		e.config.WorkflowIDMaxLength(request.GetDomain()),
+		metrics.CadenceErrWorkflowIDExceededWarnLimit) {
 		return &types.BadRequestError{Message: "WorkflowId exceeds length limit."}
 	}
-	if len(request.TaskList.GetName()) > maxIDLengthLimit {
+	if !common.ValidIDLength(
+		request.TaskList.GetName(),
+		e.metricsClient.Scope(metricsScope),
+		e.config.MaxIDLengthWarnLimit(),
+		e.config.TaskListNameMaxLength(request.GetDomain()),
+		metrics.CadenceErrTaskListNameExceededWarnLimit) {
 		return &types.BadRequestError{Message: "TaskList exceeds length limit."}
 	}
-	if len(request.WorkflowType.GetName()) > maxIDLengthLimit {
+	if !common.ValidIDLength(
+		request.WorkflowType.GetName(),
+		e.metricsClient.Scope(metricsScope),
+		e.config.MaxIDLengthWarnLimit(),
+		e.config.WorkflowTypeMaxLength(request.GetDomain()),
+		metrics.CadenceErrWorkflowTypeExceededWarnLimit) {
 		return &types.BadRequestError{Message: "WorkflowType exceeds length limit."}
 	}
 
@@ -2798,10 +2831,7 @@ func getStartRequest(
 		DelayStartSeconds:                   request.DelayStartSeconds,
 	}
 
-	startRequest, err := common.CreateHistoryStartWorkflowRequest(domainID, req, time.Now())
-	if err != nil {
-		return nil, err
-	}
+	startRequest := common.CreateHistoryStartWorkflowRequest(domainID, req, time.Now())
 
 	return startRequest, nil
 }

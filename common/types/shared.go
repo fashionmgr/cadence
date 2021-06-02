@@ -2350,6 +2350,12 @@ type DescribeHistoryHostRequest struct {
 	ExecutionForHost *WorkflowExecution `json:"executionForHost,omitempty"`
 }
 
+// DescribeShardDistributionRequest is an internal type (TBD...)
+type DescribeShardDistributionRequest struct {
+	PageSize int32 `json:"pageSize,omitempty"`
+	PageID   int32 `json:"pageID,omitempty"`
+}
+
 // GetHostAddress is an internal getter (TBD...)
 func (v *DescribeHistoryHostRequest) GetHostAddress() (o string) {
 	if v != nil && v.HostAddress != nil {
@@ -2370,6 +2376,28 @@ func (v *DescribeHistoryHostRequest) GetShardIDForHost() (o int32) {
 func (v *DescribeHistoryHostRequest) GetExecutionForHost() (o *WorkflowExecution) {
 	if v != nil && v.ExecutionForHost != nil {
 		return v.ExecutionForHost
+	}
+	return
+}
+
+// DescribeHistoryHostResponse is an internal type (TBD...)
+type DescribeShardDistributionResponse struct {
+	NumberOfShards int32            `json:"numberOfShards,omitempty"`
+	Shards         map[int32]string `json:"shardIDs,omitempty"`
+}
+
+// GetNumberOfShards is an internal getter (TBD...)
+func (v *DescribeShardDistributionResponse) GetNumberOfShards() (o int32) {
+	if v != nil {
+		return v.NumberOfShards
+	}
+	return
+}
+
+// GetNumberOfShards is an internal getter (TBD...)
+func (v *DescribeShardDistributionResponse) GetShards() (o map[int32]string) {
+	if v != nil {
+		return v.Shards
 	}
 	return
 }
@@ -5267,6 +5295,7 @@ type PollForDecisionTaskResponse struct {
 	ScheduledTimestamp        *int64                    `json:"scheduledTimestamp,omitempty"`
 	StartedTimestamp          *int64                    `json:"startedTimestamp,omitempty"`
 	Queries                   map[string]*WorkflowQuery `json:"queries,omitempty"`
+	NextEventID               int64                     `json:"nextEventId,omitempty"`
 }
 
 // GetTaskToken is an internal getter (TBD...)
@@ -5377,6 +5406,14 @@ func (v *PollForDecisionTaskResponse) GetStartedTimestamp() (o int64) {
 func (v *PollForDecisionTaskResponse) GetQueries() (o map[string]*WorkflowQuery) {
 	if v != nil && v.Queries != nil {
 		return v.Queries
+	}
+	return
+}
+
+// GetNextEventID is an internal getter (TBD...)
+func (v *PollForDecisionTaskResponse) GetNextEventID() (o int64) {
+	if v != nil {
+		return v.NextEventID
 	}
 	return
 }
@@ -9520,6 +9557,7 @@ type WorkflowExecutionInfo struct {
 	SearchAttributes  *SearchAttributes             `json:"searchAttributes,omitempty"`
 	AutoResetPoints   *ResetPoints                  `json:"autoResetPoints,omitempty"`
 	TaskList          string                        `json:"taskList,omitempty"`
+	IsCron            bool                          `json:"isCron,omitempty"`
 }
 
 // GetExecution is an internal getter (TBD...)
@@ -9622,6 +9660,14 @@ func (v *WorkflowExecutionInfo) GetAutoResetPoints() (o *ResetPoints) {
 func (v *WorkflowExecutionInfo) GetTaskList() (o string) {
 	if v != nil {
 		return v.TaskList
+	}
+	return
+}
+
+// GetIsCron is an internal getter (TBD...)
+func (v *WorkflowExecutionInfo) GetIsCron() (o bool) {
+	if v != nil {
+		return v.IsCron
 	}
 	return
 }
