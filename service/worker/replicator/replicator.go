@@ -43,8 +43,8 @@ type (
 		domainProcessors              []*domainReplicationProcessor
 		logger                        log.Logger
 		metricsClient                 metrics.Client
-		hostInfo                      *membership.HostInfo
-		serviceResolver               membership.ServiceResolver
+		hostInfo                      membership.HostInfo
+		membershipResolver            membership.Resolver
 		domainReplicationQueue        domain.ReplicationQueue
 		replicationMaxRetry           time.Duration
 	}
@@ -56,8 +56,8 @@ func NewReplicator(
 	clientBean client.Bean,
 	logger log.Logger,
 	metricsClient metrics.Client,
-	hostInfo *membership.HostInfo,
-	serviceResolver membership.ServiceResolver,
+	hostInfo membership.HostInfo,
+	membership membership.Resolver,
 	domainReplicationQueue domain.ReplicationQueue,
 	domainReplicationTaskExecutor domain.ReplicationTaskExecutor,
 	replicationMaxRetry time.Duration,
@@ -66,7 +66,7 @@ func NewReplicator(
 	logger = logger.WithTags(tag.ComponentReplicator)
 	return &Replicator{
 		hostInfo:                      hostInfo,
-		serviceResolver:               serviceResolver,
+		membershipResolver:            membership,
 		clusterMetadata:               clusterMetadata,
 		domainReplicationTaskExecutor: domainReplicationTaskExecutor,
 		clientBean:                    clientBean,
@@ -94,7 +94,7 @@ func (r *Replicator) Start() error {
 				r.metricsClient,
 				r.domainReplicationTaskExecutor,
 				r.hostInfo,
-				r.serviceResolver,
+				r.membershipResolver,
 				r.domainReplicationQueue,
 				r.replicationMaxRetry,
 			)

@@ -286,7 +286,13 @@ var (
 		Timestamp:     &Timestamp1,
 	}
 	HistoryTerminateWorkflowExecutionRequest = types.HistoryTerminateWorkflowExecutionRequest{
-		DomainUUID:       DomainID,
-		TerminateRequest: &TerminateWorkflowExecutionRequest,
+		DomainUUID:                DomainID,
+		TerminateRequest:          &TerminateWorkflowExecutionRequest,
+		ExternalWorkflowExecution: &WorkflowExecution,
+		ChildWorkflowOnly:         true,
 	}
+	HistoryGetCrossClusterTasksRequest               = GetCrossClusterTasksRequest
+	HistoryGetCrossClusterTasksResponse              = GetCrossClusterTasksResponse
+	HistoryRespondCrossClusterTasksCompletedRequest  = RespondCrossClusterTasksCompletedRequest
+	HistoryRespondCrossClusterTasksCompletedResponse = RespondCrossClusterTasksCompletedResponse
 )

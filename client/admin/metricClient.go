@@ -375,3 +375,106 @@ func (c *metricClient) ResendReplicationTasks(
 	}
 	return err
 }
+
+func (c *metricClient) GetCrossClusterTasks(
+	ctx context.Context,
+	request *types.GetCrossClusterTasksRequest,
+	opts ...yarpc.CallOption,
+) (*types.GetCrossClusterTasksResponse, error) {
+	c.metricsClient.IncCounter(metrics.AdminClientGetCrossClusterTasksScope, metrics.CadenceClientRequests)
+
+	sw := c.metricsClient.StartTimer(metrics.AdminClientGetCrossClusterTasksScope, metrics.CadenceClientLatency)
+	resp, err := c.client.GetCrossClusterTasks(ctx, request, opts...)
+	sw.Stop()
+
+	if err != nil {
+		c.metricsClient.IncCounter(metrics.AdminClientGetCrossClusterTasksScope, metrics.CadenceClientFailures)
+	}
+	return resp, err
+}
+
+func (c *metricClient) RespondCrossClusterTasksCompleted(
+	ctx context.Context,
+	request *types.RespondCrossClusterTasksCompletedRequest,
+	opts ...yarpc.CallOption,
+) (*types.RespondCrossClusterTasksCompletedResponse, error) {
+	c.metricsClient.IncCounter(metrics.AdminClientRespondCrossClusterTasksCompletedScope, metrics.CadenceClientRequests)
+
+	sw := c.metricsClient.StartTimer(metrics.AdminClientRespondCrossClusterTasksCompletedScope, metrics.CadenceClientLatency)
+	resp, err := c.client.RespondCrossClusterTasksCompleted(ctx, request, opts...)
+	sw.Stop()
+
+	if err != nil {
+		c.metricsClient.IncCounter(metrics.AdminClientRespondCrossClusterTasksCompletedScope, metrics.CadenceClientFailures)
+	}
+
+	return resp, err
+}
+
+func (c *metricClient) GetDynamicConfig(
+	ctx context.Context,
+	request *types.GetDynamicConfigRequest,
+	opts ...yarpc.CallOption,
+) (*types.GetDynamicConfigResponse, error) {
+	c.metricsClient.IncCounter(metrics.AdminClientGetDynamicConfigScope, metrics.CadenceClientRequests)
+
+	sw := c.metricsClient.StartTimer(metrics.AdminClientGetDynamicConfigScope, metrics.CadenceClientLatency)
+	resp, err := c.client.GetDynamicConfig(ctx, request, opts...)
+	sw.Stop()
+
+	if err != nil {
+		c.metricsClient.IncCounter(metrics.AdminClientGetDynamicConfigScope, metrics.CadenceClientFailures)
+	}
+	return resp, err
+}
+
+func (c *metricClient) UpdateDynamicConfig(
+	ctx context.Context,
+	request *types.UpdateDynamicConfigRequest,
+	opts ...yarpc.CallOption,
+) error {
+	c.metricsClient.IncCounter(metrics.AdminClientUpdateDynamicConfigScope, metrics.CadenceClientRequests)
+
+	sw := c.metricsClient.StartTimer(metrics.AdminClientUpdateDynamicConfigScope, metrics.CadenceClientLatency)
+	err := c.client.UpdateDynamicConfig(ctx, request, opts...)
+	sw.Stop()
+
+	if err != nil {
+		c.metricsClient.IncCounter(metrics.AdminClientUpdateDynamicConfigScope, metrics.CadenceClientFailures)
+	}
+	return err
+}
+
+func (c *metricClient) RestoreDynamicConfig(
+	ctx context.Context,
+	request *types.RestoreDynamicConfigRequest,
+	opts ...yarpc.CallOption,
+) error {
+	c.metricsClient.IncCounter(metrics.AdminClientRestoreDynamicConfigScope, metrics.CadenceClientRequests)
+
+	sw := c.metricsClient.StartTimer(metrics.AdminClientRestoreDynamicConfigScope, metrics.CadenceClientLatency)
+	err := c.client.RestoreDynamicConfig(ctx, request, opts...)
+	sw.Stop()
+
+	if err != nil {
+		c.metricsClient.IncCounter(metrics.AdminClientRestoreDynamicConfigScope, metrics.CadenceClientFailures)
+	}
+	return err
+}
+
+func (c *metricClient) ListDynamicConfig(
+	ctx context.Context,
+	request *types.ListDynamicConfigRequest,
+	opts ...yarpc.CallOption,
+) (*types.ListDynamicConfigResponse, error) {
+	c.metricsClient.IncCounter(metrics.AdminClientListDynamicConfigScope, metrics.CadenceClientRequests)
+
+	sw := c.metricsClient.StartTimer(metrics.AdminClientListDynamicConfigScope, metrics.CadenceClientLatency)
+	resp, err := c.client.ListDynamicConfig(ctx, request, opts...)
+	sw.Stop()
+
+	if err != nil {
+		c.metricsClient.IncCounter(metrics.AdminClientListDynamicConfigScope, metrics.CadenceClientFailures)
+	}
+	return resp, err
+}

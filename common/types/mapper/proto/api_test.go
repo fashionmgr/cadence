@@ -25,7 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	apiv1 "github.com/uber/cadence/.gen/proto/api/v1"
+	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/testdata"
@@ -686,7 +686,7 @@ func TestTimerStartedEventAttributes(t *testing.T) {
 	}
 }
 func TestUpdateDomainRequest(t *testing.T) {
-	for _, item := range []*types.UpdateDomainRequest{nil, {EmitMetric: common.BoolPtr(true)}, &testdata.UpdateDomainRequest} {
+	for _, item := range []*types.UpdateDomainRequest{nil, {}, &testdata.UpdateDomainRequest} {
 		assert.Equal(t, item, ToUpdateDomainRequest(FromUpdateDomainRequest(item)))
 	}
 }
@@ -766,6 +766,23 @@ func TestParentExecutionInfo(t *testing.T) {
 	for _, item := range []*types.ParentExecutionInfo{nil, {}, &testdata.ParentExecutionInfo} {
 		assert.Equal(t, item, ToParentExecutionInfo(FromParentExecutionInfo(item)))
 	}
+}
+func TestParentExecutionInfoFields(t *testing.T) {
+	assert.Nil(t, FromParentExecutionInfoFields(nil, nil, nil, nil))
+	info := FromParentExecutionInfoFields(nil, nil, testdata.ParentExecutionInfo.Execution, nil)
+	assert.Equal(t, "", *ToParentDomainID(info))
+	assert.Equal(t, "", *ToParentDomainName(info))
+	assert.Equal(t, testdata.ParentExecutionInfo.Execution, ToParentWorkflowExecution(info))
+	assert.Equal(t, int64(0), *ToParentInitiatedID(info))
+	info = FromParentExecutionInfoFields(
+		&testdata.ParentExecutionInfo.DomainUUID,
+		&testdata.ParentExecutionInfo.Domain,
+		testdata.ParentExecutionInfo.Execution,
+		&testdata.ParentExecutionInfo.InitiatedID)
+	assert.Equal(t, testdata.ParentExecutionInfo.DomainUUID, *ToParentDomainID(info))
+	assert.Equal(t, testdata.ParentExecutionInfo.Domain, *ToParentDomainName(info))
+	assert.Equal(t, testdata.ParentExecutionInfo.Execution, ToParentWorkflowExecution(info))
+	assert.Equal(t, testdata.ParentExecutionInfo.InitiatedID, *ToParentInitiatedID(info))
 }
 func TestWorkflowExecutionInfo(t *testing.T) {
 	for _, item := range []*types.WorkflowExecutionInfo{nil, {}, &testdata.WorkflowExecutionInfo} {
@@ -996,6 +1013,7 @@ func TestListClosedWorkflowExecutionsRequest(t *testing.T) {
 		assert.Equal(t, item, ToListClosedWorkflowExecutionsRequest(FromListClosedWorkflowExecutionsRequest(item)))
 	}
 }
+
 func TestListOpenWorkflowExecutionsRequest(t *testing.T) {
 	for _, item := range []*types.ListOpenWorkflowExecutionsRequest{
 		nil,
@@ -1004,5 +1022,27 @@ func TestListOpenWorkflowExecutionsRequest(t *testing.T) {
 		&testdata.ListOpenWorkflowExecutionsRequest_TypeFilter,
 	} {
 		assert.Equal(t, item, ToListOpenWorkflowExecutionsRequest(FromListOpenWorkflowExecutionsRequest(item)))
+	}
+}
+
+func TestGetTaskListsByDomainResponse(t *testing.T) {
+	for _, item := range []*types.GetTaskListsByDomainResponse{nil, {}, &testdata.GetTaskListsByDomainResponse} {
+		assert.Equal(t, item, ToMatchingGetTaskListsByDomainResponse(FromMatchingGetTaskListsByDomainResponse(item)))
+	}
+}
+
+func TestFailoverInfo(t *testing.T) {
+	for _, item := range []*types.FailoverInfo{
+		nil,
+		{},
+		&testdata.FailoverInfo,
+	} {
+		assert.Equal(t, item, ToFailoverInfo(FromFailoverInfo(item)))
+	}
+}
+
+func TestDescribeTaskListResponseMap(t *testing.T) {
+	for _, item := range []map[string]*types.DescribeTaskListResponse{nil, {}, testdata.DescribeTaskListResponseMap} {
+		assert.Equal(t, item, ToDescribeTaskListResponseMap(FromDescribeTaskListResponseMap(item)))
 	}
 }

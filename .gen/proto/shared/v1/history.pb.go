@@ -33,7 +33,7 @@ import (
 
 	proto "github.com/gogo/protobuf/proto"
 
-	v1 "github.com/uber/cadence/.gen/proto/api/v1"
+	v1 "github.com/uber/cadence-idl/go/proto/api/v1"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -696,10 +696,7 @@ func (m *TransientDecisionInfo) Unmarshal(dAtA []byte) error {
 			if err != nil {
 				return err
 			}
-			if skippy < 0 {
-				return ErrInvalidLengthHistory
-			}
-			if (iNdEx + skippy) < 0 {
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
 				return ErrInvalidLengthHistory
 			}
 			if (iNdEx + skippy) > l {
@@ -788,10 +785,7 @@ func (m *VersionHistoryItem) Unmarshal(dAtA []byte) error {
 			if err != nil {
 				return err
 			}
-			if skippy < 0 {
-				return ErrInvalidLengthHistory
-			}
-			if (iNdEx + skippy) < 0 {
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
 				return ErrInvalidLengthHistory
 			}
 			if (iNdEx + skippy) > l {
@@ -910,10 +904,7 @@ func (m *VersionHistory) Unmarshal(dAtA []byte) error {
 			if err != nil {
 				return err
 			}
-			if skippy < 0 {
-				return ErrInvalidLengthHistory
-			}
-			if (iNdEx + skippy) < 0 {
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
 				return ErrInvalidLengthHistory
 			}
 			if (iNdEx + skippy) > l {
@@ -1017,10 +1008,7 @@ func (m *VersionHistories) Unmarshal(dAtA []byte) error {
 			if err != nil {
 				return err
 			}
-			if skippy < 0 {
-				return ErrInvalidLengthHistory
-			}
-			if (iNdEx + skippy) < 0 {
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
 				return ErrInvalidLengthHistory
 			}
 			if (iNdEx + skippy) > l {

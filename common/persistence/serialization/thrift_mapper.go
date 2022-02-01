@@ -36,22 +36,24 @@ func shardInfoToThrift(info *ShardInfo) *sqlblobs.ShardInfo {
 		return nil
 	}
 	result := &sqlblobs.ShardInfo{
-		StolenSinceRenew:                      &info.StolenSinceRenew,
-		ReplicationAckLevel:                   &info.ReplicationAckLevel,
-		TransferAckLevel:                      &info.TransferAckLevel,
-		DomainNotificationVersion:             &info.DomainNotificationVersion,
-		ClusterTransferAckLevel:               info.ClusterTransferAckLevel,
-		Owner:                                 &info.Owner,
-		ClusterReplicationLevel:               info.ClusterReplicationLevel,
-		PendingFailoverMarkers:                info.PendingFailoverMarkers,
-		PendingFailoverMarkersEncoding:        &info.PendingFailoverMarkersEncoding,
-		ReplicationDlqAckLevel:                info.ReplicationDlqAckLevel,
-		TransferProcessingQueueStates:         info.TransferProcessingQueueStates,
-		TransferProcessingQueueStatesEncoding: &info.TransferProcessingQueueStatesEncoding,
-		TimerProcessingQueueStates:            info.TimerProcessingQueueStates,
-		TimerProcessingQueueStatesEncoding:    &info.TimerProcessingQueueStatesEncoding,
-		UpdatedAtNanos:                        timeToUnixNanoPtr(info.UpdatedAt),
-		TimerAckLevelNanos:                    timeToUnixNanoPtr(info.TimerAckLevel),
+		StolenSinceRenew:                          &info.StolenSinceRenew,
+		ReplicationAckLevel:                       &info.ReplicationAckLevel,
+		TransferAckLevel:                          &info.TransferAckLevel,
+		DomainNotificationVersion:                 &info.DomainNotificationVersion,
+		ClusterTransferAckLevel:                   info.ClusterTransferAckLevel,
+		Owner:                                     &info.Owner,
+		ClusterReplicationLevel:                   info.ClusterReplicationLevel,
+		PendingFailoverMarkers:                    info.PendingFailoverMarkers,
+		PendingFailoverMarkersEncoding:            &info.PendingFailoverMarkersEncoding,
+		ReplicationDlqAckLevel:                    info.ReplicationDlqAckLevel,
+		TransferProcessingQueueStates:             info.TransferProcessingQueueStates,
+		TransferProcessingQueueStatesEncoding:     &info.TransferProcessingQueueStatesEncoding,
+		CrossClusterProcessingQueueStates:         info.CrossClusterProcessingQueueStates,
+		CrossClusterProcessingQueueStatesEncoding: &info.CrossClusterProcessingQueueStatesEncoding,
+		TimerProcessingQueueStates:                info.TimerProcessingQueueStates,
+		TimerProcessingQueueStatesEncoding:        &info.TimerProcessingQueueStatesEncoding,
+		UpdatedAtNanos:                            timeToUnixNanoPtr(info.UpdatedAt),
+		TimerAckLevelNanos:                        timeToUnixNanoPtr(info.TimerAckLevel),
 	}
 	if info.ClusterTimerAckLevel != nil {
 		result.ClusterTimerAckLevel = make(map[string]int64, len(info.ClusterTimerAckLevel))
@@ -68,22 +70,24 @@ func shardInfoFromThrift(info *sqlblobs.ShardInfo) *ShardInfo {
 	}
 
 	result := &ShardInfo{
-		StolenSinceRenew:                      info.GetStolenSinceRenew(),
-		ReplicationAckLevel:                   info.GetReplicationAckLevel(),
-		TransferAckLevel:                      info.GetTransferAckLevel(),
-		DomainNotificationVersion:             info.GetDomainNotificationVersion(),
-		ClusterTransferAckLevel:               info.ClusterTransferAckLevel,
-		Owner:                                 info.GetOwner(),
-		ClusterReplicationLevel:               info.ClusterReplicationLevel,
-		PendingFailoverMarkers:                info.PendingFailoverMarkers,
-		PendingFailoverMarkersEncoding:        info.GetPendingFailoverMarkersEncoding(),
-		ReplicationDlqAckLevel:                info.ReplicationDlqAckLevel,
-		TransferProcessingQueueStates:         info.TransferProcessingQueueStates,
-		TransferProcessingQueueStatesEncoding: info.GetTransferProcessingQueueStatesEncoding(),
-		TimerProcessingQueueStates:            info.TimerProcessingQueueStates,
-		TimerProcessingQueueStatesEncoding:    info.GetTimerProcessingQueueStatesEncoding(),
-		UpdatedAt:                             timeFromUnixNano(info.GetUpdatedAtNanos()),
-		TimerAckLevel:                         timeFromUnixNano(info.GetTimerAckLevelNanos()),
+		StolenSinceRenew:                          info.GetStolenSinceRenew(),
+		ReplicationAckLevel:                       info.GetReplicationAckLevel(),
+		TransferAckLevel:                          info.GetTransferAckLevel(),
+		DomainNotificationVersion:                 info.GetDomainNotificationVersion(),
+		ClusterTransferAckLevel:                   info.ClusterTransferAckLevel,
+		Owner:                                     info.GetOwner(),
+		ClusterReplicationLevel:                   info.ClusterReplicationLevel,
+		PendingFailoverMarkers:                    info.PendingFailoverMarkers,
+		PendingFailoverMarkersEncoding:            info.GetPendingFailoverMarkersEncoding(),
+		ReplicationDlqAckLevel:                    info.ReplicationDlqAckLevel,
+		TransferProcessingQueueStates:             info.TransferProcessingQueueStates,
+		TransferProcessingQueueStatesEncoding:     info.GetTransferProcessingQueueStatesEncoding(),
+		CrossClusterProcessingQueueStates:         info.CrossClusterProcessingQueueStates,
+		CrossClusterProcessingQueueStatesEncoding: info.GetCrossClusterProcessingQueueStatesEncoding(),
+		TimerProcessingQueueStates:                info.TimerProcessingQueueStates,
+		TimerProcessingQueueStatesEncoding:        info.GetTimerProcessingQueueStatesEncoding(),
+		UpdatedAt:                                 timeFromUnixNano(info.GetUpdatedAtNanos()),
+		TimerAckLevel:                             timeFromUnixNano(info.GetTimerAckLevelNanos()),
 	}
 	if info.ClusterTimerAckLevel != nil {
 		result.ClusterTimerAckLevel = make(map[string]time.Time, len(info.ClusterTimerAckLevel))
@@ -425,7 +429,8 @@ func childExecutionInfoToThrift(info *ChildExecutionInfo) *sqlblobs.ChildExecuti
 		StartedEvent:           info.StartedEvent,
 		StartedEventEncoding:   &info.StartedEventEncoding,
 		CreateRequestID:        &info.CreateRequestID,
-		DomainName:             &info.DomainName,
+		DomainID:               &info.DomainID,
+		DomainName:             &info.DomainNameDEPRECATED,
 		WorkflowTypeName:       &info.WorkflowTypeName,
 		ParentClosePolicy:      &info.ParentClosePolicy,
 	}
@@ -446,7 +451,8 @@ func childExecutionInfoFromThrift(info *sqlblobs.ChildExecutionInfo) *ChildExecu
 		StartedEvent:           info.StartedEvent,
 		StartedEventEncoding:   info.GetStartedEventEncoding(),
 		CreateRequestID:        info.GetCreateRequestID(),
-		DomainName:             info.GetDomainName(),
+		DomainID:               info.GetDomainID(),
+		DomainNameDEPRECATED:   info.GetDomainName(),
 		WorkflowTypeName:       info.GetWorkflowTypeName(),
 		ParentClosePolicy:      info.GetParentClosePolicy(),
 	}
@@ -580,12 +586,13 @@ func transferTaskInfoToThrift(info *TransferTaskInfo) *sqlblobs.TransferTaskInfo
 	if info == nil {
 		return nil
 	}
-	return &sqlblobs.TransferTaskInfo{
-		DomainID:                 info.DomainID,
-		WorkflowID:               &info.WorkflowID,
-		RunID:                    info.RunID,
-		TaskType:                 &info.TaskType,
-		TargetDomainID:           info.TargetDomainID,
+	thriftTaskInfo := &sqlblobs.TransferTaskInfo{
+		DomainID:       info.DomainID,
+		WorkflowID:     &info.WorkflowID,
+		RunID:          info.RunID,
+		TaskType:       &info.TaskType,
+		TargetDomainID: info.TargetDomainID,
+		// TargetDomainIDs will be assigned below
 		TargetWorkflowID:         &info.TargetWorkflowID,
 		TargetRunID:              info.TargetRunID,
 		TaskList:                 &info.TaskList,
@@ -594,18 +601,26 @@ func transferTaskInfoToThrift(info *TransferTaskInfo) *sqlblobs.TransferTaskInfo
 		Version:                  &info.Version,
 		VisibilityTimestampNanos: timeToUnixNanoPtr(info.VisibilityTimestamp),
 	}
+	if len(info.TargetDomainIDs) > 0 {
+		thriftTaskInfo.TargetDomainIDs = [][]byte{}
+		for _, domainID := range info.TargetDomainIDs {
+			thriftTaskInfo.TargetDomainIDs = append(thriftTaskInfo.TargetDomainIDs, domainID)
+		}
+	}
+	return thriftTaskInfo
 }
 
 func transferTaskInfoFromThrift(info *sqlblobs.TransferTaskInfo) *TransferTaskInfo {
 	if info == nil {
 		return nil
 	}
-	return &TransferTaskInfo{
-		DomainID:                info.DomainID,
-		WorkflowID:              info.GetWorkflowID(),
-		RunID:                   info.RunID,
-		TaskType:                info.GetTaskType(),
-		TargetDomainID:          info.TargetDomainID,
+	transferTaskInfo := &TransferTaskInfo{
+		DomainID:       info.DomainID,
+		WorkflowID:     info.GetWorkflowID(),
+		RunID:          info.RunID,
+		TaskType:       info.GetTaskType(),
+		TargetDomainID: info.TargetDomainID,
+		// TargetDomainIDs will be assigned below
 		TargetWorkflowID:        info.GetTargetWorkflowID(),
 		TargetRunID:             info.TargetRunID,
 		TaskList:                info.GetTaskList(),
@@ -614,6 +629,21 @@ func transferTaskInfoFromThrift(info *sqlblobs.TransferTaskInfo) *TransferTaskIn
 		Version:                 info.GetVersion(),
 		VisibilityTimestamp:     timeFromUnixNano(info.GetVisibilityTimestampNanos()),
 	}
+	if len(info.GetTargetDomainIDs()) > 0 {
+		transferTaskInfo.TargetDomainIDs = []UUID{}
+		for _, domainID := range info.GetTargetDomainIDs() {
+			transferTaskInfo.TargetDomainIDs = append(transferTaskInfo.TargetDomainIDs, domainID)
+		}
+	}
+	return transferTaskInfo
+}
+
+func crossClusterTaskInfoToThrift(info *CrossClusterTaskInfo) *sqlblobsCrossClusterTaskInfo {
+	return transferTaskInfoToThrift(info)
+}
+
+func crossClusterTaskInfoFromThrift(info *sqlblobsCrossClusterTaskInfo) *CrossClusterTaskInfo {
+	return transferTaskInfoFromThrift(info)
 }
 
 func timerTaskInfoToThrift(info *TimerTaskInfo) *sqlblobs.TimerTaskInfo {

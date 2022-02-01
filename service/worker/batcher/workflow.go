@@ -29,9 +29,9 @@ import (
 	"go.uber.org/cadence"
 	"go.uber.org/cadence/activity"
 	"go.uber.org/cadence/workflow"
-	"go.uber.org/yarpc"
 	"golang.org/x/time/rate"
 
+	"github.com/uber/cadence/client/admin"
 	"github.com/uber/cadence/client/frontend"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
@@ -55,6 +55,8 @@ const (
 	InfiniteDuration = 20 * 365 * 24 * time.Hour
 	pageSize         = 1000
 
+	_nonRetriableReason = "non-retriable-error"
+
 	// DefaultRPS is the default RPS
 	DefaultRPS = 50
 	// DefaultConcurrency is the default concurrency
@@ -72,10 +74,12 @@ const (
 	BatchTypeCancel = "cancel"
 	// BatchTypeSignal is batch type for signaling workflows
 	BatchTypeSignal = "signal"
+	// BatchTypeReplicate is batch type for replicating workflows
+	BatchTypeReplicate = "replicate"
 )
 
 // AllBatchTypes is the batch types we supported
-var AllBatchTypes = []string{BatchTypeTerminate, BatchTypeCancel, BatchTypeSignal}
+var AllBatchTypes = []string{BatchTypeTerminate, BatchTypeCancel, BatchTypeSignal, BatchTypeReplicate}
 
 type (
 	// TerminateParams is the parameters for terminating workflow
@@ -100,6 +104,12 @@ type (
 		Input      string
 	}
 
+	// ReplicateParams is the parameters for replicating workflow
+	ReplicateParams struct {
+		SourceCluster string
+		TargetCluster string
+	}
+
 	// BatchParams is the parameters for batch operation workflow
 	BatchParams struct {
 		// Target domain to execute batch operation
@@ -118,6 +128,8 @@ type (
 		CancelParams CancelParams
 		// SignalParams is params only for BatchTypeSignal
 		SignalParams SignalParams
+		// ReplicateParams is params only for BatchTypeReplicate
+		ReplicateParams ReplicateParams
 		// RPS of processing. Default to DefaultRPS
 		// TODO we will implement smarter way than this static rate limiter: https://github.com/uber/cadence/issues/2138
 		RPS int
@@ -155,10 +167,11 @@ type (
 
 var (
 	batchActivityRetryPolicy = cadence.RetryPolicy{
-		InitialInterval:    10 * time.Second,
-		BackoffCoefficient: 1.7,
-		MaximumInterval:    5 * time.Minute,
-		ExpirationInterval: InfiniteDuration,
+		InitialInterval:          10 * time.Second,
+		BackoffCoefficient:       1.7,
+		MaximumInterval:          5 * time.Minute,
+		ExpirationInterval:       InfiniteDuration,
+		NonRetriableErrorReasons: []string{_nonRetriableReason},
 	}
 
 	batchActivityOptions = workflow.ActivityOptions{
@@ -200,6 +213,14 @@ func validateParams(params BatchParams) error {
 			return fmt.Errorf("must provide signal name")
 		}
 		return nil
+	case BatchTypeReplicate:
+		if params.ReplicateParams.SourceCluster == "" {
+			return fmt.Errorf("must provide source cluster")
+		}
+		if params.ReplicateParams.TargetCluster == "" {
+			return fmt.Errorf("must provide target cluster")
+		}
+		return nil
 	case BatchTypeCancel:
 		fallthrough
 	case BatchTypeTerminate:
@@ -238,7 +259,22 @@ func setDefaultParams(params BatchParams) BatchParams {
 func BatchActivity(ctx context.Context, batchParams BatchParams) (HeartBeatDetails, error) {
 	batcher := ctx.Value(batcherContextKey).(*Batcher)
 	client := batcher.clientBean.GetFrontendClient()
+	var adminClient admin.Client
+	if batchParams.BatchType == BatchTypeReplicate {
+		currentCluster := batcher.cfg.ClusterMetadata.GetCurrentClusterName()
+		if currentCluster != batchParams.ReplicateParams.SourceCluster {
+			return HeartBeatDetails{}, cadence.NewCustomError(_nonRetriableReason, fmt.Sprintf("the activity must run in the source cluster, current cluster is %s", currentCluster))
+		}
+		adminClient = batcher.clientBean.GetRemoteAdminClient(batchParams.ReplicateParams.TargetCluster)
+	}
 
+	domainResp, err := client.DescribeDomain(ctx, &types.DescribeDomainRequest{
+		Name: &batchParams.DomainName,
+	})
+	if err != nil {
+		return HeartBeatDetails{}, err
+	}
+	domainID := domainResp.GetDomainInfo().GetUUID()
 	hbd := HeartBeatDetails{}
 	startOver := true
 	if activity.HasHeartbeatDetails(ctx) {
@@ -265,7 +301,7 @@ func BatchActivity(ctx context.Context, batchParams BatchParams) (HeartBeatDetai
 	taskCh := make(chan taskDetail, pageSize)
 	respCh := make(chan error, pageSize)
 	for i := 0; i < batchParams.Concurrency; i++ {
-		go startTaskProcessor(ctx, batchParams, taskCh, respCh, rateLimiter, client)
+		go startTaskProcessor(ctx, batchParams, domainID, taskCh, respCh, rateLimiter, client, adminClient)
 	}
 
 	for {
@@ -332,10 +368,12 @@ func BatchActivity(ctx context.Context, batchParams BatchParams) (HeartBeatDetai
 func startTaskProcessor(
 	ctx context.Context,
 	batchParams BatchParams,
+	domainID string,
 	taskCh chan taskDetail,
 	respCh chan error,
 	limiter *rate.Limiter,
 	client frontend.Client,
+	adminClient admin.Client,
 ) {
 	batcher := ctx.Value(batcherContextKey).(*Batcher)
 	for {
@@ -348,9 +386,6 @@ func startTaskProcessor(
 			}
 			var err error
 			requestID := uuid.New().String()
-			yarpcCallOptions := []yarpc.CallOption{
-				yarpc.WithHeader(common.EnforceDCRedirection, "true"),
-			}
 
 			switch batchParams.BatchType {
 			case BatchTypeTerminate:
@@ -365,7 +400,7 @@ func startTaskProcessor(
 							},
 							Reason:   batchParams.Reason,
 							Identity: BatchWFTypeName,
-						}, yarpcCallOptions...)
+						})
 					})
 			case BatchTypeCancel:
 				err = processTask(ctx, limiter, task, batchParams, client,
@@ -379,7 +414,7 @@ func startTaskProcessor(
 							},
 							Identity:  BatchWFTypeName,
 							RequestID: requestID,
-						}, yarpcCallOptions...)
+						})
 					})
 			case BatchTypeSignal:
 				err = processTask(ctx, limiter, task, batchParams, client, common.BoolPtr(false),
@@ -394,7 +429,17 @@ func startTaskProcessor(
 							RequestID:  requestID,
 							SignalName: batchParams.SignalParams.SignalName,
 							Input:      []byte(batchParams.SignalParams.Input),
-						}, yarpcCallOptions...)
+						})
+					})
+			case BatchTypeReplicate:
+				err = processTask(ctx, limiter, task, batchParams, client, common.BoolPtr(false),
+					func(workflowID, runID string) error {
+						return adminClient.ResendReplicationTasks(ctx, &types.ResendReplicationTasksRequest{
+							DomainID:      domainID,
+							WorkflowID:    workflowID,
+							RunID:         runID,
+							RemoteCluster: batchParams.ReplicateParams.SourceCluster,
+						})
 					})
 			}
 			if err != nil {

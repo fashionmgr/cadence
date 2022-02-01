@@ -158,8 +158,17 @@ type BoolPropertyFnWithDomainFilter func(domain string) bool
 // BoolPropertyFnWithDomainIDFilter is a wrapper to get bool property from dynamic config with domainID as filter
 type BoolPropertyFnWithDomainIDFilter func(domainID string) bool
 
+// BoolPropertyFnWithDomainIDAndWorkflowIDFilter is a wrapper to get bool property from dynamic config with domainID and workflowID as filter
+type BoolPropertyFnWithDomainIDAndWorkflowIDFilter func(domainID string, workflowID string) bool
+
 // BoolPropertyFnWithTaskListInfoFilters is a wrapper to get bool property from dynamic config with three filters: domain, taskList, taskType
 type BoolPropertyFnWithTaskListInfoFilters func(domain string, taskList string, taskType int) bool
+
+// IntPropertyFnWithWorkflowTypeFilter is a wrapper to get int property from dynamic config with domain as filter
+type IntPropertyFnWithWorkflowTypeFilter func(domainName string, workflowType string) int
+
+// DurationPropertyFnWithDomainFilter is a wrapper to get duration property from dynamic config with domain as filter
+type DurationPropertyFnWithWorkflowTypeFilter func(domainName string, workflowType string) time.Duration
 
 // GetProperty gets a interface property and returns defaultValue if property is not found
 func (c *Collection) GetProperty(key Key, defaultValue interface{}) PropertyFn {
@@ -203,6 +212,46 @@ func (c *Collection) GetIntPropertyFilteredByDomain(key Key, defaultValue int) I
 			c.logError(key, filters, err)
 		}
 		c.logValue(key, filters, val, defaultValue, intCompareEquals)
+		return val
+	}
+}
+
+// GetIntPropertyFilteredByWorkflowType gets property with workflow type filter and asserts that it's an integer
+func (c *Collection) GetIntPropertyFilteredByWorkflowType(key Key, defaultValue int) IntPropertyFnWithWorkflowTypeFilter {
+	return func(domainName string, workflowType string) int {
+		filters := c.toFilterMap(
+			DomainFilter(domainName),
+			WorkflowTypeFilter(workflowType),
+		)
+		val, err := c.client.GetIntValue(
+			key,
+			filters,
+			defaultValue,
+		)
+		if err != nil {
+			c.logError(key, filters, err)
+		}
+		c.logValue(key, filters, val, defaultValue, intCompareEquals)
+		return val
+	}
+}
+
+// GetDurationPropertyFilteredByWorkflowType gets property with workflow type filter and asserts that it's a duration
+func (c *Collection) GetDurationPropertyFilteredByWorkflowType(key Key, defaultValue time.Duration) DurationPropertyFnWithWorkflowTypeFilter {
+	return func(domainName string, workflowType string) time.Duration {
+		filters := c.toFilterMap(
+			DomainFilter(domainName),
+			WorkflowTypeFilter(workflowType),
+		)
+		val, err := c.client.GetDurationValue(
+			key,
+			filters,
+			defaultValue,
+		)
+		if err != nil {
+			c.logError(key, filters, err)
+		}
+		c.logValue(key, filters, val, defaultValue, durationCompareEquals)
 		return val
 	}
 }
@@ -471,6 +520,23 @@ func (c *Collection) GetBoolPropertyFilteredByDomainID(key Key, defaultValue boo
 	}
 }
 
+// GetBoolPropertyFilteredByDomainIDAndWorkflowID gets property with domainID and workflowID filters and asserts that it's a bool
+func (c *Collection) GetBoolPropertyFilteredByDomainIDAndWorkflowID(key Key, defaultValue bool) BoolPropertyFnWithDomainIDAndWorkflowIDFilter {
+	return func(domainID string, workflowID string) bool {
+		filters := c.toFilterMap(DomainIDFilter(domainID), WorkflowIDFilter(workflowID))
+		val, err := c.client.GetBoolValue(
+			key,
+			filters,
+			defaultValue,
+		)
+		if err != nil {
+			c.logError(key, filters, err)
+		}
+		c.logValue(key, filters, val, defaultValue, boolCompareEquals)
+		return val
+	}
+}
+
 // GetBoolPropertyFilteredByTaskListInfo gets property with taskListInfo as filters and asserts that it's an bool
 func (c *Collection) GetBoolPropertyFilteredByTaskListInfo(key Key, defaultValue bool) BoolPropertyFnWithTaskListInfoFilters {
 	return func(domain string, taskList string, taskType int) bool {
@@ -510,7 +576,7 @@ func getFilteredKeyAsString(
 ) string {
 	var sb strings.Builder
 	sb.WriteString(key.String())
-	for filter := unknownFilter + 1; filter < lastFilterTypeForTest; filter++ {
+	for filter := UnknownFilter + 1; filter < LastFilterTypeForTest; filter++ {
 		if value, ok := filters[filter]; ok {
 			sb.WriteString(fmt.Sprintf(",%v:%v", filter.String(), value))
 		}

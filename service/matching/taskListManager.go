@@ -68,10 +68,10 @@ type (
 		// GetTask blocks waiting for a task Returns error when context deadline is exceeded
 		// maxDispatchPerSecond is the max rate at which tasks are allowed to be dispatched
 		// from this task list to pollers
-		GetTask(ctx context.Context, maxDispatchPerSecond *float64) (*internalTask, error)
+		GetTask(ctx context.Context, maxDispatchPerSecond *float64) (*InternalTask, error)
 		// DispatchTask dispatches a task to a poller. When there are no pollers to pick
 		// up the task, this method will return error. Task will not be persisted to db
-		DispatchTask(ctx context.Context, task *internalTask) error
+		DispatchTask(ctx context.Context, task *InternalTask) error
 		// DispatchQueryTask will dispatch query to local or remote poller. If forwarded then result or error is returned,
 		// if dispatched to local poller then nil and nil is returned.
 		DispatchQueryTask(ctx context.Context, taskID string, request *types.MatchingQueryWorkflowRequest) (*types.QueryWorkflowResponse, error)
@@ -80,6 +80,7 @@ type (
 		// DescribeTaskList returns information about the target tasklist
 		DescribeTaskList(includeTaskListStatus bool) *types.DescribeTaskListResponse
 		String() string
+		GetTaskListKind() types.TaskListKind
 	}
 
 	// Single task list in memory state
@@ -235,18 +236,26 @@ func (c *taskListManagerImpl) AddTask(ctx context.Context, params addTaskParams)
 			return nil, err
 		}
 
+		isForwarded := params.forwardedFrom != ""
+
 		if domainEntry.GetDomainNotActiveErr() != nil {
-			r, err := c.taskWriter.appendTask(params.execution, params.taskInfo)
+			// standby task, only persist when task is not forwarded from child partition
 			syncMatch = false
+			if isForwarded {
+				return &persistence.CreateTasksResponse{}, errRemoteSyncMatchFailed
+			}
+
+			r, err := c.taskWriter.appendTask(params.execution, params.taskInfo)
 			return r, err
 		}
 
+		// active task, try sync match first
 		syncMatch, err = c.trySyncMatch(ctx, params)
 		if syncMatch {
 			return &persistence.CreateTasksResponse{}, err
 		}
 
-		if params.forwardedFrom != "" {
+		if isForwarded {
 			// forwarded from child partition - only do sync match
 			// child partition will persist the task when sync match fails
 			return &persistence.CreateTasksResponse{}, errRemoteSyncMatchFailed
@@ -271,7 +280,7 @@ func (c *taskListManagerImpl) AddTask(ctx context.Context, params addTaskParams)
 // DispatchTask dispatches a task to a poller. When there are no pollers to pick
 // up the task or if rate limit is exceeded, this method will return error. Task
 // *will not* be persisted to db
-func (c *taskListManagerImpl) DispatchTask(ctx context.Context, task *internalTask) error {
+func (c *taskListManagerImpl) DispatchTask(ctx context.Context, task *InternalTask) error {
 	return c.matcher.MustOffer(ctx, task)
 }
 
@@ -294,7 +303,7 @@ func (c *taskListManagerImpl) DispatchQueryTask(
 func (c *taskListManagerImpl) GetTask(
 	ctx context.Context,
 	maxDispatchPerSecond *float64,
-) (*internalTask, error) {
+) (*InternalTask, error) {
 	task, err := c.getTask(ctx, maxDispatchPerSecond)
 	if err != nil {
 		return nil, err
@@ -304,7 +313,7 @@ func (c *taskListManagerImpl) GetTask(
 	return task, nil
 }
 
-func (c *taskListManagerImpl) getTask(ctx context.Context, maxDispatchPerSecond *float64) (*internalTask, error) {
+func (c *taskListManagerImpl) getTask(ctx context.Context, maxDispatchPerSecond *float64) (*InternalTask, error) {
 	// We need to set a shorter timeout than the original ctx; otherwise, by the time ctx deadline is
 	// reached, instead of emptyTask, context timeout error is returned to the frontend by the rpc stack,
 	// which counts against our SLO. By shortening the timeout by a very small amount, the emptyTask can be
@@ -407,6 +416,10 @@ func (c *taskListManagerImpl) String() string {
 	return buf.String()
 }
 
+func (c *taskListManagerImpl) GetTaskListKind() types.TaskListKind {
+	return c.taskListKind
+}
+
 // completeTask marks a task as processed. Only tasks created by taskReader (i.e. backlog from db) reach
 // here. As part of completion:
 //   - task is deleted from the database when err is nil
@@ -449,7 +462,11 @@ func (c *taskListManagerImpl) renewLeaseWithRetry() (taskListState, error) {
 		return
 	}
 	c.metricScope().IncCounter(metrics.LeaseRequestPerTaskListCounter)
-	err := backoff.Retry(op, persistenceOperationRetryPolicy, persistence.IsTransientError)
+	throttleRetry := backoff.NewThrottleRetry(
+		backoff.WithRetryPolicy(persistenceOperationRetryPolicy),
+		backoff.WithRetryableError(persistence.IsTransientError),
+	)
+	err := throttleRetry.Do(context.Background(), op)
 	if err != nil {
 		c.metricScope().IncCounter(metrics.LeaseFailurePerTaskListCounter)
 		c.engine.unloadTaskList(c.taskListID)
@@ -488,12 +505,16 @@ func (c *taskListManagerImpl) executeWithRetry(
 		return err
 	}
 
-	err = backoff.Retry(op, persistenceOperationRetryPolicy, func(err error) bool {
-		if _, ok := err.(*persistence.ConditionFailedError); ok {
-			return false
-		}
-		return persistence.IsTransientError(err)
-	})
+	throttleRetry := backoff.NewThrottleRetry(
+		backoff.WithRetryPolicy(persistenceOperationRetryPolicy),
+		backoff.WithRetryableError(func(err error) bool {
+			if _, ok := err.(*persistence.ConditionFailedError); ok {
+				return false
+			}
+			return persistence.IsTransientError(err)
+		}),
+	)
+	err = throttleRetry.Do(context.Background(), op)
 
 	if _, ok := err.(*persistence.ConditionFailedError); ok {
 		c.metricScope().IncCounter(metrics.ConditionFailedErrorPerTaskListCounter)

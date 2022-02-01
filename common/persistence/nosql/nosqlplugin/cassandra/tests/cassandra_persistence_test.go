@@ -29,7 +29,7 @@ import (
 	persistencetests "github.com/uber/cadence/common/persistence/persistence-tests"
 )
 
-func TestCassandraHistoryV2Persistence(t *testing.T) {
+func TestCassandraHistoryPersistence(t *testing.T) {
 	s := new(persistencetests.HistoryV2PersistenceSuite)
 	s.TestBase = public.NewTestBaseWithPublicCassandra(&persistencetests.TestBaseOptions{})
 	s.TestBase.Setup()
@@ -43,7 +43,7 @@ func TestCassandraMatchingPersistence(t *testing.T) {
 	suite.Run(t, s)
 }
 
-func TestCassandraMetadataPersistenceV2(t *testing.T) {
+func TestCassandraDomainPersistence(t *testing.T) {
 	s := new(persistencetests.MetadataPersistenceSuiteV2)
 	s.TestBase = public.NewTestBaseWithPublicCassandra(&persistencetests.TestBaseOptions{})
 	s.TestBase.Setup()
@@ -58,7 +58,7 @@ func TestCassandraShardPersistence(t *testing.T) {
 }
 
 func TestCassandraVisibilityPersistence(t *testing.T) {
-	s := new(persistencetests.VisibilityPersistenceSuite)
+	s := new(persistencetests.DBVisibilityPersistenceSuite)
 	s.TestBase = public.NewTestBaseWithPublicCassandra(&persistencetests.TestBaseOptions{})
 	s.TestBase.Setup()
 	suite.Run(t, s)
@@ -80,6 +80,13 @@ func TestCassandraExecutionManagerWithEventsV2(t *testing.T) {
 
 func TestQueuePersistence(t *testing.T) {
 	s := new(persistencetests.QueuePersistenceSuite)
+	s.TestBase = public.NewTestBaseWithPublicCassandra(&persistencetests.TestBaseOptions{})
+	s.TestBase.Setup()
+	suite.Run(t, s)
+}
+
+func TestConfigStorePersistence(t *testing.T) {
+	s := new(persistencetests.ConfigStorePersistenceSuite)
 	s.TestBase = public.NewTestBaseWithPublicCassandra(&persistencetests.TestBaseOptions{})
 	s.TestBase.Setup()
 	suite.Run(t, s)

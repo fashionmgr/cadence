@@ -35,6 +35,7 @@ import (
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/dynamicconfig"
+	cassandra_db "github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra"
 	"github.com/uber/cadence/environment"
 	"github.com/uber/cadence/tools/cassandra"
 )
@@ -69,12 +70,13 @@ func (s *VersionTestSuite) TestVerifyCompatibleVersion() {
 		"./tool", "-k", visKeyspace, "-q", "setup-schema", "-f", visCqlFile, "-version", "10.0", "-o",
 	}))
 
-	defaultCfg := config.Cassandra{
-		Hosts:    environment.GetCassandraAddress(),
-		Port:     cassandra.DefaultCassandraPort,
-		User:     "",
-		Password: "",
-		Keyspace: keyspace,
+	defaultCfg := config.NoSQL{
+		PluginName: cassandra_db.PluginName,
+		Hosts:      environment.GetCassandraAddress(),
+		Port:       cassandra.DefaultCassandraPort,
+		User:       environment.GetCassandraUsername(),
+		Password:   environment.GetCassandraPassword(),
+		Keyspace:   keyspace,
 	}
 	visibilityCfg := defaultCfg
 	visibilityCfg.Keyspace = visKeyspace
@@ -101,7 +103,7 @@ func (s *VersionTestSuite) TestCheckCompatibleVersion() {
 		{"2.0", "1.0", "version mismatch", false},
 		{"1.0", "1.0", "", false},
 		{"1.0", "2.0", "", false},
-		{"1.0", "abc", "unable to read cassandra schema version", false},
+		{"1.0", "abc", "unable to read schema version keyspace/database", false},
 	}
 	for _, flag := range flags {
 		s.runCheckCompatibleVersion(flag.expectedVersion, flag.actualVersion, flag.errStr, flag.expectedFail)
@@ -110,11 +112,12 @@ func (s *VersionTestSuite) TestCheckCompatibleVersion() {
 
 func (s *VersionTestSuite) createKeyspace(keyspace string) func() {
 	cfg := &cassandra.CQLClientConfig{
-		Hosts:       environment.GetCassandraAddress(),
-		Port:        cassandra.DefaultCassandraPort,
-		Keyspace:    "system",
-		Timeout:     cassandra.DefaultTimeout,
-		NumReplicas: 1,
+		Hosts:        environment.GetCassandraAddress(),
+		Port:         cassandra.DefaultCassandraPort,
+		Keyspace:     "system",
+		Timeout:      cassandra.DefaultTimeout,
+		NumReplicas:  1,
+		ProtoVersion: environment.GetCassandraProtoVersion(),
 	}
 	client, err := cassandra.NewCQLClient(cfg)
 	s.NoError(err)
@@ -157,12 +160,13 @@ func (s *VersionTestSuite) runCheckCompatibleVersion(
 		os.RemoveAll(subdir + "/v" + actual)
 	}
 
-	cfg := config.Cassandra{
-		Hosts:    environment.GetCassandraAddress(),
-		Port:     cassandra.DefaultCassandraPort,
-		User:     "",
-		Password: "",
-		Keyspace: keyspace,
+	cfg := config.NoSQL{
+		PluginName: cassandra_db.PluginName,
+		Hosts:      environment.GetCassandraAddress(),
+		Port:       cassandra.DefaultCassandraPort,
+		User:       environment.GetCassandraUsername(),
+		Password:   environment.GetCassandraPassword(),
+		Keyspace:   keyspace,
 	}
 	err = cassandra.CheckCompatibleVersion(cfg, expected)
 	if len(errStr) > 0 {

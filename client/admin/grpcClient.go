@@ -132,3 +132,33 @@ func (g grpcClient) ResetQueue(ctx context.Context, request *types.ResetQueueReq
 	_, err := g.c.ResetQueue(ctx, proto.FromAdminResetQueueRequest(request), opts...)
 	return proto.ToError(err)
 }
+
+func (g grpcClient) GetCrossClusterTasks(ctx context.Context, request *types.GetCrossClusterTasksRequest, opts ...yarpc.CallOption) (*types.GetCrossClusterTasksResponse, error) {
+	response, err := g.c.GetCrossClusterTasks(ctx, proto.FromAdminGetCrossClusterTasksRequest(request), opts...)
+	return proto.ToAdminGetCrossClusterTasksResponse(response), proto.ToError(err)
+}
+
+func (g grpcClient) RespondCrossClusterTasksCompleted(ctx context.Context, request *types.RespondCrossClusterTasksCompletedRequest, opts ...yarpc.CallOption) (*types.RespondCrossClusterTasksCompletedResponse, error) {
+	response, err := g.c.RespondCrossClusterTasksCompleted(ctx, proto.FromAdminRespondCrossClusterTasksCompletedRequest(request), opts...)
+	return proto.ToAdminRespondCrossClusterTasksCompletedResponse(response), proto.ToError(err)
+}
+
+func (g grpcClient) GetDynamicConfig(ctx context.Context, request *types.GetDynamicConfigRequest, opts ...yarpc.CallOption) (*types.GetDynamicConfigResponse, error) {
+	response, err := g.c.GetDynamicConfig(ctx, proto.FromGetDynamicConfigRequest(request), opts...)
+	return proto.ToGetDynamicConfigResponse(response), proto.ToError(err)
+}
+
+func (g grpcClient) UpdateDynamicConfig(ctx context.Context, request *types.UpdateDynamicConfigRequest, opts ...yarpc.CallOption) error {
+	_, err := g.c.UpdateDynamicConfig(ctx, proto.FromUpdateDynamicConfigRequest(request), opts...)
+	return proto.ToError(err)
+}
+
+func (g grpcClient) RestoreDynamicConfig(ctx context.Context, request *types.RestoreDynamicConfigRequest, opts ...yarpc.CallOption) error {
+	_, err := g.c.RestoreDynamicConfig(ctx, proto.FromRestoreDynamicConfigRequest(request), opts...)
+	return proto.ToError(err)
+}
+
+func (g grpcClient) ListDynamicConfig(ctx context.Context, request *types.ListDynamicConfigRequest, opts ...yarpc.CallOption) (*types.ListDynamicConfigResponse, error) {
+	response, err := g.c.ListDynamicConfig(ctx, proto.FromListDynamicConfigRequest(request), opts...)
+	return proto.ToListDynamicConfigResponse(response), proto.ToError(err)
+}

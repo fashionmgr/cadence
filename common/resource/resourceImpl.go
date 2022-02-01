@@ -73,7 +73,7 @@ type (
 		numShards       int
 		serviceName     string
 		hostName        string
-		hostInfo        *membership.HostInfo
+		hostInfo        membership.HostInfo
 		metricsScope    tally.Scope
 		clusterMetadata cluster.Metadata
 
@@ -92,11 +92,7 @@ type (
 
 		// membership infos
 
-		membershipMonitor       membership.Monitor
-		frontendServiceResolver membership.ServiceResolver
-		matchingServiceResolver membership.ServiceResolver
-		historyServiceResolver  membership.ServiceResolver
-		workerServiceResolver   membership.ServiceResolver
+		membershipResolver membership.Resolver
 
 		// internal services clients
 
@@ -110,12 +106,9 @@ type (
 		clientBean        client.Bean
 
 		// persistence clients
-
 		persistenceBean persistenceClient.Bean
-		visibilityMgr   persistence.VisibilityManager
 
 		// loggers
-
 		logger          log.Logger
 		throttledLogger log.Logger
 
@@ -126,7 +119,6 @@ type (
 
 		pprofInitializer       common.PProfInitializer
 		runtimeMetricsReporter *metrics.RuntimeMetricsReporter
-		membershipFactory      service.MembershipMonitorFactory
 		rpcFactory             common.RPCFactory
 	}
 )
@@ -135,16 +127,13 @@ var _ Resource = (*Impl)(nil)
 
 // New create a new resource containing common dependencies
 func New(
-	params *service.BootstrapParams,
+	params *Params,
 	serviceName string,
-	persistenceMaxQPS dynamicconfig.IntPropertyFn,
-	persistenceGlobalMaxQPS dynamicconfig.IntPropertyFn,
-	throttledLoggerMaxRPS dynamicconfig.IntPropertyFn,
-	visibilityManagerInitializer VisibilityManagerInitializer,
+	serviceConfig *service.Config,
 ) (impl *Impl, retError error) {
 
 	logger := params.Logger
-	throttledLogger := loggerimpl.NewThrottledLogger(logger, throttledLoggerMaxRPS)
+	throttledLogger := loggerimpl.NewThrottledLogger(logger, serviceConfig.ThrottledLoggerMaxRPS)
 
 	numShards := params.PersistenceConfig.NumHistoryShards
 	hostName, err := os.Hostname()
@@ -154,10 +143,7 @@ func New(
 
 	dispatcher := params.RPCFactory.GetDispatcher()
 
-	membershipMonitor, err := params.MembershipFactory.GetMembershipMonitor()
-	if err != nil {
-		return nil, err
-	}
+	membershipResolver := params.MembershipResolver
 
 	dynamicCollection := dynamicconfig.NewCollection(
 		params.DynamicConfig,
@@ -167,35 +153,15 @@ func New(
 	clientBean, err := client.NewClientBean(
 		client.NewRPCClientFactory(
 			params.RPCFactory,
-			membershipMonitor,
+			membershipResolver,
 			params.MetricsClient,
 			dynamicCollection,
 			numShards,
 			logger,
 		),
-		params.DispatcherProvider,
+		params.RPCFactory.GetDispatcher(),
 		params.ClusterMetadata,
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	frontendServiceResolver, err := membershipMonitor.GetResolver(common.FrontendServiceName)
-	if err != nil {
-		return nil, err
-	}
-
-	matchingServiceResolver, err := membershipMonitor.GetResolver(common.MatchingServiceName)
-	if err != nil {
-		return nil, err
-	}
-
-	historyServiceResolver, err := membershipMonitor.GetResolver(common.HistoryServiceName)
-	if err != nil {
-		return nil, err
-	}
-
-	workerServiceResolver, err := membershipMonitor.GetResolver(common.WorkerServiceName)
 	if err != nil {
 		return nil, err
 	}
@@ -203,32 +169,31 @@ func New(
 	persistenceBean, err := persistenceClient.NewBeanFromFactory(persistenceClient.NewFactory(
 		&params.PersistenceConfig,
 		func(...dynamicconfig.FilterOption) int {
-			if persistenceGlobalMaxQPS() > 0 {
-				ringSize, err := membershipMonitor.GetMemberCount(serviceName)
-				if err == nil && ringSize > 0 {
-					avgQuota := common.MaxInt(persistenceGlobalMaxQPS()/ringSize, 1)
-					return common.MinInt(avgQuota, persistenceMaxQPS())
+			if serviceConfig.PersistenceGlobalMaxQPS() > 0 {
+				members, err := membershipResolver.MemberCount(serviceName)
+				if err == nil && members > 0 {
+					avgQuota := common.MaxInt(serviceConfig.PersistenceGlobalMaxQPS()/members, 1)
+					return common.MinInt(avgQuota, serviceConfig.PersistenceMaxQPS())
 				}
 			}
-			return persistenceMaxQPS()
+			return serviceConfig.PersistenceMaxQPS()
 		},
 		params.ClusterMetadata.GetCurrentClusterName(),
 		params.MetricsClient,
 		logger,
-	))
-	if err != nil {
-		return nil, err
-	}
-	visibilityMgr, err := visibilityManagerInitializer(
-		persistenceBean,
-		logger,
-	)
+	), &persistenceClient.Params{
+		PersistenceConfig: params.PersistenceConfig,
+		MetricsClient:     params.MetricsClient,
+		MessagingClient:   params.MessagingClient,
+		ESClient:          params.ESClient,
+		ESConfig:          params.ESConfig,
+	}, serviceConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	domainCache := cache.NewDomainCache(
-		persistenceBean.GetMetadataManager(),
+		persistenceBean.GetDomainManager(),
 		params.ClusterMetadata,
 		params.MetricsClient,
 		logger,
@@ -312,12 +277,7 @@ func New(
 		domainReplicationQueue:  domainReplicationQueue,
 
 		// membership infos
-
-		membershipMonitor:       membershipMonitor,
-		frontendServiceResolver: frontendServiceResolver,
-		matchingServiceResolver: matchingServiceResolver,
-		historyServiceResolver:  historyServiceResolver,
-		workerServiceResolver:   workerServiceResolver,
+		membershipResolver: membershipResolver,
 
 		// internal services clients
 
@@ -331,9 +291,7 @@ func New(
 		clientBean:        clientBean,
 
 		// persistence clients
-
 		persistenceBean: persistenceBean,
-		visibilityMgr:   visibilityMgr,
 
 		// loggers
 
@@ -351,8 +309,7 @@ func New(
 			logger,
 			params.InstanceID,
 		),
-		membershipFactory: params.MembershipFactory,
-		rpcFactory:        params.RPCFactory,
+		rpcFactory: params.RPCFactory,
 	}
 	return impl, nil
 }
@@ -377,11 +334,11 @@ func (h *Impl) Start() {
 	if err := h.dispatcher.Start(); err != nil {
 		h.logger.WithTags(tag.Error(err)).Fatal("fail to start dispatcher")
 	}
-	h.membershipMonitor.Start()
+	h.membershipResolver.Start()
 	h.domainCache.Start()
 	h.domainMetricsScopeCache.Start()
 
-	hostInfo, err := h.membershipMonitor.WhoAmI()
+	hostInfo, err := h.membershipResolver.WhoAmI()
 	if err != nil {
 		h.logger.WithTags(tag.Error(err)).Fatal("fail to get host info from membership monitor")
 	}
@@ -406,13 +363,12 @@ func (h *Impl) Stop() {
 
 	h.domainCache.Stop()
 	h.domainMetricsScopeCache.Stop()
-	h.membershipMonitor.Stop()
+	h.membershipResolver.Stop()
 	if err := h.dispatcher.Stop(); err != nil {
 		h.logger.WithTags(tag.Error(err)).Error("failed to stop dispatcher")
 	}
 	h.runtimeMetricsReporter.Stop()
 	h.persistenceBean.Close()
-	h.visibilityMgr.Close()
 }
 
 // GetServiceName return service name
@@ -426,7 +382,7 @@ func (h *Impl) GetHostName() string {
 }
 
 // GetHostInfo return host info
-func (h *Impl) GetHostInfo() *membership.HostInfo {
+func (h *Impl) GetHostInfo() membership.HostInfo {
 	return h.hostInfo
 }
 
@@ -487,31 +443,9 @@ func (h *Impl) GetDomainReplicationQueue() domain.ReplicationQueue {
 	return h.domainReplicationQueue
 }
 
-// membership infos
-
-// GetMembershipMonitor return the membership monitor
-func (h *Impl) GetMembershipMonitor() membership.Monitor {
-	return h.membershipMonitor
-}
-
-// GetFrontendServiceResolver return frontend service resolver
-func (h *Impl) GetFrontendServiceResolver() membership.ServiceResolver {
-	return h.frontendServiceResolver
-}
-
-// GetMatchingServiceResolver return matching service resolver
-func (h *Impl) GetMatchingServiceResolver() membership.ServiceResolver {
-	return h.matchingServiceResolver
-}
-
-// GetHistoryServiceResolver return history service resolver
-func (h *Impl) GetHistoryServiceResolver() membership.ServiceResolver {
-	return h.historyServiceResolver
-}
-
-// GetWorkerServiceResolver return worker service resolver
-func (h *Impl) GetWorkerServiceResolver() membership.ServiceResolver {
-	return h.workerServiceResolver
+// GetMembershipResolver return the membership resolver
+func (h *Impl) GetMembershipResolver() membership.Resolver {
+	return h.membershipResolver
 }
 
 // internal services clients
@@ -575,8 +509,8 @@ func (h *Impl) GetClientBean() client.Bean {
 // persistence clients
 
 // GetMetadataManager return metadata manager
-func (h *Impl) GetMetadataManager() persistence.MetadataManager {
-	return h.persistenceBean.GetMetadataManager()
+func (h *Impl) GetDomainManager() persistence.DomainManager {
+	return h.persistenceBean.GetDomainManager()
 }
 
 // GetTaskManager return task manager
@@ -586,7 +520,7 @@ func (h *Impl) GetTaskManager() persistence.TaskManager {
 
 // GetVisibilityManager return visibility manager
 func (h *Impl) GetVisibilityManager() persistence.VisibilityManager {
-	return h.visibilityMgr
+	return h.persistenceBean.GetVisibilityManager()
 }
 
 // GetShardManager return shard manager

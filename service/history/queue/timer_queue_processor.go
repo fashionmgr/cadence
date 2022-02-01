@@ -248,7 +248,7 @@ func (t *timerQueueProcessor) FailoverDomain(
 	}
 
 	maxReadLevel := time.Time{}
-	actionResult, err := t.HandleAction(t.currentClusterName, NewGetStateAction())
+	actionResult, err := t.HandleAction(context.Background(), t.currentClusterName, NewGetStateAction())
 	if err != nil {
 		t.logger.Error("Timer Failover Failed", tag.WorkflowDomainIDs(domainIDs), tag.Error(err))
 		if err == errProcessorShutdown {
@@ -294,16 +294,20 @@ func (t *timerQueueProcessor) FailoverDomain(
 	failoverQueueProcessor.Start()
 }
 
-func (t *timerQueueProcessor) HandleAction(clusterName string, action *Action) (*ActionResult, error) {
+func (t *timerQueueProcessor) HandleAction(
+	ctx context.Context,
+	clusterName string,
+	action *Action,
+) (*ActionResult, error) {
 	var resultNotificationCh chan actionResultNotification
 	var added bool
 	if clusterName == t.currentClusterName {
-		resultNotificationCh, added = t.activeQueueProcessor.addAction(action)
+		resultNotificationCh, added = t.activeQueueProcessor.addAction(ctx, action)
 	} else {
 		found := false
 		for standbyClusterName, standbyProcessor := range t.standbyQueueProcessors {
 			if clusterName == standbyClusterName {
-				resultNotificationCh, added = standbyProcessor.addAction(action)
+				resultNotificationCh, added = standbyProcessor.addAction(ctx, action)
 				found = true
 				break
 			}
@@ -315,6 +319,9 @@ func (t *timerQueueProcessor) HandleAction(clusterName string, action *Action) (
 	}
 
 	if !added {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, errProcessorShutdown
 	}
 
@@ -323,6 +330,8 @@ func (t *timerQueueProcessor) HandleAction(clusterName string, action *Action) (
 		return resultNotification.result, resultNotification.err
 	case <-t.shutdownChan:
 		return nil, errProcessorShutdown
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -377,7 +386,7 @@ func (t *timerQueueProcessor) completeTimerLoop() {
 
 func (t *timerQueueProcessor) completeTimer() error {
 	newAckLevel := maximumTimerTaskKey
-	actionResult, err := t.HandleAction(t.currentClusterName, NewGetStateAction())
+	actionResult, err := t.HandleAction(context.Background(), t.currentClusterName, NewGetStateAction())
 	if err != nil {
 		return err
 	}
@@ -387,7 +396,7 @@ func (t *timerQueueProcessor) completeTimer() error {
 
 	if t.isGlobalDomainEnabled {
 		for standbyClusterName := range t.standbyQueueProcessors {
-			actionResult, err := t.HandleAction(standbyClusterName, NewGetStateAction())
+			actionResult, err := t.HandleAction(context.Background(), standbyClusterName, NewGetStateAction())
 			if err != nil {
 				return err
 			}
@@ -414,11 +423,19 @@ func (t *timerQueueProcessor) completeTimer() error {
 
 	t.metricsClient.IncCounter(metrics.TimerQueueProcessorScope, metrics.TaskBatchCompleteCounter)
 
-	if err := t.shard.GetExecutionManager().RangeCompleteTimerTask(context.Background(), &persistence.RangeCompleteTimerTaskRequest{
-		InclusiveBeginTimestamp: t.ackLevel,
-		ExclusiveEndTimestamp:   newAckLevelTimestamp,
-	}); err != nil {
-		return err
+	for {
+		pageSize := t.config.TimerTaskDeleteBatchSize()
+		resp, err := t.shard.GetExecutionManager().RangeCompleteTimerTask(context.Background(), &persistence.RangeCompleteTimerTaskRequest{
+			InclusiveBeginTimestamp: t.ackLevel,
+			ExclusiveEndTimestamp:   newAckLevelTimestamp,
+			PageSize:                pageSize, // pageSize may or may not be honored
+		})
+		if err != nil {
+			return err
+		}
+		if !persistence.HasMoreRowsToDelete(resp.TasksCompleted, pageSize) {
+			break
+		}
 	}
 
 	t.ackLevel = newAckLevelTimestamp
@@ -501,6 +518,25 @@ func newTimerQueueStandbyProcessor(
 		timer, ok := taskInfo.(*persistence.TimerTaskInfo)
 		if !ok {
 			return false, errUnexpectedQueueTask
+		}
+		if timer.TaskType == persistence.TaskTypeWorkflowTimeout ||
+			timer.TaskType == persistence.TaskTypeDeleteHistoryEvent {
+			domainEntry, err := shard.GetDomainCache().GetDomainByID(timer.DomainID)
+			if err == nil {
+				if domainEntry.HasReplicationCluster(clusterName) {
+					// guarantee the processing of workflow execution history deletion
+					return true, nil
+				}
+			} else {
+				if _, ok := err.(*types.EntityNotExistsError); !ok {
+					// retry the task if failed to find the domain
+					logger.Warn("Cannot find domain", tag.WorkflowDomainID(timer.DomainID))
+					return false, err
+				} else {
+					logger.Warn("Cannot find domain, default to not process task.", tag.WorkflowDomainID(timer.DomainID), tag.Value(timer))
+					return false, nil
+				}
+			}
 		}
 		return taskAllocator.VerifyStandbyTask(clusterName, timer.DomainID, timer)
 	}

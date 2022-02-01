@@ -44,6 +44,7 @@ type (
 		config                    *config.Config
 		domainCache               cache.DomainCache
 		metricsClient             metrics.Client
+		logger                    log.Logger
 		searchAttributesValidator *validator.SearchAttributesValidator
 	}
 
@@ -75,6 +76,7 @@ func newAttrValidator(
 		config:        config,
 		domainCache:   domainCache,
 		metricsClient: metricsClient,
+		logger:        logger,
 		searchAttributesValidator: validator.NewSearchAttributesValidator(
 			logger,
 			config.ValidSearchAttributes,
@@ -227,7 +229,10 @@ func (v *attrValidator) validateActivityScheduleAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.ActivityIDMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrActivityIDExceededWarnLimit) {
+		metrics.CadenceErrActivityIDExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeActivityID) {
 		return &types.BadRequestError{Message: "ActivityID exceeds length limit."}
 	}
 
@@ -236,7 +241,10 @@ func (v *attrValidator) validateActivityScheduleAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.ActivityTypeMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrActivityTypeExceededWarnLimit) {
+		metrics.CadenceErrActivityTypeExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeActivityType) {
 		return &types.BadRequestError{Message: "ActivityType exceeds length limit."}
 	}
 
@@ -245,7 +253,10 @@ func (v *attrValidator) validateActivityScheduleAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.DomainNameMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrDomainNameExceededWarnLimit) {
+		metrics.CadenceErrDomainNameExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeDomainName) {
 		return &types.BadRequestError{Message: "Domain exceeds length limit."}
 	}
 
@@ -359,11 +370,16 @@ func (v *attrValidator) validateTimerScheduleAttributes(
 		v.metricsClient.Scope(metricsScope),
 		v.config.MaxIDLengthWarnLimit(),
 		v.config.TimerIDMaxLength(domain),
-		metrics.CadenceErrTimerIDExceededWarnLimit) {
+		metrics.CadenceErrTimerIDExceededWarnLimit,
+		domain,
+		v.logger,
+		tag.IDTypeTimerID) {
 		return &types.BadRequestError{Message: "TimerId exceeds length limit."}
 	}
 	if attributes.GetStartToFireTimeoutSeconds() <= 0 {
-		return &types.BadRequestError{Message: "A valid StartToFireTimeoutSeconds is not set on decision."}
+		return &types.BadRequestError{
+			Message: fmt.Sprintf("Invalid StartToFireTimeoutSeconds: %v", attributes.GetStartToFireTimeoutSeconds()),
+		}
 	}
 	return nil
 }
@@ -386,7 +402,10 @@ func (v *attrValidator) validateActivityCancelAttributes(
 		v.metricsClient.Scope(metricsScope),
 		v.config.MaxIDLengthWarnLimit(),
 		v.config.ActivityIDMaxLength(domain),
-		metrics.CadenceErrActivityIDExceededWarnLimit) {
+		metrics.CadenceErrActivityIDExceededWarnLimit,
+		domain,
+		v.logger,
+		tag.IDTypeActivityID) {
 		return &types.BadRequestError{Message: "ActivityId exceeds length limit."}
 	}
 	return nil
@@ -409,7 +428,10 @@ func (v *attrValidator) validateTimerCancelAttributes(
 		v.metricsClient.Scope(metricsScope),
 		v.config.MaxIDLengthWarnLimit(),
 		v.config.TimerIDMaxLength(domain),
-		metrics.CadenceErrTimerIDExceededWarnLimit) {
+		metrics.CadenceErrTimerIDExceededWarnLimit,
+		domain,
+		v.logger,
+		tag.IDTypeTimerID) {
 		return &types.BadRequestError{Message: "TimerId exceeds length limit."}
 	}
 	return nil
@@ -432,7 +454,10 @@ func (v *attrValidator) validateRecordMarkerAttributes(
 		v.metricsClient.Scope(metricsScope),
 		v.config.MaxIDLengthWarnLimit(),
 		v.config.MarkerNameMaxLength(domain),
-		metrics.CadenceErrMarkerNameExceededWarnLimit) {
+		metrics.CadenceErrMarkerNameExceededWarnLimit,
+		domain,
+		v.logger,
+		tag.IDTypeMarkerName) {
 		return &types.BadRequestError{Message: "MarkerName exceeds length limit."}
 	}
 
@@ -499,7 +524,10 @@ func (v *attrValidator) validateCancelExternalWorkflowExecutionAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.DomainNameMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrDomainNameExceededWarnLimit) {
+		metrics.CadenceErrDomainNameExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeDomainName) {
 		return &types.BadRequestError{Message: "Domain exceeds length limit."}
 	}
 
@@ -508,7 +536,10 @@ func (v *attrValidator) validateCancelExternalWorkflowExecutionAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.WorkflowIDMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrWorkflowIDExceededWarnLimit) {
+		metrics.CadenceErrWorkflowIDExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeWorkflowID) {
 		return &types.BadRequestError{Message: "WorkflowId exceeds length limit."}
 	}
 	runID := attributes.GetRunID()
@@ -549,7 +580,10 @@ func (v *attrValidator) validateSignalExternalWorkflowExecutionAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.DomainNameMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrDomainNameExceededWarnLimit) {
+		metrics.CadenceErrDomainNameExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeDomainName) {
 		return &types.BadRequestError{Message: "Domain exceeds length limit."}
 	}
 
@@ -558,7 +592,10 @@ func (v *attrValidator) validateSignalExternalWorkflowExecutionAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.WorkflowIDMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrWorkflowIDExceededWarnLimit) {
+		metrics.CadenceErrWorkflowIDExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeWorkflowID) {
 		return &types.BadRequestError{Message: "WorkflowId exceeds length limit."}
 	}
 
@@ -614,7 +651,10 @@ func (v *attrValidator) validateContinueAsNewWorkflowExecutionAttributes(
 		v.metricsClient.Scope(metricsScope),
 		v.config.MaxIDLengthWarnLimit(),
 		v.config.WorkflowTypeMaxLength(domain),
-		metrics.CadenceErrWorkflowTypeExceededWarnLimit) {
+		metrics.CadenceErrWorkflowTypeExceededWarnLimit,
+		domain,
+		v.logger,
+		tag.IDTypeWorkflowType) {
 		return &types.BadRequestError{Message: "WorkflowType exceeds length limit."}
 	}
 
@@ -680,7 +720,10 @@ func (v *attrValidator) validateStartChildExecutionAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.DomainNameMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrDomainNameExceededWarnLimit) {
+		metrics.CadenceErrDomainNameExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeDomainName) {
 		return &types.BadRequestError{Message: "Domain exceeds length limit."}
 	}
 	if !common.ValidIDLength(
@@ -688,7 +731,10 @@ func (v *attrValidator) validateStartChildExecutionAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.WorkflowIDMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrWorkflowIDExceededWarnLimit) {
+		metrics.CadenceErrWorkflowIDExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeWorkflowID) {
 		return &types.BadRequestError{Message: "WorkflowId exceeds length limit."}
 	}
 
@@ -697,7 +743,10 @@ func (v *attrValidator) validateStartChildExecutionAttributes(
 		v.metricsClient.Scope(metricsScope),
 		idLengthWarnLimit,
 		v.config.WorkflowTypeMaxLength(attributes.GetDomain()),
-		metrics.CadenceErrWorkflowTypeExceededWarnLimit) {
+		metrics.CadenceErrWorkflowTypeExceededWarnLimit,
+		attributes.GetDomain(),
+		v.logger,
+		tag.IDTypeWorkflowType) {
 		return &types.BadRequestError{Message: "WorkflowType exceeds length limit."}
 	}
 
@@ -754,7 +803,10 @@ func (v *attrValidator) validatedTaskList(
 		v.metricsClient.Scope(metricsScope),
 		v.config.MaxIDLengthWarnLimit(),
 		v.config.TaskListNameMaxLength(domain),
-		metrics.CadenceErrTaskListNameExceededWarnLimit) {
+		metrics.CadenceErrTaskListNameExceededWarnLimit,
+		domain,
+		v.logger,
+		tag.IDTypeTaskListName) {
 		return taskList, &types.BadRequestError{
 			Message: fmt.Sprintf("task list name exceeds length limit of %v", v.config.TaskListNameMaxLength(domain)),
 		}
@@ -770,16 +822,16 @@ func (v *attrValidator) validatedTaskList(
 }
 
 func (v *attrValidator) validateCrossDomainCall(
-	domainID string,
+	sourceDomainID string,
 	targetDomainID string,
 ) error {
 
 	// same name, no check needed
-	if domainID == targetDomainID {
+	if sourceDomainID == targetDomainID {
 		return nil
 	}
 
-	domainEntry, err := v.domainCache.GetDomainByID(domainID)
+	sourceDomainEntry, err := v.domainCache.GetDomainByID(sourceDomainID)
 	if err != nil {
 		return err
 	}
@@ -789,23 +841,42 @@ func (v *attrValidator) validateCrossDomainCall(
 		return err
 	}
 
-	// both local domain
-	if !domainEntry.IsGlobalDomain() && !targetDomainEntry.IsGlobalDomain() {
+	sourceClusters := sourceDomainEntry.GetReplicationConfig().Clusters
+	targetClusters := targetDomainEntry.GetReplicationConfig().Clusters
+
+	// both "local domain"
+	// here a domain is "local domain" when:
+	// - IsGlobalDomain() returns false
+	// - domainCluster contains only one cluster
+	// case 1 can be actually be combined with this case
+	if len(sourceClusters) == 1 && len(targetClusters) == 1 {
+		if sourceClusters[0].ClusterName == targetClusters[0].ClusterName {
+			return nil
+		}
+		return v.createCrossDomainCallError(sourceDomainEntry, targetDomainEntry)
+	}
+
+	// both global domain with > 1 replication cluster
+	// when code reaches here, at least one domain has more than one cluster
+	if len(sourceClusters) == len(targetClusters) &&
+		v.config.EnableCrossClusterOperations(sourceDomainEntry.GetInfo().Name) {
+		// check if the source domain cluster matches those for the target domain
+		for _, sourceCluster := range sourceClusters {
+			found := false
+			for _, targetCluster := range targetClusters {
+				if sourceCluster.ClusterName == targetCluster.ClusterName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return v.createCrossDomainCallError(sourceDomainEntry, targetDomainEntry)
+			}
+		}
 		return nil
 	}
 
-	domainClusters := domainEntry.GetReplicationConfig().Clusters
-	targetDomainClusters := targetDomainEntry.GetReplicationConfig().Clusters
-
-	// one is local domain, another one is global domain or both global domain
-	// treat global domain with one replication cluster as local domain
-	if len(domainClusters) == 1 && len(targetDomainClusters) == 1 {
-		if *domainClusters[0] == *targetDomainClusters[0] {
-			return nil
-		}
-		return v.createCrossDomainCallError(domainEntry, targetDomainEntry)
-	}
-	return v.createCrossDomainCallError(domainEntry, targetDomainEntry)
+	return v.createCrossDomainCallError(sourceDomainEntry, targetDomainEntry)
 }
 
 func (v *attrValidator) createCrossDomainCallError(

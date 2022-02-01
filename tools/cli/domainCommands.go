@@ -88,7 +88,7 @@ func (d *domainCLIImpl) RegisterDomain(c *cli.Context) {
 	securityToken := c.String(FlagSecurityToken)
 	var err error
 
-	isGlobalDomain := false
+	isGlobalDomain := true
 	if c.IsSet(FlagIsGlobalDomain) {
 		isGlobalDomain, err = strconv.ParseBool(c.String(FlagIsGlobalDomain))
 		if err != nil {
@@ -286,12 +286,12 @@ func (d *domainCLIImpl) DeprecateDomain(c *cli.Context) {
 
 	if !force {
 		// check if there is any workflow in this domain, if exists, do not deprecate
-		wfs, _ := listClosedWorkflow(getWorkflowClient(c), 1, 0, time.Now().UnixNano(), "", "", workflowStatusNotSet, nil, c)
+		wfs, _ := listClosedWorkflow(getWorkflowClient(c), 1, 0, time.Now().UnixNano(), domainName, "", "", workflowStatusNotSet, nil, c)
 		if len(wfs) > 0 {
 			ErrorAndExit("Operation DeprecateDomain failed.", errors.New("workflow history not cleared in this domain"))
 			return
 		}
-		wfs, _ = listOpenWorkflow(getWorkflowClient(c), 1, 0, time.Now().UnixNano(), "", "", nil, c)
+		wfs, _ = listOpenWorkflow(getWorkflowClient(c), 1, 0, time.Now().UnixNano(), domainName, "", "", nil, c)
 		if len(wfs) > 0 {
 			ErrorAndExit("Operation DeprecateDomain failed.", errors.New("workflow still running in this domain"))
 			return
@@ -388,21 +388,36 @@ func (d *domainCLIImpl) failover(c *cli.Context, domainName string, targetCluste
 func (d *domainCLIImpl) DescribeDomain(c *cli.Context) {
 	domainName := c.GlobalString(FlagDomain)
 	domainID := c.String(FlagDomainID)
+	printJSON := c.Bool(FlagPrintJSON)
 
+	request := types.DescribeDomainRequest{}
+	if domainID != "" {
+		request.UUID = &domainID
+	}
+	if domainName != "" {
+		request.Name = &domainName
+	}
 	if domainID == "" && domainName == "" {
 		ErrorAndExit("At least domainID or domainName must be provided.", nil)
 	}
+
 	ctx, cancel := newContext(c)
 	defer cancel()
-	resp, err := d.describeDomain(ctx, &types.DescribeDomainRequest{
-		Name: common.StringPtr(domainName),
-		UUID: common.StringPtr(domainID),
-	})
+	resp, err := d.describeDomain(ctx, &request)
 	if err != nil {
 		if _, ok := err.(*types.EntityNotExistsError); !ok {
 			ErrorAndExit("Operation DescribeDomain failed.", err)
 		}
 		ErrorAndExit(fmt.Sprintf("Domain %s does not exist.", domainName), err)
+	}
+
+	if printJSON {
+		output, err := json.Marshal(resp)
+		if err != nil {
+			ErrorAndExit("Failed to encode domain response into JSON.", err)
+		}
+		fmt.Println(string(output))
+		return
 	}
 
 	clusters := "N/A, Not a global domain"
@@ -454,10 +469,28 @@ func (d *domainCLIImpl) DescribeDomain(c *cli.Context) {
 		}
 		table.Render()
 	}
+	if resp.GetFailoverInfo() != nil {
+		info := resp.GetFailoverInfo()
+		fmt.Println("Graceful failover info:")
+		table := tablewriter.NewWriter(os.Stdout)
+		table.SetBorder(true)
+		table.SetColumnSeparator("|")
+		header := []string{"Failover Version", "Start Time", "Expire Time", "Completed Shard Count", "Pending Shard"}
+		table.SetHeader(header)
+		row := []string{}
+		row = append(row, fmt.Sprintf("%v", info.GetFailoverVersion()))
+		row = append(row, time.Unix(0, info.GetFailoverStartTimestamp()).String())
+		row = append(row, time.Unix(0, info.GetFailoverExpireTimestamp()).String())
+		row = append(row, fmt.Sprintf("%v", info.GetCompletedShardCount()))
+		row = append(row, fmt.Sprintf("%v", info.GetPendingShards()))
+		table.Append(row)
+		table.Render()
+	}
 }
 
 func (d *domainCLIImpl) ListDomains(c *cli.Context) {
 	pageSize := c.Int(FlagPageSize)
+	prefix := c.String(FlagPrefix)
 	printAll := c.Bool(FlagAll)
 	printDeprecated := c.Bool(FlagDeprecated)
 	printFull := c.Bool(FlagPrintFullyDetail)
@@ -469,6 +502,18 @@ func (d *domainCLIImpl) ListDomains(c *cli.Context) {
 
 	domains := d.getAllDomains(c)
 	var filteredDomains []*types.DescribeDomainResponse
+
+	// Only list domains that are matching to the prefix if prefix is provided
+	if len(prefix) > 0 {
+		var prefixDomains []*types.DescribeDomainResponse
+		for _, domain := range domains {
+			if strings.Index(domain.DomainInfo.Name, prefix) == 0 {
+				prefixDomains = append(prefixDomains, domain)
+			}
+		}
+		domains = prefixDomains
+	}
+
 	if printAll {
 		filteredDomains = domains
 	} else {

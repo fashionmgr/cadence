@@ -60,7 +60,7 @@ type (
 
 	metadataRateLimitedPersistenceClient struct {
 		rateLimiter quotas.Limiter
-		persistence MetadataManager
+		persistence DomainManager
 		logger      log.Logger
 	}
 
@@ -75,15 +75,22 @@ type (
 		persistence QueueManager
 		logger      log.Logger
 	}
+
+	configStoreRateLimitedPersistenceClient struct {
+		rateLimiter quotas.Limiter
+		persistence ConfigStoreManager
+		logger      log.Logger
+	}
 )
 
 var _ ShardManager = (*shardRateLimitedPersistenceClient)(nil)
 var _ ExecutionManager = (*workflowExecutionRateLimitedPersistenceClient)(nil)
 var _ TaskManager = (*taskRateLimitedPersistenceClient)(nil)
 var _ HistoryManager = (*historyRateLimitedPersistenceClient)(nil)
-var _ MetadataManager = (*metadataRateLimitedPersistenceClient)(nil)
+var _ DomainManager = (*metadataRateLimitedPersistenceClient)(nil)
 var _ VisibilityManager = (*visibilityRateLimitedPersistenceClient)(nil)
 var _ QueueManager = (*queueRateLimitedPersistenceClient)(nil)
+var _ ConfigStoreManager = (*configStoreRateLimitedPersistenceClient)(nil)
 
 // NewShardPersistenceRateLimitedClient creates a client to manage shards
 func NewShardPersistenceRateLimitedClient(
@@ -137,12 +144,12 @@ func NewHistoryPersistenceRateLimitedClient(
 	}
 }
 
-// NewMetadataPersistenceRateLimitedClient creates a MetadataManager client to manage metadata
-func NewMetadataPersistenceRateLimitedClient(
-	persistence MetadataManager,
+// NewDomainPersistenceRateLimitedClient creates a DomainManager client to manage metadata
+func NewDomainPersistenceRateLimitedClient(
+	persistence DomainManager,
 	rateLimiter quotas.Limiter,
 	logger log.Logger,
-) MetadataManager {
+) DomainManager {
 	return &metadataRateLimitedPersistenceClient{
 		persistence: persistence,
 		rateLimiter: rateLimiter,
@@ -170,6 +177,19 @@ func NewQueuePersistenceRateLimitedClient(
 	logger log.Logger,
 ) QueueManager {
 	return &queueRateLimitedPersistenceClient{
+		persistence: persistence,
+		rateLimiter: rateLimiter,
+		logger:      logger,
+	}
+}
+
+// NewConfigStorePersistenceRateLimitedClient creates a client to manage config store
+func NewConfigStorePersistenceRateLimitedClient(
+	persistence ConfigStoreManager,
+	rateLimiter quotas.Limiter,
+	logger log.Logger,
+) ConfigStoreManager {
+	return &configStoreRateLimitedPersistenceClient{
 		persistence: persistence,
 		rateLimiter: rateLimiter,
 		logger:      logger,
@@ -399,13 +419,12 @@ func (p *workflowExecutionRateLimitedPersistenceClient) CompleteTransferTask(
 func (p *workflowExecutionRateLimitedPersistenceClient) RangeCompleteTransferTask(
 	ctx context.Context,
 	request *RangeCompleteTransferTaskRequest,
-) error {
+) (*RangeCompleteTransferTaskResponse, error) {
 	if ok := p.rateLimiter.Allow(); !ok {
-		return ErrPersistenceLimitExceeded
+		return nil, ErrPersistenceLimitExceeded
 	}
 
-	err := p.persistence.RangeCompleteTransferTask(ctx, request)
-	return err
+	return p.persistence.RangeCompleteTransferTask(ctx, request)
 }
 
 func (p *workflowExecutionRateLimitedPersistenceClient) CompleteCrossClusterTask(
@@ -423,13 +442,12 @@ func (p *workflowExecutionRateLimitedPersistenceClient) CompleteCrossClusterTask
 func (p *workflowExecutionRateLimitedPersistenceClient) RangeCompleteCrossClusterTask(
 	ctx context.Context,
 	request *RangeCompleteCrossClusterTaskRequest,
-) error {
+) (*RangeCompleteCrossClusterTaskResponse, error) {
 	if ok := p.rateLimiter.Allow(); !ok {
-		return ErrPersistenceLimitExceeded
+		return nil, ErrPersistenceLimitExceeded
 	}
 
-	err := p.persistence.RangeCompleteCrossClusterTask(ctx, request)
-	return err
+	return p.persistence.RangeCompleteCrossClusterTask(ctx, request)
 }
 
 func (p *workflowExecutionRateLimitedPersistenceClient) CompleteReplicationTask(
@@ -447,13 +465,12 @@ func (p *workflowExecutionRateLimitedPersistenceClient) CompleteReplicationTask(
 func (p *workflowExecutionRateLimitedPersistenceClient) RangeCompleteReplicationTask(
 	ctx context.Context,
 	request *RangeCompleteReplicationTaskRequest,
-) error {
+) (*RangeCompleteReplicationTaskResponse, error) {
 	if ok := p.rateLimiter.Allow(); !ok {
-		return ErrPersistenceLimitExceeded
+		return nil, ErrPersistenceLimitExceeded
 	}
 
-	err := p.persistence.RangeCompleteReplicationTask(ctx, request)
-	return err
+	return p.persistence.RangeCompleteReplicationTask(ctx, request)
 }
 
 func (p *workflowExecutionRateLimitedPersistenceClient) PutReplicationTaskToDLQ(
@@ -503,9 +520,9 @@ func (p *workflowExecutionRateLimitedPersistenceClient) DeleteReplicationTaskFro
 func (p *workflowExecutionRateLimitedPersistenceClient) RangeDeleteReplicationTaskFromDLQ(
 	ctx context.Context,
 	request *RangeDeleteReplicationTaskFromDLQRequest,
-) error {
+) (*RangeDeleteReplicationTaskFromDLQResponse, error) {
 	if ok := p.rateLimiter.Allow(); !ok {
-		return ErrPersistenceLimitExceeded
+		return nil, ErrPersistenceLimitExceeded
 	}
 
 	return p.persistence.RangeDeleteReplicationTaskFromDLQ(ctx, request)
@@ -550,13 +567,12 @@ func (p *workflowExecutionRateLimitedPersistenceClient) CompleteTimerTask(
 func (p *workflowExecutionRateLimitedPersistenceClient) RangeCompleteTimerTask(
 	ctx context.Context,
 	request *RangeCompleteTimerTaskRequest,
-) error {
+) (*RangeCompleteTimerTaskResponse, error) {
 	if ok := p.rateLimiter.Allow(); !ok {
-		return ErrPersistenceLimitExceeded
+		return nil, ErrPersistenceLimitExceeded
 	}
 
-	err := p.persistence.RangeCompleteTimerTask(ctx, request)
-	return err
+	return p.persistence.RangeCompleteTimerTask(ctx, request)
 }
 
 func (p *workflowExecutionRateLimitedPersistenceClient) Close() {
@@ -606,9 +622,9 @@ func (p *taskRateLimitedPersistenceClient) CompleteTask(
 func (p *taskRateLimitedPersistenceClient) CompleteTasksLessThan(
 	ctx context.Context,
 	request *CompleteTasksLessThanRequest,
-) (int, error) {
+) (*CompleteTasksLessThanResponse, error) {
 	if ok := p.rateLimiter.Allow(); !ok {
-		return 0, ErrPersistenceLimitExceeded
+		return nil, ErrPersistenceLimitExceeded
 	}
 	return p.persistence.CompleteTasksLessThan(ctx, request)
 }
@@ -1178,5 +1194,24 @@ func (p *queueRateLimitedPersistenceClient) DeleteMessageFromDLQ(
 }
 
 func (p *queueRateLimitedPersistenceClient) Close() {
+	p.persistence.Close()
+}
+
+func (p *configStoreRateLimitedPersistenceClient) FetchDynamicConfig(ctx context.Context) (*FetchDynamicConfigResponse, error) {
+	if ok := p.rateLimiter.Allow(); !ok {
+		return nil, ErrPersistenceLimitExceeded
+	}
+
+	return p.persistence.FetchDynamicConfig(ctx)
+}
+
+func (p *configStoreRateLimitedPersistenceClient) UpdateDynamicConfig(ctx context.Context, request *UpdateDynamicConfigRequest) error {
+	if ok := p.rateLimiter.Allow(); !ok {
+		return ErrPersistenceLimitExceeded
+	}
+	return p.persistence.UpdateDynamicConfig(ctx, request)
+}
+
+func (p *configStoreRateLimitedPersistenceClient) Close() {
 	p.persistence.Close()
 }

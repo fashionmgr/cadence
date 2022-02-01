@@ -177,9 +177,10 @@ func (h *historyArchiver) Archive(
 			return err
 		}
 
-		if historyMutated(request, historyBlob.Body, *historyBlob.Header.IsLast) {
-			logger.Error(archiver.ArchiveNonRetriableErrorMsg, tag.ArchivalArchiveFailReason(archiver.ErrReasonHistoryMutated))
-			return archiver.ErrHistoryMutated
+		if archiver.IsHistoryMutated(request, historyBlob.Body, *historyBlob.Header.IsLast, logger) {
+			if !featureCatalog.ArchiveIncompleteHistory() {
+				return archiver.ErrHistoryMutated
+			}
 		}
 
 		encodedHistoryBlob, err := encode(historyBlob)
@@ -360,6 +361,10 @@ func getNextHistoryBlob(ctx context.Context, historyIterator archiver.HistoryIte
 		historyBlob, err = historyIterator.Next()
 		return err
 	}
+	throttleRetry := backoff.NewThrottleRetry(
+		backoff.WithRetryPolicy(common.CreatePersistenceRetryPolicy()),
+		backoff.WithRetryableError(persistence.IsTransientError),
+	)
 	for err != nil {
 		if contextExpired(ctx) {
 			return nil, archiver.ErrContextTimeout
@@ -367,11 +372,14 @@ func getNextHistoryBlob(ctx context.Context, historyIterator archiver.HistoryIte
 		if !persistence.IsTransientError(err) {
 			return nil, err
 		}
-		err = backoff.Retry(op, common.CreatePersistenceRetryPolicy(), persistence.IsTransientError)
+		err = throttleRetry.Do(ctx, op)
 	}
 	return historyBlob, nil
 }
 
+// with XDC(global domain) concept, archival may write different history with the same RunID, with different failoverVersion.
+// In that case, the history/runID with the highest failoverVersion wins.
+// getHighestVersion look up all archived files to find the highest failoverVersion.
 func (h *historyArchiver) getHighestVersion(ctx context.Context, URI archiver.URI, request *archiver.GetHistoryRequest) (*int64, error) {
 	ctx, cancel := ensureContextTimeout(ctx)
 	defer cancel()

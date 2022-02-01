@@ -133,3 +133,33 @@ func (t thriftClient) ResetQueue(ctx context.Context, request *types.ResetQueueR
 	err := t.c.ResetQueue(ctx, thrift.FromResetQueueRequest(request), opts...)
 	return thrift.ToError(err)
 }
+
+func (t thriftClient) GetCrossClusterTasks(ctx context.Context, request *types.GetCrossClusterTasksRequest, opts ...yarpc.CallOption) (*types.GetCrossClusterTasksResponse, error) {
+	response, err := t.c.GetCrossClusterTasks(ctx, thrift.FromGetCrossClusterTasksRequest(request), opts...)
+	return thrift.ToGetCrossClusterTasksResponse(response), thrift.ToError(err)
+}
+
+func (t thriftClient) RespondCrossClusterTasksCompleted(ctx context.Context, request *types.RespondCrossClusterTasksCompletedRequest, opts ...yarpc.CallOption) (*types.RespondCrossClusterTasksCompletedResponse, error) {
+	response, err := t.c.RespondCrossClusterTasksCompleted(ctx, thrift.FromRespondCrossClusterTasksCompletedRequest(request), opts...)
+	return thrift.ToRespondCrossClusterTasksCompletedResponse(response), thrift.ToError(err)
+}
+
+func (t thriftClient) GetDynamicConfig(ctx context.Context, request *types.GetDynamicConfigRequest, opts ...yarpc.CallOption) (*types.GetDynamicConfigResponse, error) {
+	response, err := t.c.GetDynamicConfig(ctx, thrift.FromGetDynamicConfigRequest(request), opts...)
+	return thrift.ToGetDynamicConfigResponse(response), thrift.ToError(err)
+}
+
+func (t thriftClient) UpdateDynamicConfig(ctx context.Context, request *types.UpdateDynamicConfigRequest, opts ...yarpc.CallOption) error {
+	err := t.c.UpdateDynamicConfig(ctx, thrift.FromUpdateDynamicConfigRequest(request), opts...)
+	return thrift.ToError(err)
+}
+
+func (t thriftClient) RestoreDynamicConfig(ctx context.Context, request *types.RestoreDynamicConfigRequest, opts ...yarpc.CallOption) error {
+	err := t.c.RestoreDynamicConfig(ctx, thrift.FromRestoreDynamicConfigRequest(request), opts...)
+	return thrift.ToError(err)
+}
+
+func (t thriftClient) ListDynamicConfig(ctx context.Context, request *types.ListDynamicConfigRequest, opts ...yarpc.CallOption) (*types.ListDynamicConfigResponse, error) {
+	response, err := t.c.ListDynamicConfig(ctx, thrift.FromListDynamicConfigRequest(request), opts...)
+	return thrift.ToListDynamicConfigResponse(response), thrift.ToError(err)
+}

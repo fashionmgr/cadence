@@ -39,7 +39,6 @@ import (
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/checksum"
-	"github.com/uber/cadence/common/config"
 	p "github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/types"
 )
@@ -742,6 +741,87 @@ func (s *ExecutionManagerSuite) TestUpdateWorkflowExecutionWithZombieState() {
 	s.Equal(workflowExecutionRunning.GetRunID(), currentRunID)
 }
 
+// TestUpdateWorkflowExecutionTasks test
+func (s *ExecutionManagerSuite) TestUpdateWorkflowExecutionTasks() {
+	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
+	defer cancel()
+
+	domainID := "b0a8571c-0257-40ea-afcd-3a14eae181c0"
+	workflowExecution := types.WorkflowExecution{
+		WorkflowID: "update-workflow-tasks-test",
+		RunID:      "5ba5e531-e46b-48d9-b4b3-859919839553",
+	}
+	task0, err0 := s.CreateWorkflowExecution(ctx, domainID, workflowExecution, "queue1", "wType", 20, 13, nil, 3, 0, 2, nil)
+	s.NoError(err0)
+	s.NotNil(task0, "Expected non empty task identifier.")
+
+	taskD, err := s.GetTransferTasks(ctx, 1, false)
+	s.Equal(1, len(taskD), "Expected 1 decision task.")
+	err = s.CompleteTransferTask(ctx, taskD[0].TaskID)
+	s.NoError(err)
+
+	state1, err := s.GetWorkflowExecutionInfo(ctx, domainID, workflowExecution)
+	s.NoError(err)
+	info1 := state1.ExecutionInfo
+	s.NotNil(info1, "Valid Workflow info expected.")
+	updatedInfo1 := copyWorkflowExecutionInfo(info1)
+	updatedStats1 := copyExecutionStats(state1.ExecutionStats)
+
+	now := time.Now()
+	remoteClusterName := "remote-cluster"
+	transferTasks := []p.Task{
+		&p.ActivityTask{
+			VisibilityTimestamp: now,
+			TaskID:              s.GetNextSequenceNumber(),
+			DomainID:            domainID,
+			TaskList:            "some randome tasklist name",
+			ScheduleID:          123,
+			Version:             common.EmptyVersion,
+		},
+	}
+	timerTasks := []p.Task{
+		&p.UserTimerTask{
+			VisibilityTimestamp: now.Add(time.Minute),
+			TaskID:              s.GetNextSequenceNumber(),
+			EventID:             124,
+			Version:             common.EmptyVersion,
+		},
+	}
+	crossClusterTasks := []p.Task{
+		&p.CrossClusterApplyParentClosePolicyTask{
+			ApplyParentClosePolicyTask: p.ApplyParentClosePolicyTask{
+				VisibilityTimestamp: now,
+				TaskID:              s.GetNextSequenceNumber(),
+				Version:             common.EmptyVersion,
+			},
+			TargetCluster: remoteClusterName,
+		},
+	}
+
+	err = s.UpdateWorkflowExecutionTasks(
+		ctx,
+		updatedInfo1,
+		updatedStats1,
+		int64(3),
+		transferTasks,
+		timerTasks,
+		crossClusterTasks,
+	)
+	s.NoError(err)
+
+	loadedTransferTasks, err := s.GetTransferTasks(ctx, 10, true)
+	s.NoError(err)
+	s.Len(loadedTransferTasks, len(transferTasks))
+
+	loadedTimerTasks, err := s.GetTimerIndexTasks(ctx, 10, true)
+	s.NoError(err)
+	s.Len(loadedTimerTasks, len(timerTasks))
+
+	loadedCrossClusterTasks, err := s.GetCrossClusterTasks(ctx, remoteClusterName, 0, 10, true)
+	s.NoError(err)
+	s.Len(loadedCrossClusterTasks, len(crossClusterTasks))
+}
+
 // TestCreateWorkflowExecutionBrandNew test
 func (s *ExecutionManagerSuite) TestCreateWorkflowExecutionBrandNew() {
 	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
@@ -1137,6 +1217,7 @@ func (s *ExecutionManagerSuite) TestGetWorkflow() {
 	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
 	defer cancel()
 
+	now := time.Now()
 	testResetPoints := types.ResetPoints{
 		Points: []*types.ResetPointInfo{
 			{
@@ -1191,6 +1272,8 @@ func (s *ExecutionManagerSuite) TestGetWorkflow() {
 				LastFirstEventID:            common.FirstEventID,
 				NextEventID:                 rand.Int63(),
 				LastProcessedEvent:          int64(rand.Int31()),
+				LastUpdatedTimestamp:        now,
+				StartTimestamp:              now,
 				SignalCount:                 rand.Int31(),
 				DecisionVersion:             int64(rand.Int31()),
 				DecisionScheduleID:          decisionScheduleID,
@@ -1249,6 +1332,7 @@ func (s *ExecutionManagerSuite) TestGetWorkflow() {
 	s.Equal(createReq.NewWorkflowSnapshot.ExecutionInfo.NextEventID, info.NextEventID)
 	s.Equal(createReq.NewWorkflowSnapshot.ExecutionInfo.LastProcessedEvent, info.LastProcessedEvent)
 	s.Equal(true, s.validateTimeRange(info.LastUpdatedTimestamp, time.Hour))
+	s.Equal(true, s.validateTimeRange(info.StartTimestamp, time.Hour))
 	s.Equal(createReq.NewWorkflowSnapshot.ExecutionInfo.DecisionVersion, info.DecisionVersion)
 	s.Equal(createReq.NewWorkflowSnapshot.ExecutionInfo.DecisionScheduleID, info.DecisionScheduleID)
 	s.Equal(createReq.NewWorkflowSnapshot.ExecutionInfo.DecisionStartedID, info.DecisionStartedID)
@@ -1307,7 +1391,8 @@ func (s *ExecutionManagerSuite) TestUpdateWorkflow() {
 	s.Equal(int64(1), info0.LastFirstEventID)
 	s.Equal(int64(3), info0.NextEventID)
 	s.Equal(int64(0), info0.LastProcessedEvent)
-	s.Equal(true, s.validateTimeRange(info0.LastUpdatedTimestamp, time.Hour))
+	s.Equal(true, s.validateTimeRange(info0.LastUpdatedTimestamp, time.Minute))
+	s.Equal(true, s.validateTimeRange(info0.StartTimestamp, time.Minute))
 	s.Equal(int64(0), info0.DecisionVersion)
 	s.Equal(int64(2), info0.DecisionScheduleID)
 	s.Equal(common.EmptyEventID, info0.DecisionStartedID)
@@ -1388,6 +1473,7 @@ func (s *ExecutionManagerSuite) TestUpdateWorkflow() {
 	s.Equal(int64(5), info1.NextEventID)
 	s.Equal(int64(2), info1.LastProcessedEvent)
 	s.Equal(true, s.validateTimeRange(info1.LastUpdatedTimestamp, time.Hour))
+	s.Equal(info0.StartTimestamp.UnixNano(), info1.StartTimestamp.UnixNano())
 	s.Equal(int64(666), info1.DecisionVersion)
 	s.Equal(int64(2), info1.DecisionScheduleID)
 	s.Equal(common.EmptyEventID, info1.DecisionStartedID)
@@ -2011,7 +2097,7 @@ func (s *ExecutionManagerSuite) TestCancelTransferTaskTasks() {
 		TargetDomainID:          targetDomainID,
 		TargetWorkflowID:        targetWorkflowID,
 		TargetRunID:             targetRunID,
-		TargetChildWorkflowOnly: false,
+		TargetChildWorkflowOnly: targetChildWorkflowOnly,
 		InitiatedID:             1,
 	}}
 	versionHistory := p.NewVersionHistory([]byte{}, []*p.VersionHistoryItem{
@@ -2268,12 +2354,8 @@ func (s *ExecutionManagerSuite) TestReplicationTasks() {
 	}
 }
 
+// TestCrossClusterTasks test
 func (s *ExecutionManagerSuite) TestCrossClusterTasks() {
-	if s.TestBase.Config().DefaultStore != config.StoreTypeCassandra {
-		// TODO: remove this check once cross cluster queue related methods is impelmented for SQL
-		s.T().Skip()
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
 	defer cancel()
 
@@ -2323,20 +2405,42 @@ func (s *ExecutionManagerSuite) TestCrossClusterTasks() {
 			},
 		},
 	}
-	crossClusterTasks2 := &p.CrossClusterCancelExecutionTask{
-		TargetCluster: remoteClusterName2,
-		CancelExecutionTask: p.CancelExecutionTask{
-			VisibilityTimestamp:     now,
-			TaskID:                  s.GetNextSequenceNumber(),
-			TargetDomainID:          uuid.New(),
-			TargetWorkflowID:        "target workflowID 3",
-			TargetRunID:             uuid.New(),
-			TargetChildWorkflowOnly: true,
-			InitiatedID:             6,
-			Version:                 123,
+	crossClusterTasks2 := []p.Task{
+		&p.CrossClusterCancelExecutionTask{
+			TargetCluster: remoteClusterName2,
+			CancelExecutionTask: p.CancelExecutionTask{
+				VisibilityTimestamp:     now,
+				TaskID:                  s.GetNextSequenceNumber(),
+				TargetDomainID:          uuid.New(),
+				TargetWorkflowID:        "target workflowID 3",
+				TargetRunID:             uuid.New(),
+				TargetChildWorkflowOnly: true,
+				InitiatedID:             6,
+				Version:                 123,
+			},
+		},
+		&p.CrossClusterRecordChildExecutionCompletedTask{
+			TargetCluster: remoteClusterName2,
+			RecordChildExecutionCompletedTask: p.RecordChildExecutionCompletedTask{
+				VisibilityTimestamp: now,
+				TaskID:              s.GetNextSequenceNumber(),
+				TargetDomainID:      uuid.New(),
+				TargetWorkflowID:    "target workflowID 4",
+				TargetRunID:         uuid.New(),
+				Version:             123,
+			},
+		},
+		&p.CrossClusterApplyParentClosePolicyTask{
+			TargetCluster: remoteClusterName2,
+			ApplyParentClosePolicyTask: p.ApplyParentClosePolicyTask{
+				VisibilityTimestamp: now,
+				TaskID:              s.GetNextSequenceNumber(),
+				TargetDomainIDs:     map[string]struct{}{uuid.New(): {}, uuid.New(): {}},
+				Version:             123,
+			},
 		},
 	}
-	crossClusterTasks := append(crossClusterTasks1, crossClusterTasks2)
+	crossClusterTasks := append(crossClusterTasks1, crossClusterTasks2...)
 
 	versionHistory := p.NewVersionHistory([]byte{}, []*p.VersionHistoryItem{
 		{
@@ -2363,11 +2467,13 @@ func (s *ExecutionManagerSuite) TestCrossClusterTasks() {
 	// check created tasks for cluster 2
 	respTasks, err = s.GetCrossClusterTasks(ctx, remoteClusterName2, 0, 1, true)
 	s.NoError(err)
-	s.validateCrossClusterTasks([]p.Task{crossClusterTasks2}, respTasks)
+	s.validateCrossClusterTasks(crossClusterTasks2, respTasks)
 
-	// range delete tasks for cluster 1
-	err = s.CompleteCrossClusterTask(ctx, remoteClusterName2, respTasks[0].TaskID)
-	s.NoError(err)
+	// delete tasks for cluster 2
+	for idx := range respTasks {
+		err = s.CompleteCrossClusterTask(ctx, remoteClusterName2, respTasks[idx].TaskID)
+		s.NoError(err)
+	}
 	respTasks, err = s.GetCrossClusterTasks(ctx, remoteClusterName2, 0, 1, true)
 	s.NoError(err)
 	s.Empty(respTasks)
@@ -2382,20 +2488,30 @@ func (s *ExecutionManagerSuite) validateCrossClusterTasks(
 		s.Equal(tasks[index].GetTaskID(), loadedTaskInfo[index].GetTaskID())
 		s.Equal(tasks[index].GetType(), loadedTaskInfo[index].GetTaskType())
 		s.Equal(tasks[index].GetVersion(), loadedTaskInfo[index].GetVersion())
+		s.EqualTimesWithPrecision(tasks[index].GetVisibilityTimestamp(), loadedTaskInfo[index].GetVisibilityTimestamp(), time.Millisecond)
 		switch task := tasks[index].(type) {
 		case *p.CrossClusterStartChildExecutionTask:
 			s.Equal(task.TargetDomainID, loadedTaskInfo[index].TargetDomainID)
 			s.Equal(task.TargetWorkflowID, loadedTaskInfo[index].TargetWorkflowID)
+			s.Equal(task.InitiatedID, loadedTaskInfo[index].ScheduleID)
 		case *p.CrossClusterSignalExecutionTask:
 			s.Equal(task.TargetDomainID, loadedTaskInfo[index].TargetDomainID)
 			s.Equal(task.TargetWorkflowID, loadedTaskInfo[index].TargetWorkflowID)
 			s.Equal(task.TargetRunID, loadedTaskInfo[index].TargetRunID)
 			s.Equal(task.TargetChildWorkflowOnly, loadedTaskInfo[index].TargetChildWorkflowOnly)
+			s.Equal(task.InitiatedID, loadedTaskInfo[index].ScheduleID)
 		case *p.CrossClusterCancelExecutionTask:
 			s.Equal(task.TargetDomainID, loadedTaskInfo[index].TargetDomainID)
 			s.Equal(task.TargetWorkflowID, loadedTaskInfo[index].TargetWorkflowID)
 			s.Equal(task.TargetRunID, loadedTaskInfo[index].TargetRunID)
 			s.Equal(task.TargetChildWorkflowOnly, loadedTaskInfo[index].TargetChildWorkflowOnly)
+			s.Equal(task.InitiatedID, loadedTaskInfo[index].ScheduleID)
+		case *p.CrossClusterRecordChildExecutionCompletedTask:
+			s.Equal(task.TargetDomainID, loadedTaskInfo[index].TargetDomainID)
+			s.Equal(task.TargetWorkflowID, loadedTaskInfo[index].TargetWorkflowID)
+			s.Equal(task.TargetRunID, loadedTaskInfo[index].TargetRunID)
+		case *p.CrossClusterApplyParentClosePolicyTask:
+			s.Equal(task.TargetDomainIDs, loadedTaskInfo[index].GetTargetDomainIDs())
 		default:
 			s.FailNow("unknown cross cluster task type")
 		}
@@ -2447,7 +2563,7 @@ func (s *ExecutionManagerSuite) TestTransferTasksComplete() {
 	targetDomainID := "8bfb47be-5b57-4d66-9109-5fb35e20b1d0"
 	targetWorkflowID := "some random target domain ID"
 	targetRunID := uuid.New()
-	currentTransferID := s.GetTransferReadLevel()
+	currentTransferID := task1.TaskID
 	now := time.Now()
 	tasks := []p.Task{
 		&p.ActivityTask{now, currentTransferID + 10001, domainID, tasklist, scheduleID, 111},
@@ -2456,6 +2572,9 @@ func (s *ExecutionManagerSuite) TestTransferTasksComplete() {
 		&p.CancelExecutionTask{now, currentTransferID + 10004, targetDomainID, targetWorkflowID, targetRunID, true, scheduleID, 444},
 		&p.SignalExecutionTask{now, currentTransferID + 10005, targetDomainID, targetWorkflowID, targetRunID, true, scheduleID, 555},
 		&p.StartChildExecutionTask{now, currentTransferID + 10006, targetDomainID, targetWorkflowID, scheduleID, 666},
+		&p.RecordWorkflowClosedTask{now, currentTransferID + 10007, 777},
+		&p.RecordChildExecutionCompletedTask{now, currentTransferID + 10008, targetDomainID, targetWorkflowID, targetRunID, 888},
+		&p.ApplyParentClosePolicyTask{now, currentTransferID + 10009, map[string]struct{}{targetDomainID: {}}, 999},
 	}
 	versionHistory := p.NewVersionHistory([]byte{}, []*p.VersionHistoryItem{
 		{
@@ -2480,30 +2599,16 @@ func (s *ExecutionManagerSuite) TestTransferTasksComplete() {
 	s.Equal(p.TransferTaskTypeCancelExecution, txTasks[3].TaskType)
 	s.Equal(p.TransferTaskTypeSignalExecution, txTasks[4].TaskType)
 	s.Equal(p.TransferTaskTypeStartChildExecution, txTasks[5].TaskType)
-	s.Equal(int64(111), txTasks[0].Version)
-	s.Equal(int64(222), txTasks[1].Version)
-	s.Equal(int64(333), txTasks[2].Version)
-	s.Equal(int64(444), txTasks[3].Version)
-	s.Equal(int64(555), txTasks[4].Version)
-	s.Equal(int64(666), txTasks[5].Version)
+	s.Equal(p.TransferTaskTypeRecordWorkflowClosed, txTasks[6].TaskType)
+	s.Equal(p.TransferTaskTypeRecordChildExecutionCompleted, txTasks[7].TaskType)
+	s.Equal(p.TransferTaskTypeApplyParentClosePolicy, txTasks[8].TaskType)
 
-	err2 = s.CompleteTransferTask(ctx, txTasks[0].TaskID)
-	s.NoError(err2)
-
-	err2 = s.CompleteTransferTask(ctx, txTasks[1].TaskID)
-	s.NoError(err2)
-
-	err2 = s.CompleteTransferTask(ctx, txTasks[2].TaskID)
-	s.NoError(err2)
-
-	err2 = s.CompleteTransferTask(ctx, txTasks[3].TaskID)
-	s.NoError(err2)
-
-	err2 = s.CompleteTransferTask(ctx, txTasks[4].TaskID)
-	s.NoError(err2)
-
-	err2 = s.CompleteTransferTask(ctx, txTasks[5].TaskID)
-	s.NoError(err2)
+	for idx := range txTasks {
+		// TODO: add a check similar to validateCrossClusterTasks
+		s.Equal(int64(111*(idx+1)), txTasks[idx].Version)
+		err := s.CompleteTransferTask(ctx, txTasks[idx].TaskID)
+		s.NoError(err)
+	}
 
 	txTasks, err2 = s.GetTransferTasks(ctx, 100, false)
 	s.NoError(err2)
@@ -2555,7 +2660,7 @@ func (s *ExecutionManagerSuite) TestTransferTasksRangeComplete() {
 	targetDomainID := "8bfb47be-5b57-4d66-9109-5fb35e20b1d0"
 	targetWorkflowID := "some random target domain ID"
 	targetRunID := uuid.New()
-	currentTransferID := s.GetTransferReadLevel()
+	currentTransferID := task1.TaskID
 	now := time.Now()
 	tasks := []p.Task{
 		&p.ActivityTask{now, currentTransferID + 10001, domainID, tasklist, scheduleID, 111},
@@ -2971,14 +3076,15 @@ func (s *ExecutionManagerSuite) TestWorkflowMutableStateChildExecutions() {
 	updatedStats := copyExecutionStats(state0.ExecutionStats)
 	updatedInfo.NextEventID = int64(5)
 	updatedInfo.LastProcessedEvent = int64(2)
-	createRequestID := uuid.New()
 	childExecutionInfos := []*p.ChildExecutionInfo{{
 		Version:           1234,
 		InitiatedID:       1,
 		InitiatedEvent:    &types.HistoryEvent{EventID: 1},
 		StartedID:         2,
+		StartedRunID:      uuid.New(),
 		StartedEvent:      &types.HistoryEvent{EventID: 2},
-		CreateRequestID:   createRequestID,
+		CreateRequestID:   uuid.New(),
+		DomainID:          uuid.New(),
 		ParentClosePolicy: types.ParentClosePolicyTerminate,
 	}}
 	versionHistory := p.NewVersionHistory([]byte{}, []*p.VersionHistoryItem{
@@ -2998,13 +3104,7 @@ func (s *ExecutionManagerSuite) TestWorkflowMutableStateChildExecutions() {
 	ci, ok := state.ChildExecutionInfos[1]
 	s.True(ok)
 	s.NotNil(ci)
-	s.Equal(int64(1234), ci.Version)
-	s.Equal(int64(1), ci.InitiatedID)
-	s.Equal(types.ParentClosePolicyTerminate, ci.ParentClosePolicy)
-	s.Equal(int64(1), ci.InitiatedEvent.EventID)
-	s.Equal(int64(2), ci.StartedID)
-	s.Equal(int64(2), ci.StartedEvent.EventID)
-	s.Equal(createRequestID, ci.CreateRequestID)
+	s.Equal(childExecutionInfos[0], ci)
 
 	err2 = s.DeleteChildExecutionsState(ctx, updatedInfo, updatedStats, versionHistories, int64(5), int64(1))
 	s.NoError(err2)
@@ -3305,7 +3405,6 @@ func (s *ExecutionManagerSuite) TestReplicationTransferTaskTasks() {
 	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
 	defer cancel()
 
-	s.ClearReplicationQueue()
 	domainID := "2466d7de-6602-4ad8-b939-fb8f8c36c711"
 	workflowExecution := types.WorkflowExecution{
 		WorkflowID: "replication-transfer-task-test",
@@ -3357,7 +3456,7 @@ func (s *ExecutionManagerSuite) TestReplicationTransferTaskTasks() {
 	s.Equal(int64(3), task1.NextEventID)
 	s.Equal(int64(9), task1.Version)
 
-	err = s.CompleteTransferTask(ctx, task1.TaskID)
+	err = s.CompleteReplicationTask(ctx, task1.TaskID)
 	s.NoError(err)
 	tasks2, err := s.GetReplicationTasks(ctx, 1, false)
 	s.NoError(err)
@@ -3369,7 +3468,6 @@ func (s *ExecutionManagerSuite) TestReplicationTransferTaskRangeComplete() {
 	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
 	defer cancel()
 
-	s.ClearReplicationQueue()
 	domainID := uuid.New()
 	workflowExecution := types.WorkflowExecution{
 		WorkflowID: "replication-transfer-task--range-complete-test",
@@ -3422,10 +3520,10 @@ func (s *ExecutionManagerSuite) TestReplicationTransferTaskRangeComplete() {
 	)
 	s.NoError(err)
 
-	tasks1, err := s.GetReplicationTasks(ctx, 1, false)
+	tasks1, err := s.GetReplicationTasks(ctx, 2, false)
 	s.NoError(err)
 	s.NotNil(tasks1, "expected valid list of tasks.")
-	s.Equal(1, len(tasks1), "Expected 1 replication task.")
+	s.Equal(2, len(tasks1), "Expected 2 replication tasks.")
 	task1 := tasks1[0]
 	s.Equal(p.ReplicationTaskTypeHistory, task1.TaskType)
 	s.Equal(domainID, task1.DomainID)
@@ -3435,12 +3533,7 @@ func (s *ExecutionManagerSuite) TestReplicationTransferTaskRangeComplete() {
 	s.Equal(int64(3), task1.NextEventID)
 	s.Equal(int64(9), task1.Version)
 
-	err = s.RangeCompleteReplicationTask(ctx, task1.TaskID)
-	s.NoError(err)
-	tasks2, err := s.GetReplicationTasks(ctx, 1, false)
-	s.NoError(err)
-	s.NotNil(tasks2, "expected valid list of tasks.")
-	task2 := tasks2[0]
+	task2 := tasks1[1]
 	s.Equal(p.ReplicationTaskTypeHistory, task2.TaskType)
 	s.Equal(domainID, task2.DomainID)
 	s.Equal(workflowExecution.GetWorkflowID(), task2.WorkflowID)
@@ -3448,11 +3541,11 @@ func (s *ExecutionManagerSuite) TestReplicationTransferTaskRangeComplete() {
 	s.Equal(int64(4), task2.FirstEventID)
 	s.Equal(int64(5), task2.NextEventID)
 	s.Equal(int64(9), task2.Version)
-	err = s.CompleteReplicationTask(ctx, task2.TaskID)
+	err = s.RangeCompleteReplicationTask(ctx, task2.TaskID)
 	s.NoError(err)
-	tasks3, err := s.GetReplicationTasks(ctx, 1, false)
+	tasks2, err := s.GetReplicationTasks(ctx, 1, false)
 	s.NoError(err)
-	s.Equal(0, len(tasks3))
+	s.Equal(0, len(tasks2))
 }
 
 // TestUpdateAndClearBufferedEvents test
@@ -3729,8 +3822,10 @@ func (s *ExecutionManagerSuite) TestConflictResolveWorkflowExecutionCurrentIsSel
 				InitiatedID:     9,
 				InitiatedEvent:  &types.HistoryEvent{EventID: 123},
 				StartedID:       11,
+				StartedRunID:    uuid.New(),
 				StartedEvent:    nil,
 				CreateRequestID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+				DomainID:        uuid.New(),
 			},
 		},
 
@@ -3876,7 +3971,7 @@ func (s *ExecutionManagerSuite) TestConflictResolveWorkflowExecutionCurrentIsSel
 	ci, ok := state1.ChildExecutionInfos[9]
 	s.True(ok)
 	s.NotNil(ci)
-	s.Equal(int64(2334), ci.Version)
+	s.Equal(updatedState.ChildExecutionInfos[9], ci)
 
 	s.Equal(1, len(state1.RequestCancelInfos))
 	rci, ok := state1.RequestCancelInfos[19]
@@ -3943,8 +4038,10 @@ func (s *ExecutionManagerSuite) TestConflictResolveWorkflowExecutionCurrentIsSel
 			InitiatedID:     10,
 			InitiatedEvent:  &types.HistoryEvent{EventID: 10},
 			StartedID:       15,
+			StartedRunID:    uuid.New(),
 			StartedEvent:    nil,
 			CreateRequestID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			DomainID:        uuid.New(),
 		}}
 
 	resetRequestCancelInfos := []*p.RequestCancelInfo{
@@ -4039,9 +4136,7 @@ func (s *ExecutionManagerSuite) TestConflictResolveWorkflowExecutionCurrentIsSel
 	ci, ok = state4.ChildExecutionInfos[10]
 	s.True(ok)
 	s.NotNil(ci)
-	s.Equal(int64(3334), ci.Version)
-	s.Equal(int64(10), ci.InitiatedID)
-	s.Equal(int64(15), ci.StartedID)
+	s.Equal(resetChildExecutionInfos[0], ci)
 
 	s.Equal(1, len(state4.RequestCancelInfos))
 	rci, ok = state4.RequestCancelInfos[29]
@@ -5233,6 +5328,7 @@ func copyWorkflowExecutionInfo(sourceInfo *p.WorkflowExecutionInfo) *p.WorkflowE
 		NextEventID:                 sourceInfo.NextEventID,
 		LastProcessedEvent:          sourceInfo.LastProcessedEvent,
 		LastUpdatedTimestamp:        sourceInfo.LastUpdatedTimestamp,
+		StartTimestamp:              sourceInfo.StartTimestamp,
 		CreateRequestID:             sourceInfo.CreateRequestID,
 		DecisionVersion:             sourceInfo.DecisionVersion,
 		DecisionScheduleID:          sourceInfo.DecisionScheduleID,

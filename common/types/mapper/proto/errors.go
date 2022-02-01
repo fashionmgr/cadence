@@ -26,7 +26,7 @@ import (
 	"go.uber.org/yarpc/encoding/protobuf"
 	"go.uber.org/yarpc/yarpcerrors"
 
-	apiv1 "github.com/uber/cadence/.gen/proto/api/v1"
+	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
 	sharedv1 "github.com/uber/cadence/.gen/proto/shared/v1"
 	"github.com/uber/cadence/common/types"
 )
@@ -83,6 +83,10 @@ func FromError(err error) error {
 			FeatureVersion:    e.FeatureVersion,
 			ClientImpl:        e.ClientImpl,
 			SupportedVersions: e.SupportedVersions,
+		}))
+	case *types.FeatureNotEnabledError:
+		return protobuf.NewError(yarpcerrors.CodeFailedPrecondition, "Feature flag not enabled", protobuf.WithErrorDetails(&apiv1.FeatureNotEnabledError{
+			FeatureFlag: e.FeatureFlag,
 		}))
 	case *types.DomainNotActiveError:
 		return protobuf.NewError(yarpcerrors.CodeFailedPrecondition, e.Message, protobuf.WithErrorDetails(&apiv1.DomainNotActiveError{
@@ -198,6 +202,10 @@ func ToError(err error) error {
 				FeatureVersion:    details.FeatureVersion,
 				ClientImpl:        details.ClientImpl,
 				SupportedVersions: details.SupportedVersions,
+			}
+		case *apiv1.FeatureNotEnabledError:
+			return &types.FeatureNotEnabledError{
+				FeatureFlag: details.FeatureFlag,
 			}
 		case *apiv1.DomainNotActiveError:
 			return &types.DomainNotActiveError{

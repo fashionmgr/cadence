@@ -73,7 +73,7 @@ type (
 	}
 
 	metadataErrorInjectionPersistenceClient struct {
-		persistence MetadataManager
+		persistence DomainManager
 		errorRate   float64
 		logger      log.Logger
 	}
@@ -89,15 +89,22 @@ type (
 		errorRate   float64
 		logger      log.Logger
 	}
+
+	configStoreErrorInjectionPersistenceClient struct {
+		persistence ConfigStoreManager
+		errorRate   float64
+		logger      log.Logger
+	}
 )
 
 var _ ShardManager = (*shardErrorInjectionPersistenceClient)(nil)
 var _ ExecutionManager = (*workflowExecutionErrorInjectionPersistenceClient)(nil)
 var _ TaskManager = (*taskErrorInjectionPersistenceClient)(nil)
 var _ HistoryManager = (*historyErrorInjectionPersistenceClient)(nil)
-var _ MetadataManager = (*metadataErrorInjectionPersistenceClient)(nil)
+var _ DomainManager = (*metadataErrorInjectionPersistenceClient)(nil)
 var _ VisibilityManager = (*visibilityErrorInjectionPersistenceClient)(nil)
 var _ QueueManager = (*queueErrorInjectionPersistenceClient)(nil)
+var _ ConfigStoreManager = (*configStoreErrorInjectionPersistenceClient)(nil)
 
 // NewShardPersistenceErrorInjectionClient creates an error injection client to manage shards
 func NewShardPersistenceErrorInjectionClient(
@@ -151,12 +158,12 @@ func NewHistoryPersistenceErrorInjectionClient(
 	}
 }
 
-// NewMetadataPersistenceErrorInjectionClient creates an error injection MetadataManager client to manage metadata
-func NewMetadataPersistenceErrorInjectionClient(
-	persistence MetadataManager,
+// NewDomainPersistenceErrorInjectionClient creates an error injection DomainManager client to manage metadata
+func NewDomainPersistenceErrorInjectionClient(
+	persistence DomainManager,
 	errorRate float64,
 	logger log.Logger,
-) MetadataManager {
+) DomainManager {
 	return &metadataErrorInjectionPersistenceClient{
 		persistence: persistence,
 		errorRate:   errorRate,
@@ -184,6 +191,19 @@ func NewQueuePersistenceErrorInjectionClient(
 	logger log.Logger,
 ) QueueManager {
 	return &queueErrorInjectionPersistenceClient{
+		persistence: persistence,
+		errorRate:   errorRate,
+		logger:      logger,
+	}
+}
+
+// NewConfigStoreErrorInjectionPersistenceClient creates an error injection client to manage config store
+func NewConfigStoreErrorInjectionPersistenceClient(
+	persistence ConfigStoreManager,
+	errorRate float64,
+	logger log.Logger,
+) ConfigStoreManager {
+	return &configStoreErrorInjectionPersistenceClient{
 		persistence: persistence,
 		errorRate:   errorRate,
 		logger:      logger,
@@ -614,13 +634,14 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) CompleteTransferTask(
 func (p *workflowExecutionErrorInjectionPersistenceClient) RangeCompleteTransferTask(
 	ctx context.Context,
 	request *RangeCompleteTransferTaskRequest,
-) error {
+) (*RangeCompleteTransferTaskResponse, error) {
 	fakeErr := generateFakeError(p.errorRate)
 
+	var response *RangeCompleteTransferTaskResponse
 	var persistenceErr error
 	var forwardCall bool
 	if forwardCall = shouldForwardCallToPersistence(fakeErr); forwardCall {
-		persistenceErr = p.persistence.RangeCompleteTransferTask(ctx, request)
+		response, persistenceErr = p.persistence.RangeCompleteTransferTask(ctx, request)
 	}
 
 	if fakeErr != nil {
@@ -630,9 +651,9 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) RangeCompleteTransfer
 			tag.Bool(forwardCall),
 			tag.StoreError(persistenceErr),
 		)
-		return fakeErr
+		return nil, fakeErr
 	}
-	return persistenceErr
+	return response, persistenceErr
 }
 
 func (p *workflowExecutionErrorInjectionPersistenceClient) CompleteCrossClusterTask(
@@ -662,13 +683,14 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) CompleteCrossClusterT
 func (p *workflowExecutionErrorInjectionPersistenceClient) RangeCompleteCrossClusterTask(
 	ctx context.Context,
 	request *RangeCompleteCrossClusterTaskRequest,
-) error {
+) (*RangeCompleteCrossClusterTaskResponse, error) {
 	fakeErr := generateFakeError(p.errorRate)
 
+	var response *RangeCompleteCrossClusterTaskResponse
 	var persistenceErr error
 	var forwardCall bool
 	if forwardCall = shouldForwardCallToPersistence(fakeErr); forwardCall {
-		persistenceErr = p.persistence.RangeCompleteCrossClusterTask(ctx, request)
+		response, persistenceErr = p.persistence.RangeCompleteCrossClusterTask(ctx, request)
 	}
 
 	if fakeErr != nil {
@@ -678,9 +700,9 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) RangeCompleteCrossClu
 			tag.Bool(forwardCall),
 			tag.StoreError(persistenceErr),
 		)
-		return fakeErr
+		return nil, fakeErr
 	}
-	return persistenceErr
+	return response, persistenceErr
 }
 
 func (p *workflowExecutionErrorInjectionPersistenceClient) CompleteReplicationTask(
@@ -710,13 +732,14 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) CompleteReplicationTa
 func (p *workflowExecutionErrorInjectionPersistenceClient) RangeCompleteReplicationTask(
 	ctx context.Context,
 	request *RangeCompleteReplicationTaskRequest,
-) error {
+) (*RangeCompleteReplicationTaskResponse, error) {
 	fakeErr := generateFakeError(p.errorRate)
 
+	var response *RangeCompleteReplicationTaskResponse
 	var persistenceErr error
 	var forwardCall bool
 	if forwardCall = shouldForwardCallToPersistence(fakeErr); forwardCall {
-		persistenceErr = p.persistence.RangeCompleteReplicationTask(ctx, request)
+		response, persistenceErr = p.persistence.RangeCompleteReplicationTask(ctx, request)
 	}
 
 	if fakeErr != nil {
@@ -726,9 +749,9 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) RangeCompleteReplicat
 			tag.Bool(forwardCall),
 			tag.StoreError(persistenceErr),
 		)
-		return fakeErr
+		return nil, fakeErr
 	}
-	return persistenceErr
+	return response, persistenceErr
 }
 
 func (p *workflowExecutionErrorInjectionPersistenceClient) PutReplicationTaskToDLQ(
@@ -832,13 +855,14 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) DeleteReplicationTask
 func (p *workflowExecutionErrorInjectionPersistenceClient) RangeDeleteReplicationTaskFromDLQ(
 	ctx context.Context,
 	request *RangeDeleteReplicationTaskFromDLQRequest,
-) error {
+) (*RangeDeleteReplicationTaskFromDLQResponse, error) {
 	fakeErr := generateFakeError(p.errorRate)
 
+	var response *RangeDeleteReplicationTaskFromDLQResponse
 	var persistenceErr error
 	var forwardCall bool
 	if forwardCall = shouldForwardCallToPersistence(fakeErr); forwardCall {
-		persistenceErr = p.persistence.RangeDeleteReplicationTaskFromDLQ(ctx, request)
+		response, persistenceErr = p.persistence.RangeDeleteReplicationTaskFromDLQ(ctx, request)
 	}
 
 	if fakeErr != nil {
@@ -848,9 +872,9 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) RangeDeleteReplicatio
 			tag.Bool(forwardCall),
 			tag.StoreError(persistenceErr),
 		)
-		return fakeErr
+		return nil, fakeErr
 	}
-	return persistenceErr
+	return response, persistenceErr
 }
 
 func (p *workflowExecutionErrorInjectionPersistenceClient) CreateFailoverMarkerTasks(
@@ -929,13 +953,14 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) CompleteTimerTask(
 func (p *workflowExecutionErrorInjectionPersistenceClient) RangeCompleteTimerTask(
 	ctx context.Context,
 	request *RangeCompleteTimerTaskRequest,
-) error {
+) (*RangeCompleteTimerTaskResponse, error) {
 	fakeErr := generateFakeError(p.errorRate)
 
+	var response *RangeCompleteTimerTaskResponse
 	var persistenceErr error
 	var forwardCall bool
 	if forwardCall = shouldForwardCallToPersistence(fakeErr); forwardCall {
-		persistenceErr = p.persistence.RangeCompleteTimerTask(ctx, request)
+		response, persistenceErr = p.persistence.RangeCompleteTimerTask(ctx, request)
 	}
 
 	if fakeErr != nil {
@@ -945,9 +970,9 @@ func (p *workflowExecutionErrorInjectionPersistenceClient) RangeCompleteTimerTas
 			tag.Bool(forwardCall),
 			tag.StoreError(persistenceErr),
 		)
-		return fakeErr
+		return nil, fakeErr
 	}
-	return persistenceErr
+	return response, persistenceErr
 }
 
 func (p *workflowExecutionErrorInjectionPersistenceClient) Close() {
@@ -1035,10 +1060,10 @@ func (p *taskErrorInjectionPersistenceClient) CompleteTask(
 func (p *taskErrorInjectionPersistenceClient) CompleteTasksLessThan(
 	ctx context.Context,
 	request *CompleteTasksLessThanRequest,
-) (int, error) {
+) (*CompleteTasksLessThanResponse, error) {
 	fakeErr := generateFakeError(p.errorRate)
 
-	var response int
+	var response *CompleteTasksLessThanResponse
 	var persistenceErr error
 	var forwardCall bool
 	if forwardCall = shouldForwardCallToPersistence(fakeErr); forwardCall {
@@ -1052,7 +1077,7 @@ func (p *taskErrorInjectionPersistenceClient) CompleteTasksLessThan(
 			tag.Bool(forwardCall),
 			tag.StoreError(persistenceErr),
 		)
-		return 0, fakeErr
+		return nil, fakeErr
 	}
 	return response, persistenceErr
 }
@@ -2256,6 +2281,53 @@ func (p *queueErrorInjectionPersistenceClient) DeleteMessageFromDLQ(
 }
 
 func (p *queueErrorInjectionPersistenceClient) Close() {
+	p.persistence.Close()
+}
+
+func (p *configStoreErrorInjectionPersistenceClient) FetchDynamicConfig(ctx context.Context) (*FetchDynamicConfigResponse, error) {
+	fakeErr := generateFakeError(p.errorRate)
+
+	var response *FetchDynamicConfigResponse
+	var persistenceErr error
+	var forwardCall bool
+	if forwardCall = shouldForwardCallToPersistence(fakeErr); forwardCall {
+		response, persistenceErr = p.persistence.FetchDynamicConfig(ctx)
+	}
+
+	if fakeErr != nil {
+		p.logger.Error(msgInjectedFakeErr,
+			tag.StoreOperationFetchDynamicConfig,
+			tag.Error(fakeErr),
+			tag.Bool(forwardCall),
+			tag.StoreError(persistenceErr),
+		)
+		return nil, fakeErr
+	}
+	return response, persistenceErr
+}
+
+func (p *configStoreErrorInjectionPersistenceClient) UpdateDynamicConfig(ctx context.Context, request *UpdateDynamicConfigRequest) error {
+	fakeErr := generateFakeError(p.errorRate)
+
+	var persistenceErr error
+	var forwardCall bool
+	if forwardCall = shouldForwardCallToPersistence(fakeErr); forwardCall {
+		persistenceErr = p.persistence.UpdateDynamicConfig(ctx, request)
+	}
+
+	if fakeErr != nil {
+		p.logger.Error(msgInjectedFakeErr,
+			tag.StoreOperationUpdateDynamicConfig,
+			tag.Error(fakeErr),
+			tag.Bool(forwardCall),
+			tag.StoreError(persistenceErr),
+		)
+		return fakeErr
+	}
+	return persistenceErr
+}
+
+func (p *configStoreErrorInjectionPersistenceClient) Close() {
 	p.persistence.Close()
 }
 

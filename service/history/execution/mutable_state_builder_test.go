@@ -28,7 +28,6 @@ import (
 	"github.com/pborman/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-
 	"github.com/uber-go/tally"
 
 	"github.com/uber/cadence/common"
@@ -788,6 +787,36 @@ func (s *mutableStateSuite) prepareTransientDecisionCompletionFirstBatchReplicat
 	return newDecisionScheduleEvent, newDecisionStartedEvent
 }
 
+func (s *mutableStateSuite) TestUpdateCurrentVersion_WorkflowOpen() {
+	mutableState := s.buildWorkflowMutableState()
+
+	s.msBuilder.Load(mutableState)
+	s.Equal(common.EmptyVersion, s.msBuilder.GetCurrentVersion())
+
+	version := int64(2000)
+	s.msBuilder.UpdateCurrentVersion(version, false)
+	s.Equal(version, s.msBuilder.GetCurrentVersion())
+}
+
+func (s *mutableStateSuite) TestUpdateCurrentVersion_WorkflowClosed() {
+	mutableState := s.buildWorkflowMutableState()
+	mutableState.ExecutionInfo.State = persistence.WorkflowStateCompleted
+	mutableState.ExecutionInfo.CloseStatus = persistence.WorkflowCloseStatusCompleted
+
+	s.msBuilder.Load(mutableState)
+	s.Equal(common.EmptyVersion, s.msBuilder.GetCurrentVersion())
+
+	versionHistory, err := mutableState.VersionHistories.GetCurrentVersionHistory()
+	s.NoError(err)
+	lastItem, err := versionHistory.GetLastItem()
+	s.NoError(err)
+	lastWriteVersion := lastItem.GetVersion()
+
+	version := int64(2000)
+	s.msBuilder.UpdateCurrentVersion(version, false)
+	s.Equal(lastWriteVersion, s.msBuilder.GetCurrentVersion())
+}
+
 func (s *mutableStateSuite) newDomainCacheEntry() *cache.DomainCacheEntry {
 	return cache.NewDomainCacheEntryForTest(
 		&persistence.DomainInfo{Name: "mutableStateTest"},
@@ -860,7 +889,7 @@ func (s *mutableStateSuite) buildWorkflowMutableState() *persistence.WorkflowMut
 			InitiatedEvent:        &types.HistoryEvent{},
 			StartedID:             common.EmptyEventID,
 			CreateRequestID:       uuid.New(),
-			DomainName:            constants.TestDomainID,
+			DomainID:              constants.TestDomainID,
 			WorkflowTypeName:      "code.uber.internal/test/foobar",
 		},
 	}
@@ -893,6 +922,7 @@ func (s *mutableStateSuite) buildWorkflowMutableState() *persistence.WorkflowMut
 	}
 
 	versionHistories := &persistence.VersionHistories{
+		CurrentVersionHistoryIndex: 0,
 		Histories: []*persistence.VersionHistory{
 			{
 				BranchToken: []byte("token#1"),

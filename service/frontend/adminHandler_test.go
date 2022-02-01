@@ -22,6 +22,7 @@ package frontend
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -43,7 +44,6 @@ import (
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/resource"
-	"github.com/uber/cadence/common/service"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -83,7 +83,7 @@ func (s *adminHandlerSuite) SetupTest() {
 	s.mockHistoryClient = s.mockResource.HistoryClient
 	s.mockHistoryV2Mgr = s.mockResource.HistoryMgr
 
-	params := &service.BootstrapParams{
+	params := &resource.Params{
 		PersistenceConfig: config.Persistence{
 			NumHistoryShards: 1,
 		},
@@ -92,7 +92,7 @@ func (s *adminHandlerSuite) SetupTest() {
 		EnableAdminProtection:  dynamicconfig.GetBoolPropertyFn(false),
 		EnableGracefulFailover: dynamicconfig.GetBoolPropertyFn(false),
 	}
-	s.handler = NewAdminHandler(s.mockResource, params, config)
+	s.handler = NewAdminHandler(s.mockResource, params, config).(*adminHandlerImpl)
 	s.handler.Start()
 }
 
@@ -429,7 +429,7 @@ func (s *adminHandlerSuite) Test_SetRequestDefaultValueAndGetTargetVersionHistor
 
 func (s *adminHandlerSuite) Test_AddSearchAttribute_Validate() {
 	handler := s.handler
-	handler.params = &service.BootstrapParams{}
+	handler.params = &resource.Params{}
 	ctx := context.Background()
 
 	type test struct {
@@ -579,4 +579,96 @@ func (s *adminHandlerSuite) Test_AddSearchAttribute_Permission() {
 	for _, testCase := range testCases {
 		s.Equal(testCase.Expected, handler.AddSearchAttribute(ctx, testCase.Request))
 	}
+}
+
+func (s *adminHandlerSuite) Test_ConfigStore_NilRequest() {
+	ctx := context.Background()
+	handler := s.handler
+
+	_, err := handler.GetDynamicConfig(ctx, nil)
+	s.Error(err)
+
+	err = handler.UpdateDynamicConfig(ctx, nil)
+	s.Error(err)
+
+	err = handler.RestoreDynamicConfig(ctx, nil)
+	s.Error(err)
+}
+
+func (s *adminHandlerSuite) Test_ConfigStore_InvalidKey() {
+	ctx := context.Background()
+	handler := s.handler
+
+	_, err := handler.GetDynamicConfig(ctx, &types.GetDynamicConfigRequest{
+		ConfigName: dynamicconfig.UnknownKey.String(),
+		Filters:    nil,
+	})
+	s.Error(err)
+
+	err = handler.UpdateDynamicConfig(ctx, &types.UpdateDynamicConfigRequest{
+		ConfigName:   dynamicconfig.UnknownKey.String(),
+		ConfigValues: nil,
+	})
+	s.Error(err)
+
+	err = handler.RestoreDynamicConfig(ctx, &types.RestoreDynamicConfigRequest{
+		ConfigName: dynamicconfig.UnknownKey.String(),
+		Filters:    nil,
+	})
+	s.Error(err)
+}
+
+func (s *adminHandlerSuite) Test_GetDynamicConfig_NoFilter() {
+	ctx := context.Background()
+	handler := s.handler
+	dynamicConfig := dynamicconfig.NewMockClient(s.controller)
+	handler.params.DynamicConfig = dynamicConfig
+
+	dynamicConfig.EXPECT().
+		GetValue(dynamicconfig.TestGetBoolPropertyKey, nil).
+		Return(true, nil).AnyTimes()
+
+	resp, err := handler.GetDynamicConfig(ctx, &types.GetDynamicConfigRequest{
+		ConfigName: dynamicconfig.TestGetBoolPropertyKey.String(),
+		Filters:    nil,
+	})
+	s.NoError(err)
+
+	encTrue, err := json.Marshal(true)
+	s.NoError(err)
+	s.Equal(resp.Value.Data, encTrue)
+}
+
+func (s *adminHandlerSuite) Test_GetDynamicConfig_FilterMatch() {
+	ctx := context.Background()
+	handler := s.handler
+	dynamicConfig := dynamicconfig.NewMockClient(s.controller)
+	handler.params.DynamicConfig = dynamicConfig
+
+	dynamicConfig.EXPECT().
+		GetValueWithFilters(dynamicconfig.TestGetBoolPropertyKey, map[dynamicconfig.Filter]interface{}{
+			dynamicconfig.DomainName: "samples_domain",
+		}, nil).
+		Return(true, nil).AnyTimes()
+
+	encDomainName, err := json.Marshal("samples_domain")
+	s.NoError(err)
+
+	resp, err := handler.GetDynamicConfig(ctx, &types.GetDynamicConfigRequest{
+		ConfigName: dynamicconfig.TestGetBoolPropertyKey.String(),
+		Filters: []*types.DynamicConfigFilter{
+			{
+				Name: dynamicconfig.DomainName.String(),
+				Value: &types.DataBlob{
+					EncodingType: types.EncodingTypeJSON.Ptr(),
+					Data:         encDomainName,
+				},
+			},
+		},
+	})
+	s.NoError(err)
+
+	encTrue, err := json.Marshal(true)
+	s.NoError(err)
+	s.Equal(resp.Value.Data, encTrue)
 }

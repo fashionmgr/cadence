@@ -61,7 +61,7 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.5.1
+    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.8.22
     expose:
       - "9200"
     networks:
@@ -70,6 +70,17 @@ services:
           - elasticsearch
     environment:
       - discovery.type=single-node
+
+  mongo:
+    image: mongo:5
+    restart: always
+    networks:
+      services-network:
+        aliases:
+          - mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: cadence
 
   unit-test:
     build:
@@ -86,6 +97,7 @@ services:
       - cassandra
       - mysql
       - postgres
+      - mongo
     volumes:
       - ../../:/cadence
     networks:

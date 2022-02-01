@@ -58,17 +58,6 @@ const (
 	EmptyUUID = "emptyUuid"
 )
 
-const (
-	// FrontendServiceName is the name of the frontend service
-	FrontendServiceName = "cadence-frontend"
-	// HistoryServiceName is the name of the history service
-	HistoryServiceName = "cadence-history"
-	// MatchingServiceName is the name of the matching service
-	MatchingServiceName = "cadence-matching"
-	// WorkerServiceName is the name of the worker service
-	WorkerServiceName = "cadence-worker"
-)
-
 // Data encoding types
 const (
 	EncodingTypeJSON     EncodingType = "json"
@@ -169,6 +158,10 @@ const (
 	DomainDataKeyForManagedFailover = "IsManagedByCadence"
 	// DomainDataKeyForPreferredCluster is the key of DomainData for domain rebalance
 	DomainDataKeyForPreferredCluster = "PreferredCluster"
+	// DomainDataKeyForReadGroups stores which groups have read permission of the domain API
+	DomainDataKeyForReadGroups = "READ_GROUPS"
+	// DomainDataKeyForWriteGroups stores which groups have write permission of the domain API
+	DomainDataKeyForWriteGroups = "WRITE_GROUPS"
 )
 
 type (
@@ -178,11 +171,40 @@ type (
 
 const (
 	// TaskTypeTransfer is the task type for transfer task
-	TaskTypeTransfer TaskType = iota + 2 // starting from 2 here to be consistent with the row type define for cassandra
+	// starting from 2 here to be consistent with the row type define for cassandra
+	// TODO: we can remove +2 from the following definition
+	// we don't have to make them consistent with cassandra definition
+	// there's also no row type for sql or other nosql persistence implementation
+	TaskTypeTransfer TaskType = iota + 2
 	// TaskTypeTimer is the task type for timer task
 	TaskTypeTimer
 	// TaskTypeReplication is the task type for replication task
 	TaskTypeReplication
+	// TaskTypeCrossCluster is the task type for cross cluster task
+	TaskTypeCrossCluster TaskType = 6
+)
+
+const (
+	// DefaultESAnalyzerPause controls if we want to dynamically pause the analyzer
+	DefaultESAnalyzerPause = false
+	// DefaultESAnalyzerTimeWindow controls how many days to go back for ElasticSearch Analyzer
+	DefaultESAnalyzerTimeWindow = time.Hour * 24 * 30
+	// DefaultESAnalyzerMaxNumDomains controls how many domains to check
+	DefaultESAnalyzerMaxNumDomains = 500
+	// DefaultESAnalyzerMaxNumWorkflowTypes controls how many workflow types per domain to check
+	DefaultESAnalyzerMaxNumWorkflowTypes = 100
+	// DefaultESAnalyzerNumWorkflowsToRefresh controls how many workflows per workflow type should be refreshed
+	DefaultESAnalyzerNumWorkflowsToRefresh = 100
+	// DefaultESAnalyzerBufferWaitTime controls min time required to consider a worklow stuck
+	DefaultESAnalyzerBufferWaitTime = time.Minute * 30
+	// DefaultESAnalyzerMinNumWorkflowsForAvg controls how many workflows to have at least to rely on workflow run time avg per type
+	DefaultESAnalyzerMinNumWorkflowsForAvg = 100
+	// DefaultESAnalyzerLimitToTypes controls if we want to limit ESAnalyzer only to some workflow types
+	DefaultESAnalyzerLimitToTypes = ""
+	// DefaultESAnalyzerLimitToDomains controls if we want to limit ESAnalyzer only to some domains
+	DefaultESAnalyzerLimitToDomains = ""
+	// DefaultESAnalyzerWorkflowDurationWarnThreshold defines warning threshold for a workflow duration
+	DefaultESAnalyzerWorkflowDurationWarnThresholds = ""
 )
 
 // StickyTaskConditionFailedErrorMsg error msg for sticky task ConditionFailedError

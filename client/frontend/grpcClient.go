@@ -25,7 +25,7 @@ import (
 
 	"go.uber.org/yarpc"
 
-	apiv1 "github.com/uber/cadence/.gen/proto/api/v1"
+	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/mapper/proto"
 )
@@ -109,6 +109,11 @@ func (g grpcClient) ListOpenWorkflowExecutions(ctx context.Context, request *typ
 func (g grpcClient) ListTaskListPartitions(ctx context.Context, request *types.ListTaskListPartitionsRequest, opts ...yarpc.CallOption) (*types.ListTaskListPartitionsResponse, error) {
 	response, err := g.workflow.ListTaskListPartitions(ctx, proto.FromListTaskListPartitionsRequest(request), opts...)
 	return proto.ToListTaskListPartitionsResponse(response), proto.ToError(err)
+}
+
+func (g grpcClient) GetTaskListsByDomain(ctx context.Context, request *types.GetTaskListsByDomainRequest, opts ...yarpc.CallOption) (*types.GetTaskListsByDomainResponse, error) {
+	response, err := g.workflow.GetTaskListsByDomain(ctx, proto.FromGetTaskListsByDomainRequest(request), opts...)
+	return proto.ToGetTaskListsByDomainResponse(response), proto.ToError(err)
 }
 
 func (g grpcClient) ListWorkflowExecutions(ctx context.Context, request *types.ListWorkflowExecutionsRequest, opts ...yarpc.CallOption) (*types.ListWorkflowExecutionsResponse, error) {

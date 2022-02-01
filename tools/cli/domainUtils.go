@@ -30,7 +30,6 @@ import (
 	"github.com/urfave/cli"
 
 	"github.com/uber/cadence/client/frontend"
-	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/provider"
 	"github.com/uber/cadence/common/clock"
@@ -44,6 +43,7 @@ import (
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/persistence/client"
+	"github.com/uber/cadence/common/service"
 )
 
 const (
@@ -77,7 +77,8 @@ var (
 		},
 		cli.StringFlag{
 			Name:  FlagIsGlobalDomainWithAlias,
-			Usage: "Flag to indicate whether domain is a global domain",
+			Usage: "Flag to indicate whether domain is a global domain. Default to true. Local domain is now legacy.",
+			Value: "true",
 		},
 		cli.GenericFlag{
 			Name:  FlagDomainDataWithAlias,
@@ -194,6 +195,10 @@ var (
 			Name:  FlagDomainID,
 			Usage: "Domain UUID (required if not specify domainName)",
 		},
+		cli.BoolFlag{
+			Name:  FlagPrintJSONWithAlias,
+			Usage: "Print in raw JSON format",
+		},
 	}
 
 	adminDomainCommonFlags = []cli.Flag{
@@ -249,7 +254,7 @@ func initializeAdminDomainHandler(
 		configuration,
 		logger,
 	)
-	metadataMgr := initializeMetadataMgr(
+	metadataMgr := initializeDomainMgr(
 		configuration,
 		clusterMetadata,
 		metricsClient,
@@ -281,7 +286,7 @@ func loadConfig(
 
 func initializeDomainHandler(
 	logger log.Logger,
-	metadataMgr persistence.MetadataManager,
+	domainManager persistence.DomainManager,
 	clusterMetadata cluster.Metadata,
 	archivalMetadata archiver.ArchivalMetadata,
 	archiverProvider provider.ArchiverProvider,
@@ -295,7 +300,7 @@ func initializeDomainHandler(
 	return domain.NewHandler(
 		domainConfig,
 		logger,
-		metadataMgr,
+		domainManager,
 		clusterMetadata,
 		initializeDomainReplicator(logger),
 		archivalMetadata,
@@ -314,19 +319,14 @@ func initializeLogger(
 	return loggerimpl.NewLogger(zapLogger)
 }
 
-func initializeMetadataMgr(
+func initializeDomainMgr(
 	serviceConfig *config.Config,
 	clusterMetadata cluster.Metadata,
 	metricsClient metrics.Client,
 	logger log.Logger,
-) persistence.MetadataManager {
+) persistence.DomainManager {
 
 	pConfig := serviceConfig.Persistence
-	pConfig.VisibilityConfig = &config.VisibilityConfig{
-		VisibilityListMaxQPS:            dynamicconfig.GetIntPropertyFilteredByDomain(dependencyMaxQPS),
-		EnableSampling:                  dynamicconfig.GetBoolPropertyFn(false), // not used by domain operation
-		EnableReadFromClosedExecutionV2: dynamicconfig.GetBoolPropertyFn(false), // not used by domain operation
-	}
 	pFactory := client.NewFactory(
 		&pConfig,
 		dynamicconfig.GetIntPropertyFn(dependencyMaxQPS),
@@ -334,7 +334,7 @@ func initializeMetadataMgr(
 		metricsClient,
 		logger,
 	)
-	metadata, err := pFactory.NewMetadataManager()
+	metadata, err := pFactory.NewDomainManager()
 	if err != nil {
 		ErrorAndExit("Unable to initialize metadata manager.", err)
 	}
@@ -346,14 +346,14 @@ func initializeClusterMetadata(
 	logger log.Logger,
 ) cluster.Metadata {
 
-	clusterMetadata := serviceConfig.ClusterMetadata
+	clusterGroupMetadata := serviceConfig.ClusterGroupMetadata
 	return cluster.NewMetadata(
 		logger,
-		dynamicconfig.GetBoolPropertyFn(clusterMetadata.EnableGlobalDomain),
-		clusterMetadata.FailoverVersionIncrement,
-		clusterMetadata.PrimaryClusterName,
-		clusterMetadata.CurrentClusterName,
-		clusterMetadata.ClusterInformation,
+		dynamicconfig.GetBoolPropertyFn(clusterGroupMetadata.EnableGlobalDomain),
+		clusterGroupMetadata.FailoverVersionIncrement,
+		clusterGroupMetadata.PrimaryClusterName,
+		clusterGroupMetadata.CurrentClusterName,
+		clusterGroupMetadata.ClusterGroup,
 	)
 }
 
@@ -399,7 +399,7 @@ func initializeArchivalProvider(
 	}
 
 	err := archiverProvider.RegisterBootstrapContainer(
-		common.FrontendServiceName,
+		service.Frontend,
 		historyArchiverBootstrapContainer,
 		visibilityArchiverBootstrapContainer,
 	)
@@ -428,7 +428,7 @@ func initializeDynamicConfig(
 	doneChan := make(chan struct{})
 	close(doneChan)
 	dynamicConfigClient, err := dynamicconfig.NewFileBasedClient(
-		&serviceConfig.DynamicConfigClient,
+		&serviceConfig.DynamicConfig.FileBased,
 		logger,
 		doneChan,
 	)

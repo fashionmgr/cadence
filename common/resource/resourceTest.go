@@ -27,12 +27,14 @@ import (
 	"go.uber.org/cadence/.gen/go/cadence/workflowserviceclient"
 	publicservicetest "go.uber.org/cadence/.gen/go/cadence/workflowservicetest"
 
+	"go.uber.org/yarpc"
+	"go.uber.org/zap"
+
 	"github.com/uber/cadence/client"
 	"github.com/uber/cadence/client/admin"
 	"github.com/uber/cadence/client/frontend"
 	"github.com/uber/cadence/client/history"
 	"github.com/uber/cadence/client/matching"
-	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/provider"
 	"github.com/uber/cadence/common/blobstore"
@@ -48,9 +50,6 @@ import (
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
 	persistenceClient "github.com/uber/cadence/common/persistence/client"
-
-	"go.uber.org/yarpc"
-	"go.uber.org/zap"
 )
 
 type (
@@ -72,12 +71,7 @@ type (
 		BlobstoreClient         *blobstore.MockClient
 
 		// membership infos
-
-		MembershipMonitor       *membership.MockMonitor
-		FrontendServiceResolver *membership.MockServiceResolver
-		MatchingServiceResolver *membership.MockServiceResolver
-		HistoryServiceResolver  *membership.MockServiceResolver
-		WorkerServiceResolver   *membership.MockServiceResolver
+		MembershipResolver *membership.MockResolver
 
 		// internal services clients
 
@@ -110,7 +104,7 @@ const (
 )
 
 var (
-	testHostInfo = membership.NewHostInfo(testHostName, nil)
+	testHostInfo = membership.NewHostInfo(testHostName)
 )
 
 // NewTest returns a new test resource instance
@@ -147,22 +141,12 @@ func NewTest(
 	domainReplicationQueue.EXPECT().Start().AnyTimes()
 	domainReplicationQueue.EXPECT().Stop().AnyTimes()
 	persistenceBean := persistenceClient.NewMockBean(controller)
-	persistenceBean.EXPECT().GetMetadataManager().Return(metadataMgr).AnyTimes()
+	persistenceBean.EXPECT().GetDomainManager().Return(metadataMgr).AnyTimes()
 	persistenceBean.EXPECT().GetTaskManager().Return(taskMgr).AnyTimes()
 	persistenceBean.EXPECT().GetVisibilityManager().Return(visibilityMgr).AnyTimes()
 	persistenceBean.EXPECT().GetHistoryManager().Return(historyMgr).AnyTimes()
 	persistenceBean.EXPECT().GetShardManager().Return(shardMgr).AnyTimes()
 	persistenceBean.EXPECT().GetExecutionManager(gomock.Any()).Return(executionMgr, nil).AnyTimes()
-
-	membershipMonitor := membership.NewMockMonitor(controller)
-	frontendServiceResolver := membership.NewMockServiceResolver(controller)
-	matchingServiceResolver := membership.NewMockServiceResolver(controller)
-	historyServiceResolver := membership.NewMockServiceResolver(controller)
-	workerServiceResolver := membership.NewMockServiceResolver(controller)
-	membershipMonitor.EXPECT().GetResolver(common.FrontendServiceName).Return(frontendServiceResolver, nil).AnyTimes()
-	membershipMonitor.EXPECT().GetResolver(common.MatchingServiceName).Return(matchingServiceResolver, nil).AnyTimes()
-	membershipMonitor.EXPECT().GetResolver(common.HistoryServiceName).Return(historyServiceResolver, nil).AnyTimes()
-	membershipMonitor.EXPECT().GetResolver(common.WorkerServiceName).Return(workerServiceResolver, nil).AnyTimes()
 
 	scope := tally.NewTestScope("test", nil)
 
@@ -183,12 +167,7 @@ func NewTest(
 		BlobstoreClient:         &blobstore.MockClient{},
 
 		// membership infos
-
-		MembershipMonitor:       membershipMonitor,
-		FrontendServiceResolver: frontendServiceResolver,
-		MatchingServiceResolver: matchingServiceResolver,
-		HistoryServiceResolver:  historyServiceResolver,
-		WorkerServiceResolver:   workerServiceResolver,
+		MembershipResolver: membership.NewMockResolver(controller),
 
 		// internal services clients
 
@@ -239,7 +218,7 @@ func (s *Test) GetHostName() string {
 }
 
 // GetHostInfo for testing
-func (s *Test) GetHostInfo() *membership.HostInfo {
+func (s *Test) GetHostInfo() membership.HostInfo {
 	return testHostInfo
 }
 
@@ -301,31 +280,9 @@ func (s *Test) GetArchiverProvider() provider.ArchiverProvider {
 	return s.ArchiverProvider
 }
 
-// membership infos
-
-// GetMembershipMonitor for testing
-func (s *Test) GetMembershipMonitor() membership.Monitor {
-	return s.MembershipMonitor
-}
-
-// GetFrontendServiceResolver for testing
-func (s *Test) GetFrontendServiceResolver() membership.ServiceResolver {
-	return s.FrontendServiceResolver
-}
-
-// GetMatchingServiceResolver for testing
-func (s *Test) GetMatchingServiceResolver() membership.ServiceResolver {
-	return s.MatchingServiceResolver
-}
-
-// GetHistoryServiceResolver for testing
-func (s *Test) GetHistoryServiceResolver() membership.ServiceResolver {
-	return s.HistoryServiceResolver
-}
-
-// GetWorkerServiceResolver for testing
-func (s *Test) GetWorkerServiceResolver() membership.ServiceResolver {
-	return s.WorkerServiceResolver
+// GetMembershipResolver for testing
+func (s *Test) GetMembershipResolver() membership.Resolver {
+	return s.MembershipResolver
 }
 
 // internal services clients
@@ -389,7 +346,7 @@ func (s *Test) GetClientBean() client.Bean {
 // persistence clients
 
 // GetMetadataManager for testing
-func (s *Test) GetMetadataManager() persistence.MetadataManager {
+func (s *Test) GetDomainManager() persistence.DomainManager {
 	return s.MetadataMgr
 }
 

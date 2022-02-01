@@ -25,7 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	apiv1 "github.com/uber/cadence/.gen/proto/api/v1"
+	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
 	sharedv1 "github.com/uber/cadence/.gen/proto/shared/v1"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/persistence"
@@ -401,6 +401,7 @@ func TestTaskType(t *testing.T) {
 		common.Int32Ptr(int32(common.TaskTypeTransfer)),
 		common.Int32Ptr(int32(common.TaskTypeTimer)),
 		common.Int32Ptr(int32(common.TaskTypeReplication)),
+		common.Int32Ptr(int32(common.TaskTypeCrossCluster)),
 	} {
 		assert.Equal(t, item, ToTaskType(FromTaskType(item)))
 	}

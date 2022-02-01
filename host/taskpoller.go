@@ -26,10 +26,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/yarpc"
 
 	"github.com/uber/cadence/common"
-	"github.com/uber/cadence/common/client"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/types"
@@ -272,9 +270,6 @@ Loop:
 				ForceCreateNewDecisionTask: forceCreateNewDecision,
 				QueryResults:               getQueryResults(response.GetQueries(), queryResult),
 			},
-			yarpc.WithHeader(common.LibraryVersionHeaderName, "0.0.1"),
-			yarpc.WithHeader(common.FeatureVersionHeaderName, client.GoWorkerConsistentQueryVersion),
-			yarpc.WithHeader(common.ClientImplHeaderName, client.GoSDK),
 		)
 
 		return false, newTask, err
@@ -331,9 +326,6 @@ func (p *TaskPoller) HandlePartialDecision(response *types.PollForDecisionTaskRe
 			ReturnNewDecisionTask:      true,
 			ForceCreateNewDecisionTask: true,
 		},
-		yarpc.WithHeader(common.LibraryVersionHeaderName, "0.0.1"),
-		yarpc.WithHeader(common.FeatureVersionHeaderName, client.GoWorkerConsistentQueryVersion),
-		yarpc.WithHeader(common.ClientImplHeaderName, client.GoSDK),
 	)
 
 	return newTask, err

@@ -48,6 +48,7 @@ var (
          "Encoding" : "thriftrw",
          "TaskList" : "taskList",
          "IsCron" : "false",
+         "NumClusters" : "2",
          "Memo" : "WQ0ACgsLAAAAAwAAAAJrMgAAAAkidmFuY2V4dSIAAAACazMAAAADMTIzAAAAAmsxAAAAUXsia2V5MSI6MTIzNDMyMSwia2V5MiI6ImEgc3RyaW5nIGlzIHZlcnkgbG9uZyIsIm1hcCI6eyJtS2V5IjoxMjM0MywiYXNkIjoiYXNkZiJ9fQA="}`)
 )
 
@@ -63,6 +64,8 @@ func BenchmarkJSONDecodeToType(b *testing.B) {
 		var source *es.VisibilityRecord
 		json.Unmarshal(*bytes, &source)
 		record := &p.InternalVisibilityWorkflowExecutionInfo{
+			DomainID:      source.DomainID,
+			WorkflowType:  source.WorkflowType,
 			WorkflowID:    source.WorkflowID,
 			RunID:         source.RunID,
 			TypeName:      source.WorkflowType,
@@ -71,6 +74,7 @@ func BenchmarkJSONDecodeToType(b *testing.B) {
 			Memo:          p.NewDataBlob(source.Memo, common.EncodingType(source.Encoding)),
 			TaskList:      source.TaskList,
 			IsCron:        source.IsCron,
+			NumClusters:   source.NumClusters,
 		}
 		record.CloseTime = time.Unix(0, source.CloseTime)
 		record.Status = thrift.ToWorkflowExecutionCloseStatus(&source.CloseStatus)
@@ -93,6 +97,8 @@ func BenchmarkJSONDecodeToMap(b *testing.B) {
 		historyLen, _ := source[definition.HistoryLength].(json.Number).Int64()
 
 		record := &p.InternalVisibilityWorkflowExecutionInfo{
+			DomainID:      source[definition.DomainID].(string),
+			WorkflowType:  source[definition.WorkflowType].(string),
 			WorkflowID:    source[definition.WorkflowID].(string),
 			RunID:         source[definition.RunID].(string),
 			TypeName:      source[definition.WorkflowType].(string),
@@ -100,6 +106,7 @@ func BenchmarkJSONDecodeToMap(b *testing.B) {
 			ExecutionTime: time.Unix(0, executionTime),
 			TaskList:      source[definition.TaskList].(string),
 			IsCron:        source[definition.IsCron].(bool),
+			NumClusters:   source[definition.NumClusters].(int16),
 			Memo:          p.NewDataBlob([]byte(source[definition.Memo].(string)), common.EncodingType(source[definition.Encoding].(string))),
 		}
 		record.CloseTime = time.Unix(0, closeTime)
