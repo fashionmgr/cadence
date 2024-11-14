@@ -40,9 +40,16 @@ import (
 	es "github.com/uber/cadence/common/elasticsearch"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
-	"github.com/uber/cadence/common/metrics"
+	"github.com/uber/cadence/common/pinot"
 	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/service/worker/workercommon"
+)
+
+type readMode string
+
+const (
+	Pinot readMode = "pinot"
+	ES    readMode = "es"
 )
 
 type (
@@ -52,10 +59,12 @@ type (
 		frontendClient      frontend.Client
 		clientBean          client.Bean
 		esClient            es.GenericClient
+		pinotClient         pinot.GenericClient
+		readMode            readMode
 		logger              log.Logger
-		scopedMetricClient  metrics.Scope
 		tallyScope          tally.Scope
 		visibilityIndexName string
+		pinotTableName      string
 		resource            resource.Resource
 		domainCache         cache.DomainCache
 		config              *Config
@@ -68,15 +77,31 @@ type (
 		ESAnalyzerMaxNumDomains                  dynamicconfig.IntPropertyFn
 		ESAnalyzerMaxNumWorkflowTypes            dynamicconfig.IntPropertyFn
 		ESAnalyzerLimitToTypes                   dynamicconfig.StringPropertyFn
+		ESAnalyzerEnableAvgDurationBasedChecks   dynamicconfig.BoolPropertyFn
 		ESAnalyzerLimitToDomains                 dynamicconfig.StringPropertyFn
 		ESAnalyzerNumWorkflowsToRefresh          dynamicconfig.IntPropertyFnWithWorkflowTypeFilter
 		ESAnalyzerBufferWaitTime                 dynamicconfig.DurationPropertyFnWithWorkflowTypeFilter
 		ESAnalyzerMinNumWorkflowsForAvg          dynamicconfig.IntPropertyFnWithWorkflowTypeFilter
 		ESAnalyzerWorkflowDurationWarnThresholds dynamicconfig.StringPropertyFn
+		ESAnalyzerWorkflowVersionDomains         dynamicconfig.StringPropertyFn
+		ESAnalyzerWorkflowTypeDomains            dynamicconfig.StringPropertyFn
+	}
+
+	Workflow struct {
+		analyzer *Analyzer
+	}
+
+	EsAggregateCount struct {
+		AggregateKey   string `json:"key"`
+		AggregateCount int64  `json:"doc_count"`
 	}
 )
 
-const startUpDelay = time.Second * 10
+const (
+	taskListName = "cadence-sys-es-analyzer"
+
+	startUpDelay = time.Second * 10
+)
 
 // New returns a new instance as daemon
 func New(
@@ -84,37 +109,52 @@ func New(
 	frontendClient frontend.Client,
 	clientBean client.Bean,
 	esClient es.GenericClient,
+	pinotClient pinot.GenericClient,
 	esConfig *config.ElasticSearchConfig,
+	pinotConfig *config.PinotVisibilityConfig,
 	logger log.Logger,
-	metricsClient metrics.Client,
 	tallyScope tally.Scope,
 	resource resource.Resource,
 	domainCache cache.DomainCache,
 	config *Config,
 ) *Analyzer {
+	var mode readMode
+	var indexName string
+	var pinotTableName string
+
+	if esClient != nil {
+		mode = ES
+		indexName = esConfig.Indices[common.VisibilityAppName]
+		pinotTableName = ""
+	} else if pinotClient != nil {
+		mode = Pinot
+		indexName = ""
+		pinotTableName = pinotConfig.Table
+	}
+
 	return &Analyzer{
 		svcClient:           svcClient,
 		frontendClient:      frontendClient,
 		clientBean:          clientBean,
 		esClient:            esClient,
+		pinotClient:         pinotClient,
+		readMode:            mode,
 		logger:              logger,
-		scopedMetricClient:  getScopedMetricsClient(metricsClient),
 		tallyScope:          tallyScope,
-		visibilityIndexName: esConfig.Indices[common.VisibilityAppName],
+		visibilityIndexName: indexName,
+		pinotTableName:      pinotTableName,
 		resource:            resource,
 		domainCache:         domainCache,
 		config:              config,
 	}
 }
 
-func getScopedMetricsClient(metricsClient metrics.Client) metrics.Scope {
-	return metricsClient.Scope(metrics.ESAnalyzerScope)
-}
-
 // Start starts the scanner
 func (a *Analyzer) Start() error {
 	ctx := context.Background()
 	a.StartWorkflow(ctx)
+	ctx = context.Background()
+	a.StartDomainWFTypeCountWorkflow(ctx)
 
 	workerOpts := worker.Options{
 		MetricsScope:              a.tallyScope,
@@ -135,6 +175,20 @@ func (a *Analyzer) StartWorkflow(ctx context.Context) {
 			return nil
 		default:
 			a.logger.Error("Failed to start ElasticSearch Analyzer", tag.Error(err))
+			return err
+		}
+	})
+}
+
+func (a *Analyzer) StartDomainWFTypeCountWorkflow(ctx context.Context) {
+	initDomainWorkflowTypeCountWorkflow(a)
+	go workercommon.StartWorkflowWithRetry(domainWFTypeCountWorkflowTypeName, startUpDelay, a.resource, func(client cclient.Client) error {
+		_, err := client.StartWorkflow(ctx, domainWfTypeCountStartOptions, domainWFTypeCountWorkflowTypeName)
+		switch err.(type) {
+		case *shared.WorkflowExecutionAlreadyStartedError:
+			return nil
+		default:
+			a.logger.Error("Failed to start domain wf type count workflow", tag.Error(err))
 			return err
 		}
 	})

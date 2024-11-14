@@ -28,7 +28,10 @@ package sqlblobs
 import (
 	bytes "bytes"
 	base64 "encoding/base64"
+	json "encoding/json"
 	fmt "fmt"
+	math "math"
+	strconv "strconv"
 	strings "strings"
 
 	multierr "go.uber.org/multierr"
@@ -107,14 +110,14 @@ func (_List_String_ValueList) Close() {}
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *ActivityInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [31]wire.Field
@@ -400,16 +403,16 @@ func _List_String_Read(l wire.ValueList) ([]string, error) {
 // An error is returned if we were unable to build a ActivityInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v ActivityInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v ActivityInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *ActivityInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -2322,6 +2325,697 @@ func (v *ActivityInfo) IsSetRetryLastFailureDetails() bool {
 	return v != nil && v.RetryLastFailureDetails != nil
 }
 
+type AsyncRequestMessage struct {
+	PartitionKey *string           `json:"partitionKey,omitempty"`
+	Type         *AsyncRequestType `json:"type,omitempty"`
+	Header       *shared.Header    `json:"header,omitempty"`
+	Encoding     *string           `json:"encoding,omitempty"`
+	Payload      []byte            `json:"payload,omitempty"`
+}
+
+// ToWire translates a AsyncRequestMessage struct into a Thrift-level intermediate
+// representation. This intermediate representation may be serialized
+// into bytes using a ThriftRW protocol implementation.
+//
+// An error is returned if the struct or any of its fields failed to
+// validate.
+//
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
+//
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
+func (v *AsyncRequestMessage) ToWire() (wire.Value, error) {
+	var (
+		fields [5]wire.Field
+		i      int = 0
+		w      wire.Value
+		err    error
+	)
+
+	if v.PartitionKey != nil {
+		w, err = wire.NewValueString(*(v.PartitionKey)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 10, Value: w}
+		i++
+	}
+	if v.Type != nil {
+		w, err = v.Type.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 12, Value: w}
+		i++
+	}
+	if v.Header != nil {
+		w, err = v.Header.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 14, Value: w}
+		i++
+	}
+	if v.Encoding != nil {
+		w, err = wire.NewValueString(*(v.Encoding)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 16, Value: w}
+		i++
+	}
+	if v.Payload != nil {
+		w, err = wire.NewValueBinary(v.Payload), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 18, Value: w}
+		i++
+	}
+
+	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
+}
+
+func _AsyncRequestType_Read(w wire.Value) (AsyncRequestType, error) {
+	var v AsyncRequestType
+	err := v.FromWire(w)
+	return v, err
+}
+
+func _Header_Read(w wire.Value) (*shared.Header, error) {
+	var v shared.Header
+	err := v.FromWire(w)
+	return &v, err
+}
+
+// FromWire deserializes a AsyncRequestMessage struct from its Thrift-level
+// representation. The Thrift-level representation may be obtained
+// from a ThriftRW protocol implementation.
+//
+// An error is returned if we were unable to build a AsyncRequestMessage struct
+// from the provided intermediate representation.
+//
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
+//
+//	var v AsyncRequestMessage
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
+func (v *AsyncRequestMessage) FromWire(w wire.Value) error {
+	var err error
+
+	for _, field := range w.GetStruct().Fields {
+		switch field.ID {
+		case 10:
+			if field.Value.Type() == wire.TBinary {
+				var x string
+				x, err = field.Value.GetString(), error(nil)
+				v.PartitionKey = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 12:
+			if field.Value.Type() == wire.TI32 {
+				var x AsyncRequestType
+				x, err = _AsyncRequestType_Read(field.Value)
+				v.Type = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 14:
+			if field.Value.Type() == wire.TStruct {
+				v.Header, err = _Header_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 16:
+			if field.Value.Type() == wire.TBinary {
+				var x string
+				x, err = field.Value.GetString(), error(nil)
+				v.Encoding = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 18:
+			if field.Value.Type() == wire.TBinary {
+				v.Payload, err = field.Value.GetBinary(), error(nil)
+				if err != nil {
+					return err
+				}
+
+			}
+		}
+	}
+
+	return nil
+}
+
+// Encode serializes a AsyncRequestMessage struct directly into bytes, without going
+// through an intermediary type.
+//
+// An error is returned if a AsyncRequestMessage struct could not be encoded.
+func (v *AsyncRequestMessage) Encode(sw stream.Writer) error {
+	if err := sw.WriteStructBegin(); err != nil {
+		return err
+	}
+
+	if v.PartitionKey != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 10, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteString(*(v.PartitionKey)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.Type != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 12, Type: wire.TI32}); err != nil {
+			return err
+		}
+		if err := v.Type.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.Header != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 14, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.Header.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.Encoding != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 16, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteString(*(v.Encoding)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.Payload != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 18, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteBinary(v.Payload); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	return sw.WriteStructEnd()
+}
+
+func _AsyncRequestType_Decode(sr stream.Reader) (AsyncRequestType, error) {
+	var v AsyncRequestType
+	err := v.Decode(sr)
+	return v, err
+}
+
+func _Header_Decode(sr stream.Reader) (*shared.Header, error) {
+	var v shared.Header
+	err := v.Decode(sr)
+	return &v, err
+}
+
+// Decode deserializes a AsyncRequestMessage struct directly from its Thrift-level
+// representation, without going through an intemediary type.
+//
+// An error is returned if a AsyncRequestMessage struct could not be generated from the wire
+// representation.
+func (v *AsyncRequestMessage) Decode(sr stream.Reader) error {
+
+	if err := sr.ReadStructBegin(); err != nil {
+		return err
+	}
+
+	fh, ok, err := sr.ReadFieldBegin()
+	if err != nil {
+		return err
+	}
+
+	for ok {
+		switch {
+		case fh.ID == 10 && fh.Type == wire.TBinary:
+			var x string
+			x, err = sr.ReadString()
+			v.PartitionKey = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 12 && fh.Type == wire.TI32:
+			var x AsyncRequestType
+			x, err = _AsyncRequestType_Decode(sr)
+			v.Type = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 14 && fh.Type == wire.TStruct:
+			v.Header, err = _Header_Decode(sr)
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 16 && fh.Type == wire.TBinary:
+			var x string
+			x, err = sr.ReadString()
+			v.Encoding = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 18 && fh.Type == wire.TBinary:
+			v.Payload, err = sr.ReadBinary()
+			if err != nil {
+				return err
+			}
+
+		default:
+			if err := sr.Skip(fh.Type); err != nil {
+				return err
+			}
+		}
+
+		if err := sr.ReadFieldEnd(); err != nil {
+			return err
+		}
+
+		if fh, ok, err = sr.ReadFieldBegin(); err != nil {
+			return err
+		}
+	}
+
+	if err := sr.ReadStructEnd(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// String returns a readable string representation of a AsyncRequestMessage
+// struct.
+func (v *AsyncRequestMessage) String() string {
+	if v == nil {
+		return "<nil>"
+	}
+
+	var fields [5]string
+	i := 0
+	if v.PartitionKey != nil {
+		fields[i] = fmt.Sprintf("PartitionKey: %v", *(v.PartitionKey))
+		i++
+	}
+	if v.Type != nil {
+		fields[i] = fmt.Sprintf("Type: %v", *(v.Type))
+		i++
+	}
+	if v.Header != nil {
+		fields[i] = fmt.Sprintf("Header: %v", v.Header)
+		i++
+	}
+	if v.Encoding != nil {
+		fields[i] = fmt.Sprintf("Encoding: %v", *(v.Encoding))
+		i++
+	}
+	if v.Payload != nil {
+		fields[i] = fmt.Sprintf("Payload: %v", v.Payload)
+		i++
+	}
+
+	return fmt.Sprintf("AsyncRequestMessage{%v}", strings.Join(fields[:i], ", "))
+}
+
+func _AsyncRequestType_EqualsPtr(lhs, rhs *AsyncRequestType) bool {
+	if lhs != nil && rhs != nil {
+
+		x := *lhs
+		y := *rhs
+		return x.Equals(y)
+	}
+	return lhs == nil && rhs == nil
+}
+
+// Equals returns true if all the fields of this AsyncRequestMessage match the
+// provided AsyncRequestMessage.
+//
+// This function performs a deep comparison.
+func (v *AsyncRequestMessage) Equals(rhs *AsyncRequestMessage) bool {
+	if v == nil {
+		return rhs == nil
+	} else if rhs == nil {
+		return false
+	}
+	if !_String_EqualsPtr(v.PartitionKey, rhs.PartitionKey) {
+		return false
+	}
+	if !_AsyncRequestType_EqualsPtr(v.Type, rhs.Type) {
+		return false
+	}
+	if !((v.Header == nil && rhs.Header == nil) || (v.Header != nil && rhs.Header != nil && v.Header.Equals(rhs.Header))) {
+		return false
+	}
+	if !_String_EqualsPtr(v.Encoding, rhs.Encoding) {
+		return false
+	}
+	if !((v.Payload == nil && rhs.Payload == nil) || (v.Payload != nil && rhs.Payload != nil && bytes.Equal(v.Payload, rhs.Payload))) {
+		return false
+	}
+
+	return true
+}
+
+// MarshalLogObject implements zapcore.ObjectMarshaler, enabling
+// fast logging of AsyncRequestMessage.
+func (v *AsyncRequestMessage) MarshalLogObject(enc zapcore.ObjectEncoder) (err error) {
+	if v == nil {
+		return nil
+	}
+	if v.PartitionKey != nil {
+		enc.AddString("partitionKey", *v.PartitionKey)
+	}
+	if v.Type != nil {
+		err = multierr.Append(err, enc.AddObject("type", *v.Type))
+	}
+	if v.Header != nil {
+		err = multierr.Append(err, enc.AddObject("header", v.Header))
+	}
+	if v.Encoding != nil {
+		enc.AddString("encoding", *v.Encoding)
+	}
+	if v.Payload != nil {
+		enc.AddString("payload", base64.StdEncoding.EncodeToString(v.Payload))
+	}
+	return err
+}
+
+// GetPartitionKey returns the value of PartitionKey if it is set or its
+// zero value if it is unset.
+func (v *AsyncRequestMessage) GetPartitionKey() (o string) {
+	if v != nil && v.PartitionKey != nil {
+		return *v.PartitionKey
+	}
+
+	return
+}
+
+// IsSetPartitionKey returns true if PartitionKey is not nil.
+func (v *AsyncRequestMessage) IsSetPartitionKey() bool {
+	return v != nil && v.PartitionKey != nil
+}
+
+// GetType returns the value of Type if it is set or its
+// zero value if it is unset.
+func (v *AsyncRequestMessage) GetType() (o AsyncRequestType) {
+	if v != nil && v.Type != nil {
+		return *v.Type
+	}
+
+	return
+}
+
+// IsSetType returns true if Type is not nil.
+func (v *AsyncRequestMessage) IsSetType() bool {
+	return v != nil && v.Type != nil
+}
+
+// GetHeader returns the value of Header if it is set or its
+// zero value if it is unset.
+func (v *AsyncRequestMessage) GetHeader() (o *shared.Header) {
+	if v != nil && v.Header != nil {
+		return v.Header
+	}
+
+	return
+}
+
+// IsSetHeader returns true if Header is not nil.
+func (v *AsyncRequestMessage) IsSetHeader() bool {
+	return v != nil && v.Header != nil
+}
+
+// GetEncoding returns the value of Encoding if it is set or its
+// zero value if it is unset.
+func (v *AsyncRequestMessage) GetEncoding() (o string) {
+	if v != nil && v.Encoding != nil {
+		return *v.Encoding
+	}
+
+	return
+}
+
+// IsSetEncoding returns true if Encoding is not nil.
+func (v *AsyncRequestMessage) IsSetEncoding() bool {
+	return v != nil && v.Encoding != nil
+}
+
+// GetPayload returns the value of Payload if it is set or its
+// zero value if it is unset.
+func (v *AsyncRequestMessage) GetPayload() (o []byte) {
+	if v != nil && v.Payload != nil {
+		return v.Payload
+	}
+
+	return
+}
+
+// IsSetPayload returns true if Payload is not nil.
+func (v *AsyncRequestMessage) IsSetPayload() bool {
+	return v != nil && v.Payload != nil
+}
+
+type AsyncRequestType int32
+
+const (
+	AsyncRequestTypeStartWorkflowExecutionAsyncRequest           AsyncRequestType = 0
+	AsyncRequestTypeSignalWithStartWorkflowExecutionAsyncRequest AsyncRequestType = 1
+)
+
+// AsyncRequestType_Values returns all recognized values of AsyncRequestType.
+func AsyncRequestType_Values() []AsyncRequestType {
+	return []AsyncRequestType{
+		AsyncRequestTypeStartWorkflowExecutionAsyncRequest,
+		AsyncRequestTypeSignalWithStartWorkflowExecutionAsyncRequest,
+	}
+}
+
+// UnmarshalText tries to decode AsyncRequestType from a byte slice
+// containing its name.
+//
+//	var v AsyncRequestType
+//	err := v.UnmarshalText([]byte("StartWorkflowExecutionAsyncRequest"))
+func (v *AsyncRequestType) UnmarshalText(value []byte) error {
+	switch s := string(value); s {
+	case "StartWorkflowExecutionAsyncRequest":
+		*v = AsyncRequestTypeStartWorkflowExecutionAsyncRequest
+		return nil
+	case "SignalWithStartWorkflowExecutionAsyncRequest":
+		*v = AsyncRequestTypeSignalWithStartWorkflowExecutionAsyncRequest
+		return nil
+	default:
+		val, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return fmt.Errorf("unknown enum value %q for %q: %v", s, "AsyncRequestType", err)
+		}
+		*v = AsyncRequestType(val)
+		return nil
+	}
+}
+
+// MarshalText encodes AsyncRequestType to text.
+//
+// If the enum value is recognized, its name is returned.
+// Otherwise, its integer value is returned.
+//
+// This implements the TextMarshaler interface.
+func (v AsyncRequestType) MarshalText() ([]byte, error) {
+	switch int32(v) {
+	case 0:
+		return []byte("StartWorkflowExecutionAsyncRequest"), nil
+	case 1:
+		return []byte("SignalWithStartWorkflowExecutionAsyncRequest"), nil
+	}
+	return []byte(strconv.FormatInt(int64(v), 10)), nil
+}
+
+// MarshalLogObject implements zapcore.ObjectMarshaler, enabling
+// fast logging of AsyncRequestType.
+// Enums are logged as objects, where the value is logged with key "value", and
+// if this value's name is known, the name is logged with key "name".
+func (v AsyncRequestType) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddInt32("value", int32(v))
+	switch int32(v) {
+	case 0:
+		enc.AddString("name", "StartWorkflowExecutionAsyncRequest")
+	case 1:
+		enc.AddString("name", "SignalWithStartWorkflowExecutionAsyncRequest")
+	}
+	return nil
+}
+
+// Ptr returns a pointer to this enum value.
+func (v AsyncRequestType) Ptr() *AsyncRequestType {
+	return &v
+}
+
+// Encode encodes AsyncRequestType directly to bytes.
+//
+//	sWriter := BinaryStreamer.Writer(writer)
+//
+//	var v AsyncRequestType
+//	return v.Encode(sWriter)
+func (v AsyncRequestType) Encode(sw stream.Writer) error {
+	return sw.WriteInt32(int32(v))
+}
+
+// ToWire translates AsyncRequestType into a Thrift-level intermediate
+// representation. This intermediate representation may be serialized
+// into bytes using a ThriftRW protocol implementation.
+//
+// Enums are represented as 32-bit integers over the wire.
+func (v AsyncRequestType) ToWire() (wire.Value, error) {
+	return wire.NewValueI32(int32(v)), nil
+}
+
+// FromWire deserializes AsyncRequestType from its Thrift-level
+// representation.
+//
+//	x, err := binaryProtocol.Decode(reader, wire.TI32)
+//	if err != nil {
+//	  return AsyncRequestType(0), err
+//	}
+//
+//	var v AsyncRequestType
+//	if err := v.FromWire(x); err != nil {
+//	  return AsyncRequestType(0), err
+//	}
+//	return v, nil
+func (v *AsyncRequestType) FromWire(w wire.Value) error {
+	*v = (AsyncRequestType)(w.GetI32())
+	return nil
+}
+
+// Decode reads off the encoded AsyncRequestType directly off of the wire.
+//
+//	sReader := BinaryStreamer.Reader(reader)
+//
+//	var v AsyncRequestType
+//	if err := v.Decode(sReader); err != nil {
+//	  return AsyncRequestType(0), err
+//	}
+//	return v, nil
+func (v *AsyncRequestType) Decode(sr stream.Reader) error {
+	i, err := sr.ReadInt32()
+	if err != nil {
+		return err
+	}
+	*v = (AsyncRequestType)(i)
+	return nil
+}
+
+// String returns a readable string representation of AsyncRequestType.
+func (v AsyncRequestType) String() string {
+	w := int32(v)
+	switch w {
+	case 0:
+		return "StartWorkflowExecutionAsyncRequest"
+	case 1:
+		return "SignalWithStartWorkflowExecutionAsyncRequest"
+	}
+	return fmt.Sprintf("AsyncRequestType(%d)", w)
+}
+
+// Equals returns true if this AsyncRequestType value matches the provided
+// value.
+func (v AsyncRequestType) Equals(rhs AsyncRequestType) bool {
+	return v == rhs
+}
+
+// MarshalJSON serializes AsyncRequestType into JSON.
+//
+// If the enum value is recognized, its name is returned.
+// Otherwise, its integer value is returned.
+//
+// This implements json.Marshaler.
+func (v AsyncRequestType) MarshalJSON() ([]byte, error) {
+	switch int32(v) {
+	case 0:
+		return ([]byte)("\"StartWorkflowExecutionAsyncRequest\""), nil
+	case 1:
+		return ([]byte)("\"SignalWithStartWorkflowExecutionAsyncRequest\""), nil
+	}
+	return ([]byte)(strconv.FormatInt(int64(v), 10)), nil
+}
+
+// UnmarshalJSON attempts to decode AsyncRequestType from its JSON
+// representation.
+//
+// This implementation supports both, numeric and string inputs. If a
+// string is provided, it must be a known enum name.
+//
+// This implements json.Unmarshaler.
+func (v *AsyncRequestType) UnmarshalJSON(text []byte) error {
+	d := json.NewDecoder(bytes.NewReader(text))
+	d.UseNumber()
+	t, err := d.Token()
+	if err != nil {
+		return err
+	}
+
+	switch w := t.(type) {
+	case json.Number:
+		x, err := w.Int64()
+		if err != nil {
+			return err
+		}
+		if x > math.MaxInt32 {
+			return fmt.Errorf("enum overflow from JSON %q for %q", text, "AsyncRequestType")
+		}
+		if x < math.MinInt32 {
+			return fmt.Errorf("enum underflow from JSON %q for %q", text, "AsyncRequestType")
+		}
+		*v = (AsyncRequestType)(x)
+		return nil
+	case string:
+		return v.UnmarshalText([]byte(w))
+	default:
+		return fmt.Errorf("invalid JSON value %q (%T) to unmarshal into %q", t, t, "AsyncRequestType")
+	}
+}
+
 type ChildExecutionInfo struct {
 	Version                *int64  `json:"version,omitempty"`
 	InitiatedEventBatchID  *int64  `json:"initiatedEventBatchID,omitempty"`
@@ -2346,14 +3040,14 @@ type ChildExecutionInfo struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *ChildExecutionInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [14]wire.Field
@@ -2485,16 +3179,16 @@ func (v *ChildExecutionInfo) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a ChildExecutionInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v ChildExecutionInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v ChildExecutionInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *ChildExecutionInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -3353,30 +4047,34 @@ func (v *ChildExecutionInfo) IsSetParentClosePolicy() bool {
 }
 
 type DomainInfo struct {
-	Name                        *string           `json:"name,omitempty"`
-	Description                 *string           `json:"description,omitempty"`
-	Owner                       *string           `json:"owner,omitempty"`
-	Status                      *int32            `json:"status,omitempty"`
-	RetentionDays               *int16            `json:"retentionDays,omitempty"`
-	EmitMetric                  *bool             `json:"emitMetric,omitempty"`
-	ArchivalBucket              *string           `json:"archivalBucket,omitempty"`
-	ArchivalStatus              *int16            `json:"archivalStatus,omitempty"`
-	ConfigVersion               *int64            `json:"configVersion,omitempty"`
-	NotificationVersion         *int64            `json:"notificationVersion,omitempty"`
-	FailoverNotificationVersion *int64            `json:"failoverNotificationVersion,omitempty"`
-	FailoverVersion             *int64            `json:"failoverVersion,omitempty"`
-	ActiveClusterName           *string           `json:"activeClusterName,omitempty"`
-	Clusters                    []string          `json:"clusters,omitempty"`
-	Data                        map[string]string `json:"data,omitempty"`
-	BadBinaries                 []byte            `json:"badBinaries,omitempty"`
-	BadBinariesEncoding         *string           `json:"badBinariesEncoding,omitempty"`
-	HistoryArchivalStatus       *int16            `json:"historyArchivalStatus,omitempty"`
-	HistoryArchivalURI          *string           `json:"historyArchivalURI,omitempty"`
-	VisibilityArchivalStatus    *int16            `json:"visibilityArchivalStatus,omitempty"`
-	VisibilityArchivalURI       *string           `json:"visibilityArchivalURI,omitempty"`
-	FailoverEndTime             *int64            `json:"failoverEndTime,omitempty"`
-	PreviousFailoverVersion     *int64            `json:"previousFailoverVersion,omitempty"`
-	LastUpdatedTime             *int64            `json:"lastUpdatedTime,omitempty"`
+	Name                                 *string           `json:"name,omitempty"`
+	Description                          *string           `json:"description,omitempty"`
+	Owner                                *string           `json:"owner,omitempty"`
+	Status                               *int32            `json:"status,omitempty"`
+	RetentionDays                        *int16            `json:"retentionDays,omitempty"`
+	EmitMetric                           *bool             `json:"emitMetric,omitempty"`
+	ArchivalBucket                       *string           `json:"archivalBucket,omitempty"`
+	ArchivalStatus                       *int16            `json:"archivalStatus,omitempty"`
+	ConfigVersion                        *int64            `json:"configVersion,omitempty"`
+	NotificationVersion                  *int64            `json:"notificationVersion,omitempty"`
+	FailoverNotificationVersion          *int64            `json:"failoverNotificationVersion,omitempty"`
+	FailoverVersion                      *int64            `json:"failoverVersion,omitempty"`
+	ActiveClusterName                    *string           `json:"activeClusterName,omitempty"`
+	Clusters                             []string          `json:"clusters,omitempty"`
+	Data                                 map[string]string `json:"data,omitempty"`
+	BadBinaries                          []byte            `json:"badBinaries,omitempty"`
+	BadBinariesEncoding                  *string           `json:"badBinariesEncoding,omitempty"`
+	HistoryArchivalStatus                *int16            `json:"historyArchivalStatus,omitempty"`
+	HistoryArchivalURI                   *string           `json:"historyArchivalURI,omitempty"`
+	VisibilityArchivalStatus             *int16            `json:"visibilityArchivalStatus,omitempty"`
+	VisibilityArchivalURI                *string           `json:"visibilityArchivalURI,omitempty"`
+	FailoverEndTime                      *int64            `json:"failoverEndTime,omitempty"`
+	PreviousFailoverVersion              *int64            `json:"previousFailoverVersion,omitempty"`
+	LastUpdatedTime                      *int64            `json:"lastUpdatedTime,omitempty"`
+	IsolationGroupsConfiguration         []byte            `json:"isolationGroupsConfiguration,omitempty"`
+	IsolationGroupsConfigurationEncoding *string           `json:"isolationGroupsConfigurationEncoding,omitempty"`
+	AsyncWorkflowConfiguration           []byte            `json:"asyncWorkflowConfiguration,omitempty"`
+	AsyncWorkflowConfigurationEncoding   *string           `json:"asyncWorkflowConfigurationEncoding,omitempty"`
 }
 
 type _Map_String_String_MapItemList map[string]string
@@ -3421,17 +4119,17 @@ func (_Map_String_String_MapItemList) Close() {}
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *DomainInfo) ToWire() (wire.Value, error) {
 	var (
-		fields [24]wire.Field
+		fields [28]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -3629,6 +4327,38 @@ func (v *DomainInfo) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 54, Value: w}
 		i++
 	}
+	if v.IsolationGroupsConfiguration != nil {
+		w, err = wire.NewValueBinary(v.IsolationGroupsConfiguration), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 56, Value: w}
+		i++
+	}
+	if v.IsolationGroupsConfigurationEncoding != nil {
+		w, err = wire.NewValueString(*(v.IsolationGroupsConfigurationEncoding)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 58, Value: w}
+		i++
+	}
+	if v.AsyncWorkflowConfiguration != nil {
+		w, err = wire.NewValueBinary(v.AsyncWorkflowConfiguration), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 60, Value: w}
+		i++
+	}
+	if v.AsyncWorkflowConfigurationEncoding != nil {
+		w, err = wire.NewValueString(*(v.AsyncWorkflowConfigurationEncoding)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 62, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
 }
@@ -3668,16 +4398,16 @@ func _Map_String_String_Read(m wire.MapItemList) (map[string]string, error) {
 // An error is returned if we were unable to build a DomainInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v DomainInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v DomainInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *DomainInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -3912,6 +4642,42 @@ func (v *DomainInfo) FromWire(w wire.Value) error {
 				var x int64
 				x, err = field.Value.GetI64(), error(nil)
 				v.LastUpdatedTime = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 56:
+			if field.Value.Type() == wire.TBinary {
+				v.IsolationGroupsConfiguration, err = field.Value.GetBinary(), error(nil)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 58:
+			if field.Value.Type() == wire.TBinary {
+				var x string
+				x, err = field.Value.GetString(), error(nil)
+				v.IsolationGroupsConfigurationEncoding = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 60:
+			if field.Value.Type() == wire.TBinary {
+				v.AsyncWorkflowConfiguration, err = field.Value.GetBinary(), error(nil)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 62:
+			if field.Value.Type() == wire.TBinary {
+				var x string
+				x, err = field.Value.GetString(), error(nil)
+				v.AsyncWorkflowConfigurationEncoding = &x
 				if err != nil {
 					return err
 				}
@@ -4243,6 +5009,54 @@ func (v *DomainInfo) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.IsolationGroupsConfiguration != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 56, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteBinary(v.IsolationGroupsConfiguration); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.IsolationGroupsConfigurationEncoding != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 58, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteString(*(v.IsolationGroupsConfigurationEncoding)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.AsyncWorkflowConfiguration != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 60, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteBinary(v.AsyncWorkflowConfiguration); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.AsyncWorkflowConfigurationEncoding != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 62, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteString(*(v.AsyncWorkflowConfigurationEncoding)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	return sw.WriteStructEnd()
 }
 
@@ -4490,6 +5304,34 @@ func (v *DomainInfo) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 56 && fh.Type == wire.TBinary:
+			v.IsolationGroupsConfiguration, err = sr.ReadBinary()
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 58 && fh.Type == wire.TBinary:
+			var x string
+			x, err = sr.ReadString()
+			v.IsolationGroupsConfigurationEncoding = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 60 && fh.Type == wire.TBinary:
+			v.AsyncWorkflowConfiguration, err = sr.ReadBinary()
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 62 && fh.Type == wire.TBinary:
+			var x string
+			x, err = sr.ReadString()
+			v.AsyncWorkflowConfigurationEncoding = &x
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -4519,7 +5361,7 @@ func (v *DomainInfo) String() string {
 		return "<nil>"
 	}
 
-	var fields [24]string
+	var fields [28]string
 	i := 0
 	if v.Name != nil {
 		fields[i] = fmt.Sprintf("Name: %v", *(v.Name))
@@ -4615,6 +5457,22 @@ func (v *DomainInfo) String() string {
 	}
 	if v.LastUpdatedTime != nil {
 		fields[i] = fmt.Sprintf("LastUpdatedTime: %v", *(v.LastUpdatedTime))
+		i++
+	}
+	if v.IsolationGroupsConfiguration != nil {
+		fields[i] = fmt.Sprintf("IsolationGroupsConfiguration: %v", v.IsolationGroupsConfiguration)
+		i++
+	}
+	if v.IsolationGroupsConfigurationEncoding != nil {
+		fields[i] = fmt.Sprintf("IsolationGroupsConfigurationEncoding: %v", *(v.IsolationGroupsConfigurationEncoding))
+		i++
+	}
+	if v.AsyncWorkflowConfiguration != nil {
+		fields[i] = fmt.Sprintf("AsyncWorkflowConfiguration: %v", v.AsyncWorkflowConfiguration)
+		i++
+	}
+	if v.AsyncWorkflowConfigurationEncoding != nil {
+		fields[i] = fmt.Sprintf("AsyncWorkflowConfigurationEncoding: %v", *(v.AsyncWorkflowConfigurationEncoding))
 		i++
 	}
 
@@ -4730,6 +5588,18 @@ func (v *DomainInfo) Equals(rhs *DomainInfo) bool {
 	if !_I64_EqualsPtr(v.LastUpdatedTime, rhs.LastUpdatedTime) {
 		return false
 	}
+	if !((v.IsolationGroupsConfiguration == nil && rhs.IsolationGroupsConfiguration == nil) || (v.IsolationGroupsConfiguration != nil && rhs.IsolationGroupsConfiguration != nil && bytes.Equal(v.IsolationGroupsConfiguration, rhs.IsolationGroupsConfiguration))) {
+		return false
+	}
+	if !_String_EqualsPtr(v.IsolationGroupsConfigurationEncoding, rhs.IsolationGroupsConfigurationEncoding) {
+		return false
+	}
+	if !((v.AsyncWorkflowConfiguration == nil && rhs.AsyncWorkflowConfiguration == nil) || (v.AsyncWorkflowConfiguration != nil && rhs.AsyncWorkflowConfiguration != nil && bytes.Equal(v.AsyncWorkflowConfiguration, rhs.AsyncWorkflowConfiguration))) {
+		return false
+	}
+	if !_String_EqualsPtr(v.AsyncWorkflowConfigurationEncoding, rhs.AsyncWorkflowConfigurationEncoding) {
+		return false
+	}
 
 	return true
 }
@@ -4822,6 +5692,18 @@ func (v *DomainInfo) MarshalLogObject(enc zapcore.ObjectEncoder) (err error) {
 	}
 	if v.LastUpdatedTime != nil {
 		enc.AddInt64("lastUpdatedTime", *v.LastUpdatedTime)
+	}
+	if v.IsolationGroupsConfiguration != nil {
+		enc.AddString("isolationGroupsConfiguration", base64.StdEncoding.EncodeToString(v.IsolationGroupsConfiguration))
+	}
+	if v.IsolationGroupsConfigurationEncoding != nil {
+		enc.AddString("isolationGroupsConfigurationEncoding", *v.IsolationGroupsConfigurationEncoding)
+	}
+	if v.AsyncWorkflowConfiguration != nil {
+		enc.AddString("asyncWorkflowConfiguration", base64.StdEncoding.EncodeToString(v.AsyncWorkflowConfiguration))
+	}
+	if v.AsyncWorkflowConfigurationEncoding != nil {
+		enc.AddString("asyncWorkflowConfigurationEncoding", *v.AsyncWorkflowConfigurationEncoding)
 	}
 	return err
 }
@@ -5186,6 +6068,66 @@ func (v *DomainInfo) IsSetLastUpdatedTime() bool {
 	return v != nil && v.LastUpdatedTime != nil
 }
 
+// GetIsolationGroupsConfiguration returns the value of IsolationGroupsConfiguration if it is set or its
+// zero value if it is unset.
+func (v *DomainInfo) GetIsolationGroupsConfiguration() (o []byte) {
+	if v != nil && v.IsolationGroupsConfiguration != nil {
+		return v.IsolationGroupsConfiguration
+	}
+
+	return
+}
+
+// IsSetIsolationGroupsConfiguration returns true if IsolationGroupsConfiguration is not nil.
+func (v *DomainInfo) IsSetIsolationGroupsConfiguration() bool {
+	return v != nil && v.IsolationGroupsConfiguration != nil
+}
+
+// GetIsolationGroupsConfigurationEncoding returns the value of IsolationGroupsConfigurationEncoding if it is set or its
+// zero value if it is unset.
+func (v *DomainInfo) GetIsolationGroupsConfigurationEncoding() (o string) {
+	if v != nil && v.IsolationGroupsConfigurationEncoding != nil {
+		return *v.IsolationGroupsConfigurationEncoding
+	}
+
+	return
+}
+
+// IsSetIsolationGroupsConfigurationEncoding returns true if IsolationGroupsConfigurationEncoding is not nil.
+func (v *DomainInfo) IsSetIsolationGroupsConfigurationEncoding() bool {
+	return v != nil && v.IsolationGroupsConfigurationEncoding != nil
+}
+
+// GetAsyncWorkflowConfiguration returns the value of AsyncWorkflowConfiguration if it is set or its
+// zero value if it is unset.
+func (v *DomainInfo) GetAsyncWorkflowConfiguration() (o []byte) {
+	if v != nil && v.AsyncWorkflowConfiguration != nil {
+		return v.AsyncWorkflowConfiguration
+	}
+
+	return
+}
+
+// IsSetAsyncWorkflowConfiguration returns true if AsyncWorkflowConfiguration is not nil.
+func (v *DomainInfo) IsSetAsyncWorkflowConfiguration() bool {
+	return v != nil && v.AsyncWorkflowConfiguration != nil
+}
+
+// GetAsyncWorkflowConfigurationEncoding returns the value of AsyncWorkflowConfigurationEncoding if it is set or its
+// zero value if it is unset.
+func (v *DomainInfo) GetAsyncWorkflowConfigurationEncoding() (o string) {
+	if v != nil && v.AsyncWorkflowConfigurationEncoding != nil {
+		return *v.AsyncWorkflowConfigurationEncoding
+	}
+
+	return
+}
+
+// IsSetAsyncWorkflowConfigurationEncoding returns true if AsyncWorkflowConfigurationEncoding is not nil.
+func (v *DomainInfo) IsSetAsyncWorkflowConfigurationEncoding() bool {
+	return v != nil && v.AsyncWorkflowConfigurationEncoding != nil
+}
+
 type HistoryTreeInfo struct {
 	CreatedTimeNanos *int64                       `json:"createdTimeNanos,omitempty"`
 	Ancestors        []*shared.HistoryBranchRange `json:"ancestors,omitempty"`
@@ -5228,14 +6170,14 @@ func (_List_HistoryBranchRange_ValueList) Close() {}
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *HistoryTreeInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [3]wire.Field
@@ -5303,16 +6245,16 @@ func _List_HistoryBranchRange_Read(l wire.ValueList) ([]*shared.HistoryBranchRan
 // An error is returned if we were unable to build a HistoryTreeInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v HistoryTreeInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v HistoryTreeInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *HistoryTreeInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -5679,14 +6621,14 @@ type ReplicationTaskInfo struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *ReplicationTaskInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [13]wire.Field
@@ -5810,16 +6752,16 @@ func (v *ReplicationTaskInfo) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a ReplicationTaskInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v ReplicationTaskInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v ReplicationTaskInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *ReplicationTaskInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -6631,14 +7573,14 @@ type RequestCancelInfo struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *RequestCancelInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [3]wire.Field
@@ -6682,16 +7624,16 @@ func (v *RequestCancelInfo) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a RequestCancelInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v RequestCancelInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v RequestCancelInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *RequestCancelInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -7020,14 +7962,14 @@ func (_Map_String_I64_MapItemList) Close() {}
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *ShardInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [19]wire.Field
@@ -7227,16 +8169,16 @@ func _Map_String_I64_Read(m wire.MapItemList) (map[string]int64, error) {
 // An error is returned if we were unable to build a ShardInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v ShardInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v ShardInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *ShardInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -8456,14 +9398,14 @@ type SignalInfo struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *SignalInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [6]wire.Field
@@ -8531,16 +9473,16 @@ func (v *SignalInfo) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a SignalInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v SignalInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v SignalInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *SignalInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -8963,11 +9905,12 @@ func (v *SignalInfo) IsSetControl() bool {
 }
 
 type TaskInfo struct {
-	WorkflowID       *string `json:"workflowID,omitempty"`
-	RunID            []byte  `json:"runID,omitempty"`
-	ScheduleID       *int64  `json:"scheduleID,omitempty"`
-	ExpiryTimeNanos  *int64  `json:"expiryTimeNanos,omitempty"`
-	CreatedTimeNanos *int64  `json:"createdTimeNanos,omitempty"`
+	WorkflowID       *string           `json:"workflowID,omitempty"`
+	RunID            []byte            `json:"runID,omitempty"`
+	ScheduleID       *int64            `json:"scheduleID,omitempty"`
+	ExpiryTimeNanos  *int64            `json:"expiryTimeNanos,omitempty"`
+	CreatedTimeNanos *int64            `json:"createdTimeNanos,omitempty"`
+	PartitionConfig  map[string]string `json:"partitionConfig,omitempty"`
 }
 
 // ToWire translates a TaskInfo struct into a Thrift-level intermediate
@@ -8977,17 +9920,17 @@ type TaskInfo struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *TaskInfo) ToWire() (wire.Value, error) {
 	var (
-		fields [5]wire.Field
+		fields [6]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -9033,6 +9976,14 @@ func (v *TaskInfo) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 15, Value: w}
 		i++
 	}
+	if v.PartitionConfig != nil {
+		w, err = wire.NewValueMap(_Map_String_String_MapItemList(v.PartitionConfig)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 17, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
 }
@@ -9044,16 +9995,16 @@ func (v *TaskInfo) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a TaskInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v TaskInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v TaskInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *TaskInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -9102,6 +10053,14 @@ func (v *TaskInfo) FromWire(w wire.Value) error {
 				var x int64
 				x, err = field.Value.GetI64(), error(nil)
 				v.CreatedTimeNanos = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 17:
+			if field.Value.Type() == wire.TMap {
+				v.PartitionConfig, err = _Map_String_String_Read(field.Value.GetMap())
 				if err != nil {
 					return err
 				}
@@ -9182,6 +10141,18 @@ func (v *TaskInfo) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.PartitionConfig != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 17, Type: wire.TMap}); err != nil {
+			return err
+		}
+		if err := _Map_String_String_Encode(v.PartitionConfig, sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	return sw.WriteStructEnd()
 }
 
@@ -9241,6 +10212,12 @@ func (v *TaskInfo) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 17 && fh.Type == wire.TMap:
+			v.PartitionConfig, err = _Map_String_String_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -9270,7 +10247,7 @@ func (v *TaskInfo) String() string {
 		return "<nil>"
 	}
 
-	var fields [5]string
+	var fields [6]string
 	i := 0
 	if v.WorkflowID != nil {
 		fields[i] = fmt.Sprintf("WorkflowID: %v", *(v.WorkflowID))
@@ -9290,6 +10267,10 @@ func (v *TaskInfo) String() string {
 	}
 	if v.CreatedTimeNanos != nil {
 		fields[i] = fmt.Sprintf("CreatedTimeNanos: %v", *(v.CreatedTimeNanos))
+		i++
+	}
+	if v.PartitionConfig != nil {
+		fields[i] = fmt.Sprintf("PartitionConfig: %v", v.PartitionConfig)
 		i++
 	}
 
@@ -9321,6 +10302,9 @@ func (v *TaskInfo) Equals(rhs *TaskInfo) bool {
 	if !_I64_EqualsPtr(v.CreatedTimeNanos, rhs.CreatedTimeNanos) {
 		return false
 	}
+	if !((v.PartitionConfig == nil && rhs.PartitionConfig == nil) || (v.PartitionConfig != nil && rhs.PartitionConfig != nil && _Map_String_String_Equals(v.PartitionConfig, rhs.PartitionConfig))) {
+		return false
+	}
 
 	return true
 }
@@ -9345,6 +10329,9 @@ func (v *TaskInfo) MarshalLogObject(enc zapcore.ObjectEncoder) (err error) {
 	}
 	if v.CreatedTimeNanos != nil {
 		enc.AddInt64("createdTimeNanos", *v.CreatedTimeNanos)
+	}
+	if v.PartitionConfig != nil {
+		err = multierr.Append(err, enc.AddObject("partitionConfig", (_Map_String_String_Zapper)(v.PartitionConfig)))
 	}
 	return err
 }
@@ -9424,11 +10411,27 @@ func (v *TaskInfo) IsSetCreatedTimeNanos() bool {
 	return v != nil && v.CreatedTimeNanos != nil
 }
 
+// GetPartitionConfig returns the value of PartitionConfig if it is set or its
+// zero value if it is unset.
+func (v *TaskInfo) GetPartitionConfig() (o map[string]string) {
+	if v != nil && v.PartitionConfig != nil {
+		return v.PartitionConfig
+	}
+
+	return
+}
+
+// IsSetPartitionConfig returns true if PartitionConfig is not nil.
+func (v *TaskInfo) IsSetPartitionConfig() bool {
+	return v != nil && v.PartitionConfig != nil
+}
+
 type TaskListInfo struct {
-	Kind             *int16 `json:"kind,omitempty"`
-	AckLevel         *int64 `json:"ackLevel,omitempty"`
-	ExpiryTimeNanos  *int64 `json:"expiryTimeNanos,omitempty"`
-	LastUpdatedNanos *int64 `json:"lastUpdatedNanos,omitempty"`
+	Kind                    *int16                   `json:"kind,omitempty"`
+	AckLevel                *int64                   `json:"ackLevel,omitempty"`
+	ExpiryTimeNanos         *int64                   `json:"expiryTimeNanos,omitempty"`
+	LastUpdatedNanos        *int64                   `json:"lastUpdatedNanos,omitempty"`
+	AdaptivePartitionConfig *TaskListPartitionConfig `json:"adaptivePartitionConfig,omitempty"`
 }
 
 // ToWire translates a TaskListInfo struct into a Thrift-level intermediate
@@ -9438,17 +10441,17 @@ type TaskListInfo struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *TaskListInfo) ToWire() (wire.Value, error) {
 	var (
-		fields [4]wire.Field
+		fields [5]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -9486,8 +10489,22 @@ func (v *TaskListInfo) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 16, Value: w}
 		i++
 	}
+	if v.AdaptivePartitionConfig != nil {
+		w, err = v.AdaptivePartitionConfig.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 18, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
+}
+
+func _TaskListPartitionConfig_Read(w wire.Value) (*TaskListPartitionConfig, error) {
+	var v TaskListPartitionConfig
+	err := v.FromWire(w)
+	return &v, err
 }
 
 // FromWire deserializes a TaskListInfo struct from its Thrift-level
@@ -9497,16 +10514,16 @@ func (v *TaskListInfo) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a TaskListInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v TaskListInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v TaskListInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *TaskListInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -9547,6 +10564,14 @@ func (v *TaskListInfo) FromWire(w wire.Value) error {
 				var x int64
 				x, err = field.Value.GetI64(), error(nil)
 				v.LastUpdatedNanos = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 18:
+			if field.Value.Type() == wire.TStruct {
+				v.AdaptivePartitionConfig, err = _TaskListPartitionConfig_Read(field.Value)
 				if err != nil {
 					return err
 				}
@@ -9615,7 +10640,25 @@ func (v *TaskListInfo) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.AdaptivePartitionConfig != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 18, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.AdaptivePartitionConfig.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	return sw.WriteStructEnd()
+}
+
+func _TaskListPartitionConfig_Decode(sr stream.Reader) (*TaskListPartitionConfig, error) {
+	var v TaskListPartitionConfig
+	err := v.Decode(sr)
+	return &v, err
 }
 
 // Decode deserializes a TaskListInfo struct directly from its Thrift-level
@@ -9668,6 +10711,12 @@ func (v *TaskListInfo) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 18 && fh.Type == wire.TStruct:
+			v.AdaptivePartitionConfig, err = _TaskListPartitionConfig_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -9697,7 +10746,7 @@ func (v *TaskListInfo) String() string {
 		return "<nil>"
 	}
 
-	var fields [4]string
+	var fields [5]string
 	i := 0
 	if v.Kind != nil {
 		fields[i] = fmt.Sprintf("Kind: %v", *(v.Kind))
@@ -9713,6 +10762,10 @@ func (v *TaskListInfo) String() string {
 	}
 	if v.LastUpdatedNanos != nil {
 		fields[i] = fmt.Sprintf("LastUpdatedNanos: %v", *(v.LastUpdatedNanos))
+		i++
+	}
+	if v.AdaptivePartitionConfig != nil {
+		fields[i] = fmt.Sprintf("AdaptivePartitionConfig: %v", v.AdaptivePartitionConfig)
 		i++
 	}
 
@@ -9741,6 +10794,9 @@ func (v *TaskListInfo) Equals(rhs *TaskListInfo) bool {
 	if !_I64_EqualsPtr(v.LastUpdatedNanos, rhs.LastUpdatedNanos) {
 		return false
 	}
+	if !((v.AdaptivePartitionConfig == nil && rhs.AdaptivePartitionConfig == nil) || (v.AdaptivePartitionConfig != nil && rhs.AdaptivePartitionConfig != nil && v.AdaptivePartitionConfig.Equals(rhs.AdaptivePartitionConfig))) {
+		return false
+	}
 
 	return true
 }
@@ -9762,6 +10818,9 @@ func (v *TaskListInfo) MarshalLogObject(enc zapcore.ObjectEncoder) (err error) {
 	}
 	if v.LastUpdatedNanos != nil {
 		enc.AddInt64("lastUpdatedNanos", *v.LastUpdatedNanos)
+	}
+	if v.AdaptivePartitionConfig != nil {
+		err = multierr.Append(err, enc.AddObject("adaptivePartitionConfig", v.AdaptivePartitionConfig))
 	}
 	return err
 }
@@ -9826,6 +10885,359 @@ func (v *TaskListInfo) IsSetLastUpdatedNanos() bool {
 	return v != nil && v.LastUpdatedNanos != nil
 }
 
+// GetAdaptivePartitionConfig returns the value of AdaptivePartitionConfig if it is set or its
+// zero value if it is unset.
+func (v *TaskListInfo) GetAdaptivePartitionConfig() (o *TaskListPartitionConfig) {
+	if v != nil && v.AdaptivePartitionConfig != nil {
+		return v.AdaptivePartitionConfig
+	}
+
+	return
+}
+
+// IsSetAdaptivePartitionConfig returns true if AdaptivePartitionConfig is not nil.
+func (v *TaskListInfo) IsSetAdaptivePartitionConfig() bool {
+	return v != nil && v.AdaptivePartitionConfig != nil
+}
+
+type TaskListPartitionConfig struct {
+	Version            *int64 `json:"version,omitempty"`
+	NumReadPartitions  *int32 `json:"numReadPartitions,omitempty"`
+	NumWritePartitions *int32 `json:"numWritePartitions,omitempty"`
+}
+
+// ToWire translates a TaskListPartitionConfig struct into a Thrift-level intermediate
+// representation. This intermediate representation may be serialized
+// into bytes using a ThriftRW protocol implementation.
+//
+// An error is returned if the struct or any of its fields failed to
+// validate.
+//
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
+//
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
+func (v *TaskListPartitionConfig) ToWire() (wire.Value, error) {
+	var (
+		fields [3]wire.Field
+		i      int = 0
+		w      wire.Value
+		err    error
+	)
+
+	if v.Version != nil {
+		w, err = wire.NewValueI64(*(v.Version)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 10, Value: w}
+		i++
+	}
+	if v.NumReadPartitions != nil {
+		w, err = wire.NewValueI32(*(v.NumReadPartitions)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 12, Value: w}
+		i++
+	}
+	if v.NumWritePartitions != nil {
+		w, err = wire.NewValueI32(*(v.NumWritePartitions)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 14, Value: w}
+		i++
+	}
+
+	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
+}
+
+// FromWire deserializes a TaskListPartitionConfig struct from its Thrift-level
+// representation. The Thrift-level representation may be obtained
+// from a ThriftRW protocol implementation.
+//
+// An error is returned if we were unable to build a TaskListPartitionConfig struct
+// from the provided intermediate representation.
+//
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
+//
+//	var v TaskListPartitionConfig
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
+func (v *TaskListPartitionConfig) FromWire(w wire.Value) error {
+	var err error
+
+	for _, field := range w.GetStruct().Fields {
+		switch field.ID {
+		case 10:
+			if field.Value.Type() == wire.TI64 {
+				var x int64
+				x, err = field.Value.GetI64(), error(nil)
+				v.Version = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 12:
+			if field.Value.Type() == wire.TI32 {
+				var x int32
+				x, err = field.Value.GetI32(), error(nil)
+				v.NumReadPartitions = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 14:
+			if field.Value.Type() == wire.TI32 {
+				var x int32
+				x, err = field.Value.GetI32(), error(nil)
+				v.NumWritePartitions = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		}
+	}
+
+	return nil
+}
+
+// Encode serializes a TaskListPartitionConfig struct directly into bytes, without going
+// through an intermediary type.
+//
+// An error is returned if a TaskListPartitionConfig struct could not be encoded.
+func (v *TaskListPartitionConfig) Encode(sw stream.Writer) error {
+	if err := sw.WriteStructBegin(); err != nil {
+		return err
+	}
+
+	if v.Version != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 10, Type: wire.TI64}); err != nil {
+			return err
+		}
+		if err := sw.WriteInt64(*(v.Version)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.NumReadPartitions != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 12, Type: wire.TI32}); err != nil {
+			return err
+		}
+		if err := sw.WriteInt32(*(v.NumReadPartitions)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.NumWritePartitions != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 14, Type: wire.TI32}); err != nil {
+			return err
+		}
+		if err := sw.WriteInt32(*(v.NumWritePartitions)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	return sw.WriteStructEnd()
+}
+
+// Decode deserializes a TaskListPartitionConfig struct directly from its Thrift-level
+// representation, without going through an intemediary type.
+//
+// An error is returned if a TaskListPartitionConfig struct could not be generated from the wire
+// representation.
+func (v *TaskListPartitionConfig) Decode(sr stream.Reader) error {
+
+	if err := sr.ReadStructBegin(); err != nil {
+		return err
+	}
+
+	fh, ok, err := sr.ReadFieldBegin()
+	if err != nil {
+		return err
+	}
+
+	for ok {
+		switch {
+		case fh.ID == 10 && fh.Type == wire.TI64:
+			var x int64
+			x, err = sr.ReadInt64()
+			v.Version = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 12 && fh.Type == wire.TI32:
+			var x int32
+			x, err = sr.ReadInt32()
+			v.NumReadPartitions = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 14 && fh.Type == wire.TI32:
+			var x int32
+			x, err = sr.ReadInt32()
+			v.NumWritePartitions = &x
+			if err != nil {
+				return err
+			}
+
+		default:
+			if err := sr.Skip(fh.Type); err != nil {
+				return err
+			}
+		}
+
+		if err := sr.ReadFieldEnd(); err != nil {
+			return err
+		}
+
+		if fh, ok, err = sr.ReadFieldBegin(); err != nil {
+			return err
+		}
+	}
+
+	if err := sr.ReadStructEnd(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// String returns a readable string representation of a TaskListPartitionConfig
+// struct.
+func (v *TaskListPartitionConfig) String() string {
+	if v == nil {
+		return "<nil>"
+	}
+
+	var fields [3]string
+	i := 0
+	if v.Version != nil {
+		fields[i] = fmt.Sprintf("Version: %v", *(v.Version))
+		i++
+	}
+	if v.NumReadPartitions != nil {
+		fields[i] = fmt.Sprintf("NumReadPartitions: %v", *(v.NumReadPartitions))
+		i++
+	}
+	if v.NumWritePartitions != nil {
+		fields[i] = fmt.Sprintf("NumWritePartitions: %v", *(v.NumWritePartitions))
+		i++
+	}
+
+	return fmt.Sprintf("TaskListPartitionConfig{%v}", strings.Join(fields[:i], ", "))
+}
+
+// Equals returns true if all the fields of this TaskListPartitionConfig match the
+// provided TaskListPartitionConfig.
+//
+// This function performs a deep comparison.
+func (v *TaskListPartitionConfig) Equals(rhs *TaskListPartitionConfig) bool {
+	if v == nil {
+		return rhs == nil
+	} else if rhs == nil {
+		return false
+	}
+	if !_I64_EqualsPtr(v.Version, rhs.Version) {
+		return false
+	}
+	if !_I32_EqualsPtr(v.NumReadPartitions, rhs.NumReadPartitions) {
+		return false
+	}
+	if !_I32_EqualsPtr(v.NumWritePartitions, rhs.NumWritePartitions) {
+		return false
+	}
+
+	return true
+}
+
+// MarshalLogObject implements zapcore.ObjectMarshaler, enabling
+// fast logging of TaskListPartitionConfig.
+func (v *TaskListPartitionConfig) MarshalLogObject(enc zapcore.ObjectEncoder) (err error) {
+	if v == nil {
+		return nil
+	}
+	if v.Version != nil {
+		enc.AddInt64("version", *v.Version)
+	}
+	if v.NumReadPartitions != nil {
+		enc.AddInt32("numReadPartitions", *v.NumReadPartitions)
+	}
+	if v.NumWritePartitions != nil {
+		enc.AddInt32("numWritePartitions", *v.NumWritePartitions)
+	}
+	return err
+}
+
+// GetVersion returns the value of Version if it is set or its
+// zero value if it is unset.
+func (v *TaskListPartitionConfig) GetVersion() (o int64) {
+	if v != nil && v.Version != nil {
+		return *v.Version
+	}
+
+	return
+}
+
+// IsSetVersion returns true if Version is not nil.
+func (v *TaskListPartitionConfig) IsSetVersion() bool {
+	return v != nil && v.Version != nil
+}
+
+// GetNumReadPartitions returns the value of NumReadPartitions if it is set or its
+// zero value if it is unset.
+func (v *TaskListPartitionConfig) GetNumReadPartitions() (o int32) {
+	if v != nil && v.NumReadPartitions != nil {
+		return *v.NumReadPartitions
+	}
+
+	return
+}
+
+// IsSetNumReadPartitions returns true if NumReadPartitions is not nil.
+func (v *TaskListPartitionConfig) IsSetNumReadPartitions() bool {
+	return v != nil && v.NumReadPartitions != nil
+}
+
+// GetNumWritePartitions returns the value of NumWritePartitions if it is set or its
+// zero value if it is unset.
+func (v *TaskListPartitionConfig) GetNumWritePartitions() (o int32) {
+	if v != nil && v.NumWritePartitions != nil {
+		return *v.NumWritePartitions
+	}
+
+	return
+}
+
+// IsSetNumWritePartitions returns true if NumWritePartitions is not nil.
+func (v *TaskListPartitionConfig) IsSetNumWritePartitions() bool {
+	return v != nil && v.NumWritePartitions != nil
+}
+
 type TimerInfo struct {
 	Version         *int64 `json:"version,omitempty"`
 	StartedID       *int64 `json:"startedID,omitempty"`
@@ -9840,14 +11252,14 @@ type TimerInfo struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *TimerInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [4]wire.Field
@@ -9899,16 +11311,16 @@ func (v *TimerInfo) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a TimerInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v TimerInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v TimerInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *TimerInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -10246,14 +11658,14 @@ type TimerTaskInfo struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *TimerTaskInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [8]wire.Field
@@ -10337,16 +11749,16 @@ func (v *TimerTaskInfo) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a TimerTaskInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v TimerTaskInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v TimerTaskInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *TimerTaskInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -10930,14 +12342,14 @@ func (_Set_Binary_sliceType_ValueList) Close() {}
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *TransferTaskInfo) ToWire() (wire.Value, error) {
 	var (
 		fields [13]wire.Field
@@ -11080,16 +12492,16 @@ func _Set_Binary_sliceType_Read(s wire.ValueList) ([][]byte, error) {
 // An error is returned if we were unable to build a TransferTaskInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v TransferTaskInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v TransferTaskInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *TransferTaskInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -12029,6 +13441,10 @@ type WorkflowExecutionInfo struct {
 	Memo                                    map[string][]byte `json:"memo,omitempty"`
 	VersionHistories                        []byte            `json:"versionHistories,omitempty"`
 	VersionHistoriesEncoding                *string           `json:"versionHistoriesEncoding,omitempty"`
+	FirstExecutionRunID                     []byte            `json:"firstExecutionRunID,omitempty"`
+	PartitionConfig                         map[string]string `json:"partitionConfig,omitempty"`
+	Checksum                                []byte            `json:"checksum,omitempty"`
+	ChecksumEncoding                        *string           `json:"checksumEncoding,omitempty"`
 }
 
 type _Map_String_Binary_MapItemList map[string][]byte
@@ -12076,17 +13492,17 @@ func (_Map_String_Binary_MapItemList) Close() {}
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *WorkflowExecutionInfo) ToWire() (wire.Value, error) {
 	var (
-		fields [58]wire.Field
+		fields [62]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -12556,6 +13972,38 @@ func (v *WorkflowExecutionInfo) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 124, Value: w}
 		i++
 	}
+	if v.FirstExecutionRunID != nil {
+		w, err = wire.NewValueBinary(v.FirstExecutionRunID), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 126, Value: w}
+		i++
+	}
+	if v.PartitionConfig != nil {
+		w, err = wire.NewValueMap(_Map_String_String_MapItemList(v.PartitionConfig)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 128, Value: w}
+		i++
+	}
+	if v.Checksum != nil {
+		w, err = wire.NewValueBinary(v.Checksum), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 130, Value: w}
+		i++
+	}
+	if v.ChecksumEncoding != nil {
+		w, err = wire.NewValueString(*(v.ChecksumEncoding)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 132, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
 }
@@ -12595,16 +14043,16 @@ func _Map_String_Binary_Read(m wire.MapItemList) (map[string][]byte, error) {
 // An error is returned if we were unable to build a WorkflowExecutionInfo struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v WorkflowExecutionInfo
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v WorkflowExecutionInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *WorkflowExecutionInfo) FromWire(w wire.Value) error {
 	var err error
 
@@ -13165,6 +14613,40 @@ func (v *WorkflowExecutionInfo) FromWire(w wire.Value) error {
 				var x string
 				x, err = field.Value.GetString(), error(nil)
 				v.VersionHistoriesEncoding = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 126:
+			if field.Value.Type() == wire.TBinary {
+				v.FirstExecutionRunID, err = field.Value.GetBinary(), error(nil)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 128:
+			if field.Value.Type() == wire.TMap {
+				v.PartitionConfig, err = _Map_String_String_Read(field.Value.GetMap())
+				if err != nil {
+					return err
+				}
+
+			}
+		case 130:
+			if field.Value.Type() == wire.TBinary {
+				v.Checksum, err = field.Value.GetBinary(), error(nil)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 132:
+			if field.Value.Type() == wire.TBinary {
+				var x string
+				x, err = field.Value.GetString(), error(nil)
+				v.ChecksumEncoding = &x
 				if err != nil {
 					return err
 				}
@@ -13907,6 +15389,54 @@ func (v *WorkflowExecutionInfo) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.FirstExecutionRunID != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 126, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteBinary(v.FirstExecutionRunID); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.PartitionConfig != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 128, Type: wire.TMap}); err != nil {
+			return err
+		}
+		if err := _Map_String_String_Encode(v.PartitionConfig, sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.Checksum != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 130, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteBinary(v.Checksum); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.ChecksumEncoding != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 132, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteString(*(v.ChecksumEncoding)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	return sw.WriteStructEnd()
 }
 
@@ -14412,6 +15942,32 @@ func (v *WorkflowExecutionInfo) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 126 && fh.Type == wire.TBinary:
+			v.FirstExecutionRunID, err = sr.ReadBinary()
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 128 && fh.Type == wire.TMap:
+			v.PartitionConfig, err = _Map_String_String_Decode(sr)
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 130 && fh.Type == wire.TBinary:
+			v.Checksum, err = sr.ReadBinary()
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 132 && fh.Type == wire.TBinary:
+			var x string
+			x, err = sr.ReadString()
+			v.ChecksumEncoding = &x
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -14441,7 +15997,7 @@ func (v *WorkflowExecutionInfo) String() string {
 		return "<nil>"
 	}
 
-	var fields [58]string
+	var fields [62]string
 	i := 0
 	if v.ParentDomainID != nil {
 		fields[i] = fmt.Sprintf("ParentDomainID: %v", v.ParentDomainID)
@@ -14675,6 +16231,22 @@ func (v *WorkflowExecutionInfo) String() string {
 		fields[i] = fmt.Sprintf("VersionHistoriesEncoding: %v", *(v.VersionHistoriesEncoding))
 		i++
 	}
+	if v.FirstExecutionRunID != nil {
+		fields[i] = fmt.Sprintf("FirstExecutionRunID: %v", v.FirstExecutionRunID)
+		i++
+	}
+	if v.PartitionConfig != nil {
+		fields[i] = fmt.Sprintf("PartitionConfig: %v", v.PartitionConfig)
+		i++
+	}
+	if v.Checksum != nil {
+		fields[i] = fmt.Sprintf("Checksum: %v", v.Checksum)
+		i++
+	}
+	if v.ChecksumEncoding != nil {
+		fields[i] = fmt.Sprintf("ChecksumEncoding: %v", *(v.ChecksumEncoding))
+		i++
+	}
 
 	return fmt.Sprintf("WorkflowExecutionInfo{%v}", strings.Join(fields[:i], ", "))
 }
@@ -14880,6 +16452,18 @@ func (v *WorkflowExecutionInfo) Equals(rhs *WorkflowExecutionInfo) bool {
 	if !_String_EqualsPtr(v.VersionHistoriesEncoding, rhs.VersionHistoriesEncoding) {
 		return false
 	}
+	if !((v.FirstExecutionRunID == nil && rhs.FirstExecutionRunID == nil) || (v.FirstExecutionRunID != nil && rhs.FirstExecutionRunID != nil && bytes.Equal(v.FirstExecutionRunID, rhs.FirstExecutionRunID))) {
+		return false
+	}
+	if !((v.PartitionConfig == nil && rhs.PartitionConfig == nil) || (v.PartitionConfig != nil && rhs.PartitionConfig != nil && _Map_String_String_Equals(v.PartitionConfig, rhs.PartitionConfig))) {
+		return false
+	}
+	if !((v.Checksum == nil && rhs.Checksum == nil) || (v.Checksum != nil && rhs.Checksum != nil && bytes.Equal(v.Checksum, rhs.Checksum))) {
+		return false
+	}
+	if !_String_EqualsPtr(v.ChecksumEncoding, rhs.ChecksumEncoding) {
+		return false
+	}
 
 	return true
 }
@@ -15074,6 +16658,18 @@ func (v *WorkflowExecutionInfo) MarshalLogObject(enc zapcore.ObjectEncoder) (err
 	}
 	if v.VersionHistoriesEncoding != nil {
 		enc.AddString("versionHistoriesEncoding", *v.VersionHistoriesEncoding)
+	}
+	if v.FirstExecutionRunID != nil {
+		enc.AddString("firstExecutionRunID", base64.StdEncoding.EncodeToString(v.FirstExecutionRunID))
+	}
+	if v.PartitionConfig != nil {
+		err = multierr.Append(err, enc.AddObject("partitionConfig", (_Map_String_String_Zapper)(v.PartitionConfig)))
+	}
+	if v.Checksum != nil {
+		enc.AddString("checksum", base64.StdEncoding.EncodeToString(v.Checksum))
+	}
+	if v.ChecksumEncoding != nil {
+		enc.AddString("checksumEncoding", *v.ChecksumEncoding)
 	}
 	return err
 }
@@ -15948,16 +17544,76 @@ func (v *WorkflowExecutionInfo) IsSetVersionHistoriesEncoding() bool {
 	return v != nil && v.VersionHistoriesEncoding != nil
 }
 
+// GetFirstExecutionRunID returns the value of FirstExecutionRunID if it is set or its
+// zero value if it is unset.
+func (v *WorkflowExecutionInfo) GetFirstExecutionRunID() (o []byte) {
+	if v != nil && v.FirstExecutionRunID != nil {
+		return v.FirstExecutionRunID
+	}
+
+	return
+}
+
+// IsSetFirstExecutionRunID returns true if FirstExecutionRunID is not nil.
+func (v *WorkflowExecutionInfo) IsSetFirstExecutionRunID() bool {
+	return v != nil && v.FirstExecutionRunID != nil
+}
+
+// GetPartitionConfig returns the value of PartitionConfig if it is set or its
+// zero value if it is unset.
+func (v *WorkflowExecutionInfo) GetPartitionConfig() (o map[string]string) {
+	if v != nil && v.PartitionConfig != nil {
+		return v.PartitionConfig
+	}
+
+	return
+}
+
+// IsSetPartitionConfig returns true if PartitionConfig is not nil.
+func (v *WorkflowExecutionInfo) IsSetPartitionConfig() bool {
+	return v != nil && v.PartitionConfig != nil
+}
+
+// GetChecksum returns the value of Checksum if it is set or its
+// zero value if it is unset.
+func (v *WorkflowExecutionInfo) GetChecksum() (o []byte) {
+	if v != nil && v.Checksum != nil {
+		return v.Checksum
+	}
+
+	return
+}
+
+// IsSetChecksum returns true if Checksum is not nil.
+func (v *WorkflowExecutionInfo) IsSetChecksum() bool {
+	return v != nil && v.Checksum != nil
+}
+
+// GetChecksumEncoding returns the value of ChecksumEncoding if it is set or its
+// zero value if it is unset.
+func (v *WorkflowExecutionInfo) GetChecksumEncoding() (o string) {
+	if v != nil && v.ChecksumEncoding != nil {
+		return *v.ChecksumEncoding
+	}
+
+	return
+}
+
+// IsSetChecksumEncoding returns true if ChecksumEncoding is not nil.
+func (v *WorkflowExecutionInfo) IsSetChecksumEncoding() bool {
+	return v != nil && v.ChecksumEncoding != nil
+}
+
 // ThriftModule represents the IDL file used to generate this package.
 var ThriftModule = &thriftreflect.ThriftModule{
 	Name:     "sqlblobs",
 	Package:  "github.com/uber/cadence/.gen/go/sqlblobs",
 	FilePath: "sqlblobs.thrift",
-	SHA1:     "215db027f8e11111bbb3bc537dcd7dc0e4a09213",
+	SHA1:     "9c854b8a522aa30664f56e3bf0e1c54c413d84ff",
 	Includes: []*thriftreflect.ThriftModule{
 		shared.ThriftModule,
 	},
 	Raw: rawIDL,
 }
 
-const rawIDL = "// Copyright (c) 2017 Uber Technologies, Inc.\n//\n// Permission is hereby granted, free of charge, to any person obtaining a copy\n// of this software and associated documentation files (the \"Software\"), to deal\n// in the Software without restriction, including without limitation the rights\n// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n// copies of the Software, and to permit persons to whom the Software is\n// furnished to do so, subject to the following conditions:\n//\n// The above copyright notice and this permission notice shall be included in\n// all copies or substantial portions of the Software.\n//\n// THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n// THE SOFTWARE.\n\nnamespace java com.uber.cadence.sqlblobs\n\ninclude \"shared.thrift\"\n\nstruct ShardInfo {\n  10: optional i32 stolenSinceRenew\n  12: optional i64 (js.type = \"Long\") updatedAtNanos\n  14: optional i64 (js.type = \"Long\") replicationAckLevel\n  16: optional i64 (js.type = \"Long\") transferAckLevel\n  18: optional i64 (js.type = \"Long\") timerAckLevelNanos\n  24: optional i64 (js.type = \"Long\") domainNotificationVersion\n  34: optional map<string, i64> clusterTransferAckLevel\n  36: optional map<string, i64> clusterTimerAckLevel\n  38: optional string owner\n  40: optional map<string, i64> clusterReplicationLevel\n  42: optional binary pendingFailoverMarkers\n  44: optional string pendingFailoverMarkersEncoding\n  46: optional map<string, i64> replicationDlqAckLevel\n  50: optional binary transferProcessingQueueStates\n  51: optional string transferProcessingQueueStatesEncoding\n  55: optional binary timerProcessingQueueStates\n  56: optional string timerProcessingQueueStatesEncoding\n  60: optional binary crossClusterProcessingQueueStates\n  61: optional string crossClusterProcessingQueueStatesEncoding\n}\n\nstruct DomainInfo {\n  10: optional string name\n  12: optional string description\n  14: optional string owner\n  16: optional i32 status\n  18: optional i16 retentionDays\n  20: optional bool emitMetric\n  22: optional string archivalBucket\n  24: optional i16 archivalStatus\n  26: optional i64 (js.type = \"Long\") configVersion\n  28: optional i64 (js.type = \"Long\") notificationVersion\n  30: optional i64 (js.type = \"Long\") failoverNotificationVersion\n  32: optional i64 (js.type = \"Long\") failoverVersion\n  34: optional string activeClusterName\n  36: optional list<string> clusters\n  38: optional map<string, string> data\n  39: optional binary badBinaries\n  40: optional string badBinariesEncoding\n  42: optional i16 historyArchivalStatus\n  44: optional string historyArchivalURI\n  46: optional i16 visibilityArchivalStatus\n  48: optional string visibilityArchivalURI\n  50: optional i64 (js.type = \"Long\") failoverEndTime\n  52: optional i64 (js.type = \"Long\") previousFailoverVersion\n  54: optional i64 (js.type = \"Long\") lastUpdatedTime\n}\n\nstruct HistoryTreeInfo {\n  10: optional i64 (js.type = \"Long\") createdTimeNanos // For fork operation to prevent race condition of leaking event data when forking branches fail. Also can be used for clean up leaked data\n  12: optional list<shared.HistoryBranchRange> ancestors\n  14: optional string info // For lookup back to workflow during debugging, also background cleanup when fork operation cannot finish self cleanup due to crash.\n}\n\nstruct WorkflowExecutionInfo {\n  10: optional binary parentDomainID\n  12: optional string parentWorkflowID\n  14: optional binary parentRunID\n  16: optional i64 (js.type = \"Long\") initiatedID\n  18: optional i64 (js.type = \"Long\") completionEventBatchID\n  20: optional binary completionEvent\n  22: optional string completionEventEncoding\n  24: optional string taskList\n  26: optional string workflowTypeName\n  28: optional i32 workflowTimeoutSeconds\n  30: optional i32 decisionTaskTimeoutSeconds\n  32: optional binary executionContext\n  34: optional i32 state\n  36: optional i32 closeStatus\n  38: optional i64 (js.type = \"Long\") startVersion\n  44: optional i64 (js.type = \"Long\") lastWriteEventID\n  48: optional i64 (js.type = \"Long\") lastEventTaskID\n  50: optional i64 (js.type = \"Long\") lastFirstEventID\n  52: optional i64 (js.type = \"Long\") lastProcessedEvent\n  54: optional i64 (js.type = \"Long\") startTimeNanos\n  56: optional i64 (js.type = \"Long\") lastUpdatedTimeNanos\n  58: optional i64 (js.type = \"Long\") decisionVersion\n  60: optional i64 (js.type = \"Long\") decisionScheduleID\n  62: optional i64 (js.type = \"Long\") decisionStartedID\n  64: optional i32 decisionTimeout\n  66: optional i64 (js.type = \"Long\") decisionAttempt\n  68: optional i64 (js.type = \"Long\") decisionStartedTimestampNanos\n  69: optional i64 (js.type = \"Long\") decisionScheduledTimestampNanos\n  70: optional bool cancelRequested\n  71: optional i64 (js.type = \"Long\") decisionOriginalScheduledTimestampNanos\n  72: optional string createRequestID\n  74: optional string decisionRequestID\n  76: optional string cancelRequestID\n  78: optional string stickyTaskList\n  80: optional i64 (js.type = \"Long\") stickyScheduleToStartTimeout\n  82: optional i64 (js.type = \"Long\") retryAttempt\n  84: optional i32 retryInitialIntervalSeconds\n  86: optional i32 retryMaximumIntervalSeconds\n  88: optional i32 retryMaximumAttempts\n  90: optional i32 retryExpirationSeconds\n  92: optional double retryBackoffCoefficient\n  94: optional i64 (js.type = \"Long\") retryExpirationTimeNanos\n  96: optional list<string> retryNonRetryableErrors\n  98: optional bool hasRetryPolicy\n  100: optional string cronSchedule\n  102: optional i32 eventStoreVersion\n  104: optional binary eventBranchToken\n  106: optional i64 (js.type = \"Long\") signalCount\n  108: optional i64 (js.type = \"Long\") historySize\n  110: optional string clientLibraryVersion\n  112: optional string clientFeatureVersion\n  114: optional string clientImpl\n  115: optional binary autoResetPoints\n  116: optional string autoResetPointsEncoding\n  118: optional map<string, binary> searchAttributes\n  120: optional map<string, binary> memo\n  122: optional binary versionHistories\n  124: optional string versionHistoriesEncoding\n}\n\nstruct ActivityInfo {\n  10: optional i64 (js.type = \"Long\") version\n  12: optional i64 (js.type = \"Long\") scheduledEventBatchID\n  14: optional binary scheduledEvent\n  16: optional string scheduledEventEncoding\n  18: optional i64 (js.type = \"Long\") scheduledTimeNanos\n  20: optional i64 (js.type = \"Long\") startedID\n  22: optional binary startedEvent\n  24: optional string startedEventEncoding\n  26: optional i64 (js.type = \"Long\") startedTimeNanos\n  28: optional string activityID\n  30: optional string requestID\n  32: optional i32 scheduleToStartTimeoutSeconds\n  34: optional i32 scheduleToCloseTimeoutSeconds\n  36: optional i32 startToCloseTimeoutSeconds\n  38: optional i32 heartbeatTimeoutSeconds\n  40: optional bool cancelRequested\n  42: optional i64 (js.type = \"Long\") cancelRequestID\n  44: optional i32 timerTaskStatus\n  46: optional i32 attempt\n  48: optional string taskList\n  50: optional string startedIdentity\n  52: optional bool hasRetryPolicy\n  54: optional i32 retryInitialIntervalSeconds\n  56: optional i32 retryMaximumIntervalSeconds\n  58: optional i32 retryMaximumAttempts\n  60: optional i64 (js.type = \"Long\") retryExpirationTimeNanos\n  62: optional double retryBackoffCoefficient\n  64: optional list<string> retryNonRetryableErrors\n  66: optional string retryLastFailureReason\n  68: optional string retryLastWorkerIdentity\n  70: optional binary retryLastFailureDetails\n}\n\nstruct ChildExecutionInfo {\n  10: optional i64 (js.type = \"Long\") version\n  12: optional i64 (js.type = \"Long\") initiatedEventBatchID\n  14: optional i64 (js.type = \"Long\") startedID\n  16: optional binary initiatedEvent\n  18: optional string initiatedEventEncoding\n  20: optional string startedWorkflowID\n  22: optional binary startedRunID\n  24: optional binary startedEvent\n  26: optional string startedEventEncoding\n  28: optional string createRequestID\n  29: optional string domainID\n  30: optional string domainName // deprecated\n  32: optional string workflowTypeName\n  35: optional i32 parentClosePolicy\n}\n\nstruct SignalInfo {\n  10: optional i64 (js.type = \"Long\") version\n  11: optional i64 (js.type = \"Long\") initiatedEventBatchID\n  12: optional string requestID\n  14: optional string name\n  16: optional binary input\n  18: optional binary control\n}\n\nstruct RequestCancelInfo {\n  10: optional i64 (js.type = \"Long\") version\n  11: optional i64 (js.type = \"Long\") initiatedEventBatchID\n  12: optional string cancelRequestID\n}\n\nstruct TimerInfo {\n  10: optional i64 (js.type = \"Long\") version\n  12: optional i64 (js.type = \"Long\") startedID\n  14: optional i64 (js.type = \"Long\") expiryTimeNanos\n  // TaskID is a misleading variable, it actually serves\n  // the purpose of indicating whether a timer task is\n  // generated for this timer info\n  16: optional i64 (js.type = \"Long\") taskID\n}\n\nstruct TaskInfo {\n  10: optional string workflowID\n  12: optional binary runID\n  13: optional i64 (js.type = \"Long\") scheduleID\n  14: optional i64 (js.type = \"Long\") expiryTimeNanos\n  15: optional i64 (js.type = \"Long\") createdTimeNanos\n}\n\nstruct TaskListInfo {\n  10: optional i16 kind // {Normal, Sticky}\n  12: optional i64 (js.type = \"Long\") ackLevel\n  14: optional i64 (js.type = \"Long\") expiryTimeNanos\n  16: optional i64 (js.type = \"Long\") lastUpdatedNanos\n}\n\nstruct TransferTaskInfo {\n  10: optional binary domainID\n  12: optional string workflowID\n  14: optional binary runID\n  16: optional i16 taskType\n  18: optional binary targetDomainID\n  20: optional string targetWorkflowID\n  22: optional binary targetRunID\n  24: optional string taskList\n  26: optional bool targetChildWorkflowOnly\n  28: optional i64 (js.type = \"Long\") scheduleID\n  30: optional i64 (js.type = \"Long\") version\n  32: optional i64 (js.type = \"Long\") visibilityTimestampNanos\n  34: optional set<binary> targetDomainIDs\n}\n\nstruct TimerTaskInfo {\n  10: optional binary domainID\n  12: optional string workflowID\n  14: optional binary runID\n  16: optional i16 taskType\n  18: optional i16 timeoutType\n  20: optional i64 (js.type = \"Long\") version\n  22: optional i64 (js.type = \"Long\") scheduleAttempt\n  24: optional i64 (js.type = \"Long\") eventID\n}\n\nstruct ReplicationTaskInfo {\n  10: optional binary domainID\n  12: optional string workflowID\n  14: optional binary runID\n  16: optional i16 taskType\n  18: optional i64 (js.type = \"Long\") version\n  20: optional i64 (js.type = \"Long\") firstEventID\n  22: optional i64 (js.type = \"Long\") nextEventID\n  24: optional i64 (js.type = \"Long\") scheduledID\n  26: optional i32 eventStoreVersion\n  28: optional i32 newRunEventStoreVersion\n  30: optional binary branch_token\n  34: optional binary newRunBranchToken\n  38: optional i64 (js.type = \"Long\") creationTime\n}"
+const rawIDL = "// Copyright (c) 2017 Uber Technologies, Inc.\n//\n// Permission is hereby granted, free of charge, to any person obtaining a copy\n// of this software and associated documentation files (the \"Software\"), to deal\n// in the Software without restriction, including without limitation the rights\n// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n// copies of the Software, and to permit persons to whom the Software is\n// furnished to do so, subject to the following conditions:\n//\n// The above copyright notice and this permission notice shall be included in\n// all copies or substantial portions of the Software.\n//\n// THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n// THE SOFTWARE.\n\nnamespace java com.uber.cadence.sqlblobs\n\ninclude \"shared.thrift\"\n\nstruct ShardInfo {\n  10: optional i32 stolenSinceRenew\n  12: optional i64 (js.type = \"Long\") updatedAtNanos\n  14: optional i64 (js.type = \"Long\") replicationAckLevel\n  16: optional i64 (js.type = \"Long\") transferAckLevel\n  18: optional i64 (js.type = \"Long\") timerAckLevelNanos\n  24: optional i64 (js.type = \"Long\") domainNotificationVersion\n  34: optional map<string, i64> clusterTransferAckLevel\n  36: optional map<string, i64> clusterTimerAckLevel\n  38: optional string owner\n  40: optional map<string, i64> clusterReplicationLevel\n  42: optional binary pendingFailoverMarkers\n  44: optional string pendingFailoverMarkersEncoding\n  46: optional map<string, i64> replicationDlqAckLevel\n  50: optional binary transferProcessingQueueStates\n  51: optional string transferProcessingQueueStatesEncoding\n  55: optional binary timerProcessingQueueStates\n  56: optional string timerProcessingQueueStatesEncoding\n  60: optional binary crossClusterProcessingQueueStates\n  61: optional string crossClusterProcessingQueueStatesEncoding\n}\n\nstruct DomainInfo {\n  10: optional string name\n  12: optional string description\n  14: optional string owner\n  16: optional i32 status\n  18: optional i16 retentionDays\n  20: optional bool emitMetric\n  22: optional string archivalBucket\n  24: optional i16 archivalStatus\n  26: optional i64 (js.type = \"Long\") configVersion\n  28: optional i64 (js.type = \"Long\") notificationVersion\n  30: optional i64 (js.type = \"Long\") failoverNotificationVersion\n  32: optional i64 (js.type = \"Long\") failoverVersion\n  34: optional string activeClusterName\n  36: optional list<string> clusters\n  38: optional map<string, string> data\n  39: optional binary badBinaries\n  40: optional string badBinariesEncoding\n  42: optional i16 historyArchivalStatus\n  44: optional string historyArchivalURI\n  46: optional i16 visibilityArchivalStatus\n  48: optional string visibilityArchivalURI\n  50: optional i64 (js.type = \"Long\") failoverEndTime\n  52: optional i64 (js.type = \"Long\") previousFailoverVersion\n  54: optional i64 (js.type = \"Long\") lastUpdatedTime\n  56: optional binary isolationGroupsConfiguration\n  58: optional string isolationGroupsConfigurationEncoding\n  60: optional binary asyncWorkflowConfiguration\n  62: optional string asyncWorkflowConfigurationEncoding\n}\n\nstruct HistoryTreeInfo {\n  10: optional i64 (js.type = \"Long\") createdTimeNanos // For fork operation to prevent race condition of leaking event data when forking branches fail. Also can be used for clean up leaked data\n  12: optional list<shared.HistoryBranchRange> ancestors\n  14: optional string info // For lookup back to workflow during debugging, also background cleanup when fork operation cannot finish self cleanup due to crash.\n}\n\nstruct WorkflowExecutionInfo {\n  10: optional binary parentDomainID\n  12: optional string parentWorkflowID\n  14: optional binary parentRunID\n  16: optional i64 (js.type = \"Long\") initiatedID\n  18: optional i64 (js.type = \"Long\") completionEventBatchID\n  20: optional binary completionEvent\n  22: optional string completionEventEncoding\n  24: optional string taskList\n  26: optional string workflowTypeName\n  28: optional i32 workflowTimeoutSeconds\n  30: optional i32 decisionTaskTimeoutSeconds\n  32: optional binary executionContext\n  34: optional i32 state\n  36: optional i32 closeStatus\n  38: optional i64 (js.type = \"Long\") startVersion\n  44: optional i64 (js.type = \"Long\") lastWriteEventID\n  48: optional i64 (js.type = \"Long\") lastEventTaskID\n  50: optional i64 (js.type = \"Long\") lastFirstEventID\n  52: optional i64 (js.type = \"Long\") lastProcessedEvent\n  54: optional i64 (js.type = \"Long\") startTimeNanos\n  56: optional i64 (js.type = \"Long\") lastUpdatedTimeNanos\n  58: optional i64 (js.type = \"Long\") decisionVersion\n  60: optional i64 (js.type = \"Long\") decisionScheduleID\n  62: optional i64 (js.type = \"Long\") decisionStartedID\n  64: optional i32 decisionTimeout\n  66: optional i64 (js.type = \"Long\") decisionAttempt\n  68: optional i64 (js.type = \"Long\") decisionStartedTimestampNanos\n  69: optional i64 (js.type = \"Long\") decisionScheduledTimestampNanos\n  70: optional bool cancelRequested\n  71: optional i64 (js.type = \"Long\") decisionOriginalScheduledTimestampNanos\n  72: optional string createRequestID\n  74: optional string decisionRequestID\n  76: optional string cancelRequestID\n  78: optional string stickyTaskList\n  80: optional i64 (js.type = \"Long\") stickyScheduleToStartTimeout\n  82: optional i64 (js.type = \"Long\") retryAttempt\n  84: optional i32 retryInitialIntervalSeconds\n  86: optional i32 retryMaximumIntervalSeconds\n  88: optional i32 retryMaximumAttempts\n  90: optional i32 retryExpirationSeconds\n  92: optional double retryBackoffCoefficient\n  94: optional i64 (js.type = \"Long\") retryExpirationTimeNanos\n  96: optional list<string> retryNonRetryableErrors\n  98: optional bool hasRetryPolicy\n  100: optional string cronSchedule\n  102: optional i32 eventStoreVersion\n  104: optional binary eventBranchToken\n  106: optional i64 (js.type = \"Long\") signalCount\n  108: optional i64 (js.type = \"Long\") historySize\n  110: optional string clientLibraryVersion\n  112: optional string clientFeatureVersion\n  114: optional string clientImpl\n  115: optional binary autoResetPoints\n  116: optional string autoResetPointsEncoding\n  118: optional map<string, binary> searchAttributes\n  120: optional map<string, binary> memo\n  122: optional binary versionHistories\n  124: optional string versionHistoriesEncoding\n  126: optional binary firstExecutionRunID\n  128: optional map<string, string> partitionConfig\n  130: optional binary checksum\n  132: optional string checksumEncoding\n}\n\nstruct ActivityInfo {\n  10: optional i64 (js.type = \"Long\") version\n  12: optional i64 (js.type = \"Long\") scheduledEventBatchID\n  14: optional binary scheduledEvent\n  16: optional string scheduledEventEncoding\n  18: optional i64 (js.type = \"Long\") scheduledTimeNanos\n  20: optional i64 (js.type = \"Long\") startedID\n  22: optional binary startedEvent\n  24: optional string startedEventEncoding\n  26: optional i64 (js.type = \"Long\") startedTimeNanos\n  28: optional string activityID\n  30: optional string requestID\n  32: optional i32 scheduleToStartTimeoutSeconds\n  34: optional i32 scheduleToCloseTimeoutSeconds\n  36: optional i32 startToCloseTimeoutSeconds\n  38: optional i32 heartbeatTimeoutSeconds\n  40: optional bool cancelRequested\n  42: optional i64 (js.type = \"Long\") cancelRequestID\n  44: optional i32 timerTaskStatus\n  46: optional i32 attempt\n  48: optional string taskList\n  50: optional string startedIdentity\n  52: optional bool hasRetryPolicy\n  54: optional i32 retryInitialIntervalSeconds\n  56: optional i32 retryMaximumIntervalSeconds\n  58: optional i32 retryMaximumAttempts\n  60: optional i64 (js.type = \"Long\") retryExpirationTimeNanos\n  62: optional double retryBackoffCoefficient\n  64: optional list<string> retryNonRetryableErrors\n  66: optional string retryLastFailureReason\n  68: optional string retryLastWorkerIdentity\n  70: optional binary retryLastFailureDetails\n}\n\nstruct ChildExecutionInfo {\n  10: optional i64 (js.type = \"Long\") version\n  12: optional i64 (js.type = \"Long\") initiatedEventBatchID\n  14: optional i64 (js.type = \"Long\") startedID\n  16: optional binary initiatedEvent\n  18: optional string initiatedEventEncoding\n  20: optional string startedWorkflowID\n  22: optional binary startedRunID\n  24: optional binary startedEvent\n  26: optional string startedEventEncoding\n  28: optional string createRequestID\n  29: optional string domainID\n  30: optional string domainName // deprecated\n  32: optional string workflowTypeName\n  35: optional i32 parentClosePolicy\n}\n\nstruct SignalInfo {\n  10: optional i64 (js.type = \"Long\") version\n  11: optional i64 (js.type = \"Long\") initiatedEventBatchID\n  12: optional string requestID\n  14: optional string name\n  16: optional binary input\n  18: optional binary control\n}\n\nstruct RequestCancelInfo {\n  10: optional i64 (js.type = \"Long\") version\n  11: optional i64 (js.type = \"Long\") initiatedEventBatchID\n  12: optional string cancelRequestID\n}\n\nstruct TimerInfo {\n  10: optional i64 (js.type = \"Long\") version\n  12: optional i64 (js.type = \"Long\") startedID\n  14: optional i64 (js.type = \"Long\") expiryTimeNanos\n  // TaskID is a misleading variable, it actually serves\n  // the purpose of indicating whether a timer task is\n  // generated for this timer info\n  16: optional i64 (js.type = \"Long\") taskID\n}\n\nstruct TaskInfo {\n  10: optional string workflowID\n  12: optional binary runID\n  13: optional i64 (js.type = \"Long\") scheduleID\n  14: optional i64 (js.type = \"Long\") expiryTimeNanos\n  15: optional i64 (js.type = \"Long\") createdTimeNanos\n  17: optional map<string, string> partitionConfig\n}\n\nstruct TaskListPartitionConfig {\n  10: optional i64 (js.type = \"Long\") version\n  12: optional i32 numReadPartitions\n  14: optional i32 numWritePartitions\n}\n\nstruct TaskListInfo {\n  10: optional i16 kind // {Normal, Sticky}\n  12: optional i64 (js.type = \"Long\") ackLevel\n  14: optional i64 (js.type = \"Long\") expiryTimeNanos\n  16: optional i64 (js.type = \"Long\") lastUpdatedNanos\n  18: optional TaskListPartitionConfig adaptivePartitionConfig\n}\n\nstruct TransferTaskInfo {\n  10: optional binary domainID\n  12: optional string workflowID\n  14: optional binary runID\n  16: optional i16 taskType\n  18: optional binary targetDomainID\n  20: optional string targetWorkflowID\n  22: optional binary targetRunID\n  24: optional string taskList\n  26: optional bool targetChildWorkflowOnly\n  28: optional i64 (js.type = \"Long\") scheduleID\n  30: optional i64 (js.type = \"Long\") version\n  32: optional i64 (js.type = \"Long\") visibilityTimestampNanos\n  34: optional set<binary> targetDomainIDs\n}\n\nstruct TimerTaskInfo {\n  10: optional binary domainID\n  12: optional string workflowID\n  14: optional binary runID\n  16: optional i16 taskType\n  18: optional i16 timeoutType\n  20: optional i64 (js.type = \"Long\") version\n  22: optional i64 (js.type = \"Long\") scheduleAttempt\n  24: optional i64 (js.type = \"Long\") eventID\n}\n\nstruct ReplicationTaskInfo {\n  10: optional binary domainID\n  12: optional string workflowID\n  14: optional binary runID\n  16: optional i16 taskType\n  18: optional i64 (js.type = \"Long\") version\n  20: optional i64 (js.type = \"Long\") firstEventID\n  22: optional i64 (js.type = \"Long\") nextEventID\n  24: optional i64 (js.type = \"Long\") scheduledID\n  26: optional i32 eventStoreVersion\n  28: optional i32 newRunEventStoreVersion\n  30: optional binary branch_token\n  34: optional binary newRunBranchToken\n  38: optional i64 (js.type = \"Long\") creationTime\n}\n\nenum AsyncRequestType {\n  StartWorkflowExecutionAsyncRequest\n  SignalWithStartWorkflowExecutionAsyncRequest\n}\n\nstruct AsyncRequestMessage {\n  10: optional string partitionKey\n  12: optional AsyncRequestType type\n  14: optional shared.Header header\n  16: optional string encoding\n  18: optional binary payload\n}\n"

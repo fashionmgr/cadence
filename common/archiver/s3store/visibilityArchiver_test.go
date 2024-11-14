@@ -35,13 +35,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
-	"go.uber.org/zap"
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/s3store/mocks"
-	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 )
@@ -52,7 +50,6 @@ type visibilityArchiverSuite struct {
 	s3cli *mocks.S3API
 
 	container         *archiver.VisibilityBootstrapContainer
-	logger            log.Logger
 	visibilityRecords []*visibilityRecord
 
 	controller      *gomock.Controller
@@ -125,9 +122,8 @@ func (s *visibilityArchiverSuite) SetupSuite() {
 	s.testArchivalURI, err = archiver.NewURI(testBucketURI)
 	s.Require().NoError(err)
 
-	zapLogger := zap.NewNop()
 	s.container = &archiver.VisibilityBootstrapContainer{
-		Logger:        loggerimpl.NewLogger(zapLogger),
+		Logger:        testlogger.New(s.T()),
 		MetricsClient: metrics.NewClient(scope, metrics.VisibilityArchiverScope),
 	}
 	s.setupVisibilityDirectory()

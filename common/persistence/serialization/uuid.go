@@ -29,8 +29,8 @@ import (
 
 // UUID represents a 16-byte universally unique identifier
 // this type is a wrapper around google/uuid with the following differences
-//  - type is a byte slice instead of [16]byte
-//  - db serialization converts uuid to bytes as opposed to string
+//   - type is a byte slice instead of [16]byte
+//   - db serialization converts uuid to bytes as opposed to string
 type UUID []byte
 
 // MustParseUUID returns a UUID parsed from the given string representation
@@ -42,16 +42,6 @@ func MustParseUUID(s string) UUID {
 	}
 	u := uuid.MustParse(s)
 	return u[:]
-}
-
-// MustParsePtrUUID returns a UUID parsed from the given string representation
-// returns nil if the input is empty string
-// panics if the given input is malformed
-func MustParsePtrUUID(s *string) UUID {
-	if s == nil {
-		return nil
-	}
-	return MustParseUUID(*s)
 }
 
 // UUIDPtr simply returns a pointer for the given value type

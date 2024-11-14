@@ -20,6 +20,8 @@
 
 package types
 
+import "sort"
+
 // AddSearchAttributeRequest is an internal type (TBD...)
 type AddSearchAttributeRequest struct {
 	SearchAttribute map[string]IndexedValueType `json:"searchAttribute,omitempty"`
@@ -34,35 +36,11 @@ func (v *AddSearchAttributeRequest) GetSearchAttribute() (o map[string]IndexedVa
 	return
 }
 
-// GetSecurityToken is an internal getter (TBD...)
-func (v *AddSearchAttributeRequest) GetSecurityToken() (o string) {
-	if v != nil {
-		return v.SecurityToken
-	}
-	return
-}
-
 // DescribeClusterResponse is an internal type (TBD...)
 type DescribeClusterResponse struct {
 	SupportedClientVersions *SupportedClientVersions    `json:"supportedClientVersions,omitempty"`
 	MembershipInfo          *MembershipInfo             `json:"membershipInfo,omitempty"`
 	PersistenceInfo         map[string]*PersistenceInfo `json:"persistenceInfo,omitempty"`
-}
-
-// GetSupportedClientVersions is an internal getter (TBD...)
-func (v *DescribeClusterResponse) GetSupportedClientVersions() (o *SupportedClientVersions) {
-	if v != nil && v.SupportedClientVersions != nil {
-		return v.SupportedClientVersions
-	}
-	return
-}
-
-// GetMembershipInfo is an internal getter (TBD...)
-func (v *DescribeClusterResponse) GetMembershipInfo() (o *MembershipInfo) {
-	if v != nil && v.MembershipInfo != nil {
-		return v.MembershipInfo
-	}
-	return
 }
 
 // AdminDescribeWorkflowExecutionRequest is an internal type (TBD...)
@@ -79,14 +57,6 @@ func (v *AdminDescribeWorkflowExecutionRequest) GetDomain() (o string) {
 	return
 }
 
-// GetExecution is an internal getter (TBD...)
-func (v *AdminDescribeWorkflowExecutionRequest) GetExecution() (o *WorkflowExecution) {
-	if v != nil && v.Execution != nil {
-		return v.Execution
-	}
-	return
-}
-
 // AdminDescribeWorkflowExecutionResponse is an internal type (TBD...)
 type AdminDescribeWorkflowExecutionResponse struct {
 	ShardID                string `json:"shardId,omitempty"`
@@ -99,22 +69,6 @@ type AdminDescribeWorkflowExecutionResponse struct {
 func (v *AdminDescribeWorkflowExecutionResponse) GetShardID() (o string) {
 	if v != nil {
 		return v.ShardID
-	}
-	return
-}
-
-// GetHistoryAddr is an internal getter (TBD...)
-func (v *AdminDescribeWorkflowExecutionResponse) GetHistoryAddr() (o string) {
-	if v != nil {
-		return v.HistoryAddr
-	}
-	return
-}
-
-// GetMutableStateInCache is an internal getter (TBD...)
-func (v *AdminDescribeWorkflowExecutionResponse) GetMutableStateInCache() (o string) {
-	if v != nil {
-		return v.MutableStateInCache
 	}
 	return
 }
@@ -143,14 +97,6 @@ type GetWorkflowExecutionRawHistoryV2Request struct {
 func (v *GetWorkflowExecutionRawHistoryV2Request) GetDomain() (o string) {
 	if v != nil {
 		return v.Domain
-	}
-	return
-}
-
-// GetExecution is an internal getter (TBD...)
-func (v *GetWorkflowExecutionRawHistoryV2Request) GetExecution() (o *WorkflowExecution) {
-	if v != nil && v.Execution != nil {
-		return v.Execution
 	}
 	return
 }
@@ -195,27 +141,11 @@ func (v *GetWorkflowExecutionRawHistoryV2Request) GetMaximumPageSize() (o int32)
 	return
 }
 
-// GetNextPageToken is an internal getter (TBD...)
-func (v *GetWorkflowExecutionRawHistoryV2Request) GetNextPageToken() (o []byte) {
-	if v != nil && v.NextPageToken != nil {
-		return v.NextPageToken
-	}
-	return
-}
-
 // GetWorkflowExecutionRawHistoryV2Response is an internal type (TBD...)
 type GetWorkflowExecutionRawHistoryV2Response struct {
 	NextPageToken  []byte          `json:"nextPageToken,omitempty"`
 	HistoryBatches []*DataBlob     `json:"historyBatches,omitempty"`
 	VersionHistory *VersionHistory `json:"versionHistory,omitempty"`
-}
-
-// GetNextPageToken is an internal getter (TBD...)
-func (v *GetWorkflowExecutionRawHistoryV2Response) GetNextPageToken() (o []byte) {
-	if v != nil && v.NextPageToken != nil {
-		return v.NextPageToken
-	}
-	return
 }
 
 // GetHistoryBatches is an internal getter (TBD...)
@@ -239,43 +169,11 @@ type HostInfo struct {
 	Identity string `json:"Identity,omitempty"`
 }
 
-// GetIdentity is an internal getter (TBD...)
-func (v *HostInfo) GetIdentity() (o string) {
-	if v != nil {
-		return v.Identity
-	}
-	return
-}
-
 // MembershipInfo is an internal type (TBD...)
 type MembershipInfo struct {
 	CurrentHost      *HostInfo   `json:"currentHost,omitempty"`
 	ReachableMembers []string    `json:"reachableMembers,omitempty"`
 	Rings            []*RingInfo `json:"rings,omitempty"`
-}
-
-// GetCurrentHost is an internal getter (TBD...)
-func (v *MembershipInfo) GetCurrentHost() (o *HostInfo) {
-	if v != nil && v.CurrentHost != nil {
-		return v.CurrentHost
-	}
-	return
-}
-
-// GetReachableMembers is an internal getter (TBD...)
-func (v *MembershipInfo) GetReachableMembers() (o []string) {
-	if v != nil && v.ReachableMembers != nil {
-		return v.ReachableMembers
-	}
-	return
-}
-
-// GetRings is an internal getter (TBD...)
-func (v *MembershipInfo) GetRings() (o []*RingInfo) {
-	if v != nil && v.Rings != nil {
-		return v.Rings
-	}
-	return
 }
 
 // PersistenceSetting is used to expose persistence engine settings
@@ -310,14 +208,6 @@ type ResendReplicationTasksRequest struct {
 	EndVersion    *int64 `json:"endVersion,omitempty"`
 }
 
-// GetDomainID is an internal getter (TBD...)
-func (v *ResendReplicationTasksRequest) GetDomainID() (o string) {
-	if v != nil {
-		return v.DomainID
-	}
-	return
-}
-
 // GetWorkflowID is an internal getter (TBD...)
 func (v *ResendReplicationTasksRequest) GetWorkflowID() (o string) {
 	if v != nil {
@@ -342,38 +232,6 @@ func (v *ResendReplicationTasksRequest) GetRemoteCluster() (o string) {
 	return
 }
 
-// GetStartEventID is an internal getter (TBD...)
-func (v *ResendReplicationTasksRequest) GetStartEventID() (o int64) {
-	if v != nil && v.StartEventID != nil {
-		return *v.StartEventID
-	}
-	return
-}
-
-// GetStartVersion is an internal getter (TBD...)
-func (v *ResendReplicationTasksRequest) GetStartVersion() (o int64) {
-	if v != nil && v.StartVersion != nil {
-		return *v.StartVersion
-	}
-	return
-}
-
-// GetEndEventID is an internal getter (TBD...)
-func (v *ResendReplicationTasksRequest) GetEndEventID() (o int64) {
-	if v != nil && v.EndEventID != nil {
-		return *v.EndEventID
-	}
-	return
-}
-
-// GetEndVersion is an internal getter (TBD...)
-func (v *ResendReplicationTasksRequest) GetEndVersion() (o int64) {
-	if v != nil && v.EndVersion != nil {
-		return *v.EndVersion
-	}
-	return
-}
-
 // RingInfo is an internal type (TBD...)
 type RingInfo struct {
 	Role        string      `json:"role,omitempty"`
@@ -381,58 +239,13 @@ type RingInfo struct {
 	Members     []*HostInfo `json:"members,omitempty"`
 }
 
-// GetRole is an internal getter (TBD...)
-func (v *RingInfo) GetRole() (o string) {
-	if v != nil {
-		return v.Role
-	}
-	return
-}
-
-// GetMemberCount is an internal getter (TBD...)
-func (v *RingInfo) GetMemberCount() (o int32) {
-	if v != nil {
-		return v.MemberCount
-	}
-	return
-}
-
-// GetMembers is an internal getter (TBD...)
-func (v *RingInfo) GetMembers() (o []*HostInfo) {
-	if v != nil && v.Members != nil {
-		return v.Members
-	}
-	return
-}
-
 type GetDynamicConfigRequest struct {
 	ConfigName string                 `json:"configName,omitempty"`
 	Filters    []*DynamicConfigFilter `json:"filters,omitempty"`
 }
 
-func (v *GetDynamicConfigRequest) GetConfigName() (o string) {
-	if v != nil {
-		return v.ConfigName
-	}
-	return
-}
-
-func (v *GetDynamicConfigRequest) GetFilters() (o []*DynamicConfigFilter) {
-	if v != nil && v.Filters != nil {
-		return v.Filters
-	}
-	return
-}
-
 type GetDynamicConfigResponse struct {
 	Value *DataBlob `json:"value,omitempty"`
-}
-
-func (v *GetDynamicConfigResponse) GetValue() (o *DataBlob) {
-	if v != nil && v.Value != nil {
-		return v.Value
-	}
-	return
 }
 
 type UpdateDynamicConfigRequest struct {
@@ -440,57 +253,188 @@ type UpdateDynamicConfigRequest struct {
 	ConfigValues []*DynamicConfigValue `json:"configValues,omitempty"`
 }
 
-func (v *UpdateDynamicConfigRequest) GetConfigName() (o string) {
-	if v != nil {
-		return v.ConfigName
-	}
-	return
-}
-
-func (v *UpdateDynamicConfigRequest) GetConfigValues() (o []*DynamicConfigValue) {
-	if v != nil && v.ConfigValues != nil {
-		return v.ConfigValues
-	}
-	return
-}
-
 type RestoreDynamicConfigRequest struct {
 	ConfigName string                 `json:"configName,omitempty"`
 	Filters    []*DynamicConfigFilter `json:"filters,omitempty"`
 }
 
-func (v *RestoreDynamicConfigRequest) GetConfigName() (o string) {
+// AdminDeleteWorkflowRequest is an internal type (TBD...)
+type AdminDeleteWorkflowRequest struct {
+	Domain     string             `json:"domain,omitempty"`
+	Execution  *WorkflowExecution `json:"execution,omitempty"`
+	SkipErrors bool               `json:"skipErrors,omitempty"`
+}
+
+func (v *AdminDeleteWorkflowRequest) GetDomain() (o string) {
 	if v != nil {
-		return v.ConfigName
+		return v.Domain
 	}
 	return
 }
 
-func (v *RestoreDynamicConfigRequest) GetFilters() (o []*DynamicConfigFilter) {
-	if v != nil && v.Filters != nil {
-		return v.Filters
+// GetExecution is an internal getter (TBD...)
+func (v *AdminDeleteWorkflowRequest) GetExecution() (o *WorkflowExecution) {
+	if v != nil && v.Execution != nil {
+		return v.Execution
 	}
 	return
 }
+
+func (v *AdminDeleteWorkflowRequest) GetSkipErrors() (o bool) {
+	if v != nil {
+		return v.SkipErrors
+	}
+	return
+}
+
+type AdminDeleteWorkflowResponse struct {
+	HistoryDeleted    bool `json:"historyDeleted,omitempty"`
+	ExecutionsDeleted bool `json:"executionsDeleted,omitempty"`
+	VisibilityDeleted bool `json:"visibilityDeleted,omitempty"`
+}
+
+type AdminMaintainWorkflowRequest = AdminDeleteWorkflowRequest
+type AdminMaintainWorkflowResponse = AdminDeleteWorkflowResponse
 
 type ListDynamicConfigRequest struct {
 	ConfigName string `json:"configName,omitempty"`
-}
-
-func (v *ListDynamicConfigRequest) GetConfigName() (o string) {
-	if v != nil {
-		return v.ConfigName
-	}
-	return
 }
 
 type ListDynamicConfigResponse struct {
 	Entries []*DynamicConfigEntry `json:"entries,omitempty"`
 }
 
-func (v *ListDynamicConfigResponse) GetEntries() (o []*DynamicConfigEntry) {
-	if v != nil && v.Entries != nil {
-		return v.Entries
-	}
-	return
+type IsolationGroupState int
+
+const (
+	IsolationGroupStateInvalid IsolationGroupState = iota
+	IsolationGroupStateHealthy
+	IsolationGroupStateDrained
+)
+
+type IsolationGroupPartition struct {
+	Name  string
+	State IsolationGroupState
 }
+
+// IsolationGroupConfiguration is an internal representation of a set of
+// isolation-groups as a mapping and may refer to either globally or per-domain (or both) configurations.
+// and their statuses. It's redundantly indexed by IsolationGroup name to simplify lookups.
+//
+// For example: This might be a global configuration persisted
+// in the config store and look like this:
+//
+//	IsolationGroupConfiguration{
+//	  "isolationGroup1234": {Name: "isolationGroup1234", Status: IsolationGroupStatusDrained},
+//	}
+//
+// Indicating that task processing isn't to occur within this isolationGroup anymore, but all others are ok.
+type IsolationGroupConfiguration map[string]IsolationGroupPartition
+
+// ToPartitionList Renders the isolation group to the less complicated and confusing simple list of isolation groups
+func (i IsolationGroupConfiguration) ToPartitionList() []IsolationGroupPartition {
+	out := []IsolationGroupPartition{}
+	for _, v := range i {
+		out = append(out, v)
+	}
+	// ensure determinitism in list ordering for convenience
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func (i IsolationGroupConfiguration) DeepCopy() IsolationGroupConfiguration {
+	if i == nil {
+		return nil
+	}
+
+	out := IsolationGroupConfiguration{}
+	for k, v := range i {
+		out[k] = v
+	}
+	return out
+}
+
+// FromIsolationGroupPartitionList maps a list of isolation to the internal IsolationGroup configuration type
+// whose map keys tend to be used more for set operations
+func FromIsolationGroupPartitionList(in []IsolationGroupPartition) IsolationGroupConfiguration {
+	if len(in) == 0 {
+		return IsolationGroupConfiguration{}
+	}
+	out := IsolationGroupConfiguration{}
+	for _, v := range in {
+		out[v.Name] = v
+	}
+	return out
+}
+
+type GetGlobalIsolationGroupsRequest struct{}
+
+type GetGlobalIsolationGroupsResponse struct {
+	IsolationGroups IsolationGroupConfiguration
+}
+
+type UpdateGlobalIsolationGroupsRequest struct {
+	IsolationGroups IsolationGroupConfiguration
+}
+
+type UpdateGlobalIsolationGroupsResponse struct{}
+
+type GetDomainIsolationGroupsRequest struct {
+	Domain string
+}
+
+type GetDomainIsolationGroupsResponse struct {
+	IsolationGroups IsolationGroupConfiguration
+}
+
+type UpdateDomainIsolationGroupsRequest struct {
+	Domain          string
+	IsolationGroups IsolationGroupConfiguration
+}
+
+type UpdateDomainIsolationGroupsResponse struct{}
+
+type GetDomainAsyncWorkflowConfiguratonRequest struct {
+	Domain string
+}
+
+type GetDomainAsyncWorkflowConfiguratonResponse struct {
+	Configuration *AsyncWorkflowConfiguration
+}
+
+type AsyncWorkflowConfiguration struct {
+	Enabled             bool
+	PredefinedQueueName string
+	QueueType           string
+	QueueConfig         *DataBlob
+}
+
+func (c AsyncWorkflowConfiguration) DeepCopy() AsyncWorkflowConfiguration {
+	res := AsyncWorkflowConfiguration{
+		Enabled:             c.Enabled,
+		PredefinedQueueName: c.PredefinedQueueName,
+		QueueType:           c.QueueType,
+		QueueConfig:         c.QueueConfig.DeepCopy(),
+	}
+
+	return res
+}
+
+type UpdateDomainAsyncWorkflowConfiguratonRequest struct {
+	Domain        string
+	Configuration *AsyncWorkflowConfiguration
+}
+
+type UpdateDomainAsyncWorkflowConfiguratonResponse struct {
+}
+
+type UpdateTaskListPartitionConfigRequest struct {
+	Domain          string
+	TaskList        *TaskList
+	TaskListType    *TaskListType
+	PartitionConfig *TaskListPartitionConfig
+}
+
+type UpdateTaskListPartitionConfigResponse struct{}

@@ -53,6 +53,12 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) error
 
+	DeleteWorkflow(
+		ctx context.Context,
+		Request *admin.AdminDeleteWorkflowRequest,
+		opts ...yarpc.CallOption,
+	) (*admin.AdminDeleteWorkflowResponse, error)
+
 	DescribeCluster(
 		ctx context.Context,
 		opts ...yarpc.CallOption,
@@ -94,6 +100,18 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) (*replicator.GetDLQReplicationMessagesResponse, error)
 
+	GetDomainAsyncWorkflowConfiguraton(
+		ctx context.Context,
+		Request *admin.GetDomainAsyncWorkflowConfiguratonRequest,
+		opts ...yarpc.CallOption,
+	) (*admin.GetDomainAsyncWorkflowConfiguratonResponse, error)
+
+	GetDomainIsolationGroups(
+		ctx context.Context,
+		Request *admin.GetDomainIsolationGroupsRequest,
+		opts ...yarpc.CallOption,
+	) (*admin.GetDomainIsolationGroupsResponse, error)
+
 	GetDomainReplicationMessages(
 		ctx context.Context,
 		Request *replicator.GetDomainReplicationMessagesRequest,
@@ -105,6 +123,12 @@ type Interface interface {
 		Request *admin.GetDynamicConfigRequest,
 		opts ...yarpc.CallOption,
 	) (*admin.GetDynamicConfigResponse, error)
+
+	GetGlobalIsolationGroups(
+		ctx context.Context,
+		Request *admin.GetGlobalIsolationGroupsRequest,
+		opts ...yarpc.CallOption,
+	) (*admin.GetGlobalIsolationGroupsResponse, error)
 
 	GetReplicationMessages(
 		ctx context.Context,
@@ -123,6 +147,12 @@ type Interface interface {
 		Request *admin.ListDynamicConfigRequest,
 		opts ...yarpc.CallOption,
 	) (*admin.ListDynamicConfigResponse, error)
+
+	MaintainCorruptWorkflow(
+		ctx context.Context,
+		Request *admin.AdminMaintainWorkflowRequest,
+		opts ...yarpc.CallOption,
+	) (*admin.AdminMaintainWorkflowResponse, error)
 
 	MergeDLQMessages(
 		ctx context.Context,
@@ -184,16 +214,34 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) error
 
+	UpdateDomainAsyncWorkflowConfiguraton(
+		ctx context.Context,
+		Request *admin.UpdateDomainAsyncWorkflowConfiguratonRequest,
+		opts ...yarpc.CallOption,
+	) (*admin.UpdateDomainAsyncWorkflowConfiguratonResponse, error)
+
+	UpdateDomainIsolationGroups(
+		ctx context.Context,
+		Request *admin.UpdateDomainIsolationGroupsRequest,
+		opts ...yarpc.CallOption,
+	) (*admin.UpdateDomainIsolationGroupsResponse, error)
+
 	UpdateDynamicConfig(
 		ctx context.Context,
 		Request *admin.UpdateDynamicConfigRequest,
 		opts ...yarpc.CallOption,
 	) error
+
+	UpdateGlobalIsolationGroups(
+		ctx context.Context,
+		Request *admin.UpdateGlobalIsolationGroupsRequest,
+		opts ...yarpc.CallOption,
+	) (*admin.UpdateGlobalIsolationGroupsResponse, error)
 }
 
 // New builds a new client for the AdminService service.
 //
-// 	client := adminserviceclient.New(dispatcher.ClientConfig("adminservice"))
+//	client := adminserviceclient.New(dispatcher.ClientConfig("adminservice"))
 func New(c transport.ClientConfig, opts ...thrift.ClientOption) Interface {
 	return client{
 		c: thrift.New(thrift.Config{
@@ -273,6 +321,34 @@ func (c client) CloseShard(
 	}
 
 	err = admin.AdminService_CloseShard_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) DeleteWorkflow(
+	ctx context.Context,
+	_Request *admin.AdminDeleteWorkflowRequest,
+	opts ...yarpc.CallOption,
+) (success *admin.AdminDeleteWorkflowResponse, err error) {
+
+	var result admin.AdminService_DeleteWorkflow_Result
+	args := admin.AdminService_DeleteWorkflow_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = admin.AdminService_DeleteWorkflow_Helper.UnwrapResponse(&result)
 	return
 }
 
@@ -471,6 +547,62 @@ func (c client) GetDLQReplicationMessages(
 	return
 }
 
+func (c client) GetDomainAsyncWorkflowConfiguraton(
+	ctx context.Context,
+	_Request *admin.GetDomainAsyncWorkflowConfiguratonRequest,
+	opts ...yarpc.CallOption,
+) (success *admin.GetDomainAsyncWorkflowConfiguratonResponse, err error) {
+
+	var result admin.AdminService_GetDomainAsyncWorkflowConfiguraton_Result
+	args := admin.AdminService_GetDomainAsyncWorkflowConfiguraton_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = admin.AdminService_GetDomainAsyncWorkflowConfiguraton_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) GetDomainIsolationGroups(
+	ctx context.Context,
+	_Request *admin.GetDomainIsolationGroupsRequest,
+	opts ...yarpc.CallOption,
+) (success *admin.GetDomainIsolationGroupsResponse, err error) {
+
+	var result admin.AdminService_GetDomainIsolationGroups_Result
+	args := admin.AdminService_GetDomainIsolationGroups_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = admin.AdminService_GetDomainIsolationGroups_Helper.UnwrapResponse(&result)
+	return
+}
+
 func (c client) GetDomainReplicationMessages(
 	ctx context.Context,
 	_Request *replicator.GetDomainReplicationMessagesRequest,
@@ -524,6 +656,34 @@ func (c client) GetDynamicConfig(
 	}
 
 	success, err = admin.AdminService_GetDynamicConfig_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) GetGlobalIsolationGroups(
+	ctx context.Context,
+	_Request *admin.GetGlobalIsolationGroupsRequest,
+	opts ...yarpc.CallOption,
+) (success *admin.GetGlobalIsolationGroupsResponse, err error) {
+
+	var result admin.AdminService_GetGlobalIsolationGroups_Result
+	args := admin.AdminService_GetGlobalIsolationGroups_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = admin.AdminService_GetGlobalIsolationGroups_Helper.UnwrapResponse(&result)
 	return
 }
 
@@ -608,6 +768,34 @@ func (c client) ListDynamicConfig(
 	}
 
 	success, err = admin.AdminService_ListDynamicConfig_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) MaintainCorruptWorkflow(
+	ctx context.Context,
+	_Request *admin.AdminMaintainWorkflowRequest,
+	opts ...yarpc.CallOption,
+) (success *admin.AdminMaintainWorkflowResponse, err error) {
+
+	var result admin.AdminService_MaintainCorruptWorkflow_Result
+	args := admin.AdminService_MaintainCorruptWorkflow_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = admin.AdminService_MaintainCorruptWorkflow_Helper.UnwrapResponse(&result)
 	return
 }
 
@@ -891,6 +1079,62 @@ func (c client) RestoreDynamicConfig(
 	return
 }
 
+func (c client) UpdateDomainAsyncWorkflowConfiguraton(
+	ctx context.Context,
+	_Request *admin.UpdateDomainAsyncWorkflowConfiguratonRequest,
+	opts ...yarpc.CallOption,
+) (success *admin.UpdateDomainAsyncWorkflowConfiguratonResponse, err error) {
+
+	var result admin.AdminService_UpdateDomainAsyncWorkflowConfiguraton_Result
+	args := admin.AdminService_UpdateDomainAsyncWorkflowConfiguraton_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = admin.AdminService_UpdateDomainAsyncWorkflowConfiguraton_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) UpdateDomainIsolationGroups(
+	ctx context.Context,
+	_Request *admin.UpdateDomainIsolationGroupsRequest,
+	opts ...yarpc.CallOption,
+) (success *admin.UpdateDomainIsolationGroupsResponse, err error) {
+
+	var result admin.AdminService_UpdateDomainIsolationGroups_Result
+	args := admin.AdminService_UpdateDomainIsolationGroups_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = admin.AdminService_UpdateDomainIsolationGroups_Helper.UnwrapResponse(&result)
+	return
+}
+
 func (c client) UpdateDynamicConfig(
 	ctx context.Context,
 	_Request *admin.UpdateDynamicConfigRequest,
@@ -916,5 +1160,33 @@ func (c client) UpdateDynamicConfig(
 	}
 
 	err = admin.AdminService_UpdateDynamicConfig_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) UpdateGlobalIsolationGroups(
+	ctx context.Context,
+	_Request *admin.UpdateGlobalIsolationGroupsRequest,
+	opts ...yarpc.CallOption,
+) (success *admin.UpdateGlobalIsolationGroupsResponse, err error) {
+
+	var result admin.AdminService_UpdateGlobalIsolationGroups_Result
+	args := admin.AdminService_UpdateGlobalIsolationGroups_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = admin.AdminService_UpdateGlobalIsolationGroups_Helper.UnwrapResponse(&result)
 	return
 }

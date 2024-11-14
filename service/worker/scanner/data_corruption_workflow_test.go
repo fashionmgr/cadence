@@ -29,6 +29,7 @@ import (
 	"github.com/pborman/uuid"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/cadence/testsuite"
 	"go.uber.org/cadence/worker"
 
 	"github.com/uber/cadence/common/metrics"
@@ -37,11 +38,12 @@ import (
 	"github.com/uber/cadence/common/reconciliation/entity"
 	"github.com/uber/cadence/common/reconciliation/invariant"
 	"github.com/uber/cadence/common/resource"
-
-	"go.uber.org/cadence/testsuite"
+	"github.com/uber/cadence/service/history/constants"
 )
 
 const testWorkflowName = "default-test-workflow-type-name"
+
+var validBranchToken = []byte{89, 11, 0, 10, 0, 0, 0, 12, 116, 101, 115, 116, 45, 116, 114, 101, 101, 45, 105, 100, 11, 0, 20, 0, 0, 0, 14, 116, 101, 115, 116, 45, 98, 114, 97, 110, 99, 104, 45, 105, 100, 0}
 
 type dataCorruptionWorkflowTestSuite struct {
 	suite.Suite
@@ -90,8 +92,7 @@ func (s *dataCorruptionWorkflowTestSuite) TestWorkflow_TimerFire_Success() {
 func (s *dataCorruptionWorkflowTestSuite) TestExecutionFixerActivity_Success() {
 	env := s.NewTestActivityEnvironment()
 	controller := gomock.NewController(s.T())
-	defer controller.Finish()
-	mockResource := resource.NewTest(controller, metrics.Worker)
+	mockResource := resource.NewTest(s.T(), controller, metrics.Worker)
 	defer mockResource.Finish(s.T())
 	fixList := []entity.Execution{
 		{
@@ -111,13 +112,13 @@ func (s *dataCorruptionWorkflowTestSuite) TestExecutionFixerActivity_Success() {
 	mockResource.ExecutionMgr.On("GetWorkflowExecution", mock.Anything, mock.Anything).Return(&p.GetWorkflowExecutionResponse{
 		State: &p.WorkflowMutableState{
 			ExecutionInfo: &p.WorkflowExecutionInfo{
-				BranchToken: []byte{},
+				BranchToken: validBranchToken,
 			},
 			VersionHistories: &p.VersionHistories{
 				CurrentVersionHistoryIndex: 0,
 				Histories: []*p.VersionHistory{
 					{
-						BranchToken: []byte{},
+						BranchToken: validBranchToken,
 					},
 				},
 			},
@@ -126,14 +127,14 @@ func (s *dataCorruptionWorkflowTestSuite) TestExecutionFixerActivity_Success() {
 	mockResource.ExecutionMgr.On("DeleteWorkflowExecution", mock.Anything, mock.Anything).Return(nil)
 	mockResource.ExecutionMgr.On("DeleteCurrentWorkflowExecution", mock.Anything, mock.Anything).Return(nil)
 	mockResource.HistoryMgr.On("ReadHistoryBranch", mock.Anything, mock.Anything).Return(&p.ReadHistoryBranchResponse{}, nil)
-
 	ctx := context.WithValue(context.Background(), contextKey(testWorkflowName), scannerContext{resource: mockResource})
 	env.SetTestTimeout(time.Second * 5)
 	env.SetWorkerOptions(worker.Options{
 		BackgroundActivityContext: ctx,
 	})
 	tlScavengerHBInterval = time.Millisecond * 10
-
+	mockResource.DomainCache.EXPECT().GetDomainName(gomock.Any()).Return("test-domain-name", nil).AnyTimes()
+	mockResource.DomainCache.EXPECT().GetDomainByID(gomock.Any()).Return(constants.TestGlobalDomainEntry, nil).AnyTimes()
 	_, err := env.ExecuteActivity(ExecutionFixerActivity, fixList)
 	s.NoError(err)
 }

@@ -24,6 +24,8 @@ package execution
 import (
 	"encoding/json"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/persistence"
@@ -94,7 +96,9 @@ func convertSyncActivityInfos(
 		if ok {
 			// the visibility timestamp will be set in shard context
 			outputs = append(outputs, &persistence.SyncActivityTask{
-				Version:     activityInfo.Version,
+				TaskData: persistence.TaskData{
+					Version: activityInfo.Version,
+				},
 				ScheduledID: activityInfo.ScheduleID,
 			})
 		}
@@ -201,6 +205,15 @@ func convertUpdateSignalInfos(
 	return outputs
 }
 
+func convertWorkflowRequests(inputs map[persistence.WorkflowRequest]struct{}) []*persistence.WorkflowRequest {
+	outputs := make([]*persistence.WorkflowRequest, 0, len(inputs))
+	for key := range inputs {
+		key := key // TODO: remove this trick once we upgrade go to 1.22
+		outputs = append(outputs, &key)
+	}
+	return outputs
+}
+
 // FailDecision fails the current decision task
 func FailDecision(
 	mutableState MutableState,
@@ -219,6 +232,7 @@ func FailDecision(
 		"",
 		"",
 		0,
+		"",
 	); err != nil {
 		return err
 	}
@@ -324,9 +338,11 @@ func CopyWorkflowExecutionInfo(sourceInfo *persistence.WorkflowExecutionInfo) *p
 		DomainID:                           sourceInfo.DomainID,
 		WorkflowID:                         sourceInfo.WorkflowID,
 		RunID:                              sourceInfo.RunID,
+		FirstExecutionRunID:                sourceInfo.FirstExecutionRunID,
 		ParentDomainID:                     sourceInfo.ParentDomainID,
 		ParentWorkflowID:                   sourceInfo.ParentWorkflowID,
 		ParentRunID:                        sourceInfo.ParentRunID,
+		IsCron:                             sourceInfo.IsCron,
 		InitiatedID:                        sourceInfo.InitiatedID,
 		CompletionEventBatchID:             sourceInfo.CompletionEventBatchID,
 		CompletionEvent:                    sourceInfo.CompletionEvent,
@@ -353,6 +369,7 @@ func CopyWorkflowExecutionInfo(sourceInfo *persistence.WorkflowExecutionInfo) *p
 		DecisionRequestID:                  sourceInfo.DecisionRequestID,
 		DecisionTimeout:                    sourceInfo.DecisionTimeout,
 		DecisionAttempt:                    sourceInfo.DecisionAttempt,
+		DecisionScheduledTimestamp:         sourceInfo.DecisionScheduledTimestamp,
 		DecisionStartedTimestamp:           sourceInfo.DecisionStartedTimestamp,
 		DecisionOriginalScheduledTimestamp: sourceInfo.DecisionOriginalScheduledTimestamp,
 		CancelRequested:                    sourceInfo.CancelRequested,
@@ -364,6 +381,7 @@ func CopyWorkflowExecutionInfo(sourceInfo *persistence.WorkflowExecutionInfo) *p
 		AutoResetPoints:                    sourceInfo.AutoResetPoints,
 		Memo:                               sourceInfo.Memo,
 		SearchAttributes:                   sourceInfo.SearchAttributes,
+		PartitionConfig:                    sourceInfo.PartitionConfig,
 		Attempt:                            sourceInfo.Attempt,
 		HasRetryPolicy:                     sourceInfo.HasRetryPolicy,
 		InitialInterval:                    sourceInfo.InitialInterval,
@@ -379,8 +397,7 @@ func CopyWorkflowExecutionInfo(sourceInfo *persistence.WorkflowExecutionInfo) *p
 
 // CopyActivityInfo copies ActivityInfo
 func CopyActivityInfo(sourceInfo *persistence.ActivityInfo) *persistence.ActivityInfo {
-	details := make([]byte, len(sourceInfo.Details))
-	copy(details, sourceInfo.Details)
+	details := slices.Clone(sourceInfo.Details)
 
 	return &persistence.ActivityInfo{
 		Version:                  sourceInfo.Version,
@@ -435,24 +452,24 @@ func CopyTimerInfo(sourceInfo *persistence.TimerInfo) *persistence.TimerInfo {
 // CopyCancellationInfo copies RequestCancelInfo
 func CopyCancellationInfo(sourceInfo *persistence.RequestCancelInfo) *persistence.RequestCancelInfo {
 	return &persistence.RequestCancelInfo{
-		Version:         sourceInfo.Version,
-		InitiatedID:     sourceInfo.InitiatedID,
-		CancelRequestID: sourceInfo.CancelRequestID,
+		Version:               sourceInfo.Version,
+		InitiatedID:           sourceInfo.InitiatedID,
+		InitiatedEventBatchID: sourceInfo.InitiatedEventBatchID,
+		CancelRequestID:       sourceInfo.CancelRequestID,
 	}
 }
 
 // CopySignalInfo copies SignalInfo
 func CopySignalInfo(sourceInfo *persistence.SignalInfo) *persistence.SignalInfo {
 	result := &persistence.SignalInfo{
-		Version:         sourceInfo.Version,
-		InitiatedID:     sourceInfo.InitiatedID,
-		SignalRequestID: sourceInfo.SignalRequestID,
-		SignalName:      sourceInfo.SignalName,
+		Version:               sourceInfo.Version,
+		InitiatedEventBatchID: sourceInfo.InitiatedEventBatchID,
+		InitiatedID:           sourceInfo.InitiatedID,
+		SignalRequestID:       sourceInfo.SignalRequestID,
+		SignalName:            sourceInfo.SignalName,
 	}
-	result.Input = make([]byte, len(sourceInfo.Input))
-	copy(result.Input, sourceInfo.Input)
-	result.Control = make([]byte, len(sourceInfo.Control))
-	copy(result.Control, sourceInfo.Control)
+	result.Input = slices.Clone(sourceInfo.Input)
+	result.Control = slices.Clone(sourceInfo.Control)
 	return result
 }
 
@@ -549,4 +566,17 @@ func GetChildExecutionDomainEntry(
 	}
 
 	return parentDomainEntry, nil
+}
+
+func trimBinaryChecksums(recentBinaryChecksums []string, currResetPoints []*types.ResetPointInfo, maxResetPoints int) ([]string, []*types.ResetPointInfo) {
+	numResetPoints := len(currResetPoints)
+	if numResetPoints >= maxResetPoints {
+		// If exceeding the max limit, do rotation by taking the oldest ones out.
+		// startIndex plus one here because it needs to make space for the new binary checksum for the current run
+		startIndex := numResetPoints - maxResetPoints + 1
+		currResetPoints = currResetPoints[startIndex:]
+		recentBinaryChecksums = recentBinaryChecksums[startIndex:]
+	}
+
+	return recentBinaryChecksums, currResetPoints
 }

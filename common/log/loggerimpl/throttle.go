@@ -21,6 +21,7 @@
 package loggerimpl
 
 import (
+	"math/rand"
 	"sync/atomic"
 
 	"github.com/uber/cadence/common/dynamicconfig"
@@ -49,8 +50,9 @@ func NewThrottledLogger(logger log.Logger, rps dynamicconfig.IntPropertyFn) log.
 	lg, ok := logger.(*loggerImpl)
 	if ok {
 		log = &loggerImpl{
-			zapLogger: lg.zapLogger,
-			skip:      skipForThrottleLogger,
+			zapLogger:     lg.zapLogger,
+			skip:          skipForThrottleLogger,
+			sampleLocalFn: lg.sampleLocalFn,
 		}
 	} else {
 		logger.Warn("ReplayLogger may not emit callat tag correctly because the logger passed in is not loggerImpl")
@@ -67,6 +69,12 @@ func NewThrottledLogger(logger log.Logger, rps dynamicconfig.IntPropertyFn) log.
 		log:     log,
 	}
 	return tl
+}
+
+func (tl *throttledLogger) Debugf(msg string, args ...any) {
+	tl.rateLimit(func() {
+		tl.log.Debugf(msg, args...)
+	})
 }
 
 func (tl *throttledLogger) Debug(msg string, tags ...tag.Tag) {
@@ -97,6 +105,14 @@ func (tl *throttledLogger) Fatal(msg string, tags ...tag.Tag) {
 	tl.rateLimit(func() {
 		tl.log.Fatal(msg, tags...)
 	})
+}
+
+func (tl *throttledLogger) SampleInfo(msg string, sampleRate int, tags ...tag.Tag) {
+	if rand.Intn(sampleRate) == 0 {
+		tl.rateLimit(func() {
+			tl.log.Info(msg, tags...)
+		})
+	}
 }
 
 // Return a logger with the specified key-value pairs set, to be included in a subsequent normal logging call

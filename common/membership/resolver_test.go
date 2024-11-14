@@ -30,6 +30,7 @@ import (
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
+	"github.com/uber/cadence/common/metrics"
 )
 
 var testServices = []string{"test-worker", "test-services"}
@@ -64,6 +65,7 @@ func TestMethodsAreRoutedToARing(t *testing.T) {
 	}
 
 	pp.EXPECT().GetMembers("test-worker").Return(hosts, nil).Times(1)
+	pp.EXPECT().WhoAmI().AnyTimes()
 
 	r, err := a.getRing("test-worker")
 	r.refresh()
@@ -136,5 +138,6 @@ func newTestResolver(t *testing.T) (*MultiringResolver, *MockPeerProvider) {
 		testServices,
 		pp,
 		log.NewNoop(),
+		metrics.NewNoopMetricsClient(),
 	), pp
 }

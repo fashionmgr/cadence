@@ -31,13 +31,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
-	"go.uber.org/zap"
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/gcloud/connector"
 	"github.com/uber/cadence/common/archiver/gcloud/connector/mocks"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 )
@@ -60,10 +59,9 @@ var (
 )
 
 func (h *historyArchiverSuite) SetupTest() {
-	zapLogger := zap.NewNop()
 	h.Assertions = require.New(h.T())
 	h.container = &archiver.HistoryBootstrapContainer{
-		Logger:        loggerimpl.NewLogger(zapLogger),
+		Logger:        testlogger.New(h.T()),
 		MetricsClient: metrics.NewClient(tally.NoopScope, metrics.History),
 	}
 	h.testArchivalURI, _ = archiver.NewURI("gs://my-bucket-cad/cadence_archival/development")
@@ -134,7 +132,6 @@ func (h *historyArchiverSuite) TestArchive_Fail_InvalidURI() {
 	storageWrapper, _ := connector.NewClientWithParams(mockStorageClient)
 
 	mockCtrl := gomock.NewController(h.T())
-	defer mockCtrl.Finish()
 	historyIterator := archiver.NewMockHistoryIterator(mockCtrl)
 
 	historyArchiver := newHistoryArchiver(h.container, historyIterator, storageWrapper)
@@ -161,7 +158,6 @@ func (h *historyArchiverSuite) TestArchive_Fail_InvalidRequest() {
 	storageWrapper.On("Exist", ctx, URI, "").Return(true, nil).Times(1)
 	mockCtrl := gomock.NewController(h.T())
 
-	defer mockCtrl.Finish()
 	historyIterator := archiver.NewMockHistoryIterator(mockCtrl)
 
 	historyArchiver := newHistoryArchiver(h.container, historyIterator, storageWrapper)
@@ -187,7 +183,6 @@ func (h *historyArchiverSuite) TestArchive_Fail_ErrorOnReadHistory() {
 	storageWrapper.On("Exist", ctx, URI, "").Return(true, nil).Times(1)
 
 	mockCtrl := gomock.NewController(h.T())
-	defer mockCtrl.Finish()
 	historyIterator := archiver.NewMockHistoryIterator(mockCtrl)
 	gomock.InOrder(
 		historyIterator.EXPECT().HasNext().Return(true),
@@ -215,7 +210,6 @@ func (h *historyArchiverSuite) TestArchive_Fail_TimeoutWhenReadingHistory() {
 	storageWrapper := &mocks.Client{}
 	storageWrapper.On("Exist", mock.Anything, mock.Anything, "").Return(true, nil).Times(1)
 
-	defer mockCtrl.Finish()
 	historyIterator := archiver.NewMockHistoryIterator(mockCtrl)
 	gomock.InOrder(
 		historyIterator.EXPECT().HasNext().Return(true),
@@ -244,13 +238,12 @@ func (h *historyArchiverSuite) TestArchive_Fail_HistoryMutated() {
 	storageWrapper := &mocks.Client{}
 	storageWrapper.On("Exist", ctx, URI, "").Return(true, nil).Times(1)
 
-	defer mockCtrl.Finish()
 	historyIterator := archiver.NewMockHistoryIterator(mockCtrl)
 	historyBatches := []*types.History{
 		{
 			Events: []*types.HistoryEvent{
 				{
-					EventID:   common.FirstEventID + 1,
+					ID:        common.FirstEventID + 1,
 					Timestamp: common.Int64Ptr(time.Now().UnixNano()),
 					Version:   testCloseFailoverVersion + 1,
 				},
@@ -291,7 +284,6 @@ func (h *historyArchiverSuite) TestArchive_Fail_NonRetriableErrorOption() {
 	storageWrapper := &mocks.Client{}
 	storageWrapper.On("Exist", ctx, URI, "").Return(true, nil).Times(1)
 
-	defer mockCtrl.Finish()
 	historyIterator := archiver.NewMockHistoryIterator(mockCtrl)
 	gomock.InOrder(
 		historyIterator.EXPECT().HasNext().Return(true),
@@ -321,7 +313,6 @@ func (h *historyArchiverSuite) TestArchive_Skip() {
 	storageWrapper.On("Exist", ctx, URI, mock.Anything).Return(true, nil)
 	storageWrapper.On("Upload", ctx, URI, mock.Anything, mock.Anything).Return(nil)
 
-	defer mockCtrl.Finish()
 	historyIterator := archiver.NewMockHistoryIterator(mockCtrl)
 	historyBlob := &archiver.HistoryBlob{
 		Header: &archiver.HistoryBlobHeader{
@@ -331,7 +322,7 @@ func (h *historyArchiverSuite) TestArchive_Skip() {
 			{
 				Events: []*types.HistoryEvent{
 					{
-						EventID:   common.FirstEventID,
+						ID:        common.FirstEventID,
 						Timestamp: common.Int64Ptr(time.Now().UnixNano()),
 						Version:   testCloseFailoverVersion,
 					},
@@ -369,18 +360,17 @@ func (h *historyArchiverSuite) TestArchive_Success() {
 	storageWrapper.On("Exist", ctx, URI, mock.Anything).Return(false, nil)
 	storageWrapper.On("Upload", ctx, URI, mock.Anything, mock.Anything).Return(nil)
 
-	defer mockCtrl.Finish()
 	historyIterator := archiver.NewMockHistoryIterator(mockCtrl)
 	historyBatches := []*types.History{
 		{
 			Events: []*types.HistoryEvent{
 				{
-					EventID:   common.FirstEventID + 1,
+					ID:        common.FirstEventID + 1,
 					Timestamp: common.Int64Ptr(time.Now().UnixNano()),
 					Version:   testCloseFailoverVersion,
 				},
 				{
-					EventID:   common.FirstEventID + 2,
+					ID:        common.FirstEventID + 2,
 					Timestamp: common.Int64Ptr(time.Now().UnixNano()),
 					Version:   testCloseFailoverVersion,
 				},
@@ -389,7 +379,7 @@ func (h *historyArchiverSuite) TestArchive_Success() {
 		{
 			Events: []*types.HistoryEvent{
 				{
-					EventID:   testNextEventID - 1,
+					ID:        testNextEventID - 1,
 					Timestamp: common.Int64Ptr(time.Now().UnixNano()),
 					Version:   testCloseFailoverVersion,
 				},
@@ -552,6 +542,7 @@ func (h *historyArchiverSuite) TestGet_Success_FromToken() {
 	ctx := context.Background()
 	mockCtrl := gomock.NewController(h.T())
 	URI, err := archiver.NewURI("gs://my-bucket-cad/cadence_archival/development")
+	h.Require().NoError(err)
 	storageWrapper := &mocks.Client{}
 	storageWrapper.On("Exist", ctx, URI, "").Return(true, nil).Times(1)
 	storageWrapper.On("Query", ctx, URI, "71817125141568232911739672280485489488911532452831150339470").Return([]string{"905702227796330300141628222723188294514017512010591354159_-24_0.history", "905702227796330300141628222723188294514017512010591354159_-24_1.history", "905702227796330300141628222723188294514017512010591354159_-24_2.history", "905702227796330300141628222723188294514017512010591354159_-24_3.history", "905702227796330300141628222723188294514017512010591354159_-25_0.history"}, nil).Times(1)

@@ -26,7 +26,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/types"
@@ -37,7 +36,7 @@ const (
 	IdentityHistoryService = "history-service"
 	// WorkflowTerminationIdentity is the component which decides to terminate the workflow
 	WorkflowTerminationIdentity = "worker-service"
-	// WorkflowTerminationReason is the reason for terminating workflow due to version conflit
+	// WorkflowTerminationReason is the reason for terminating workflow due to version conflict
 	WorkflowTerminationReason = "Terminate Workflow Due To Version Conflict."
 )
 
@@ -55,7 +54,6 @@ type (
 	}
 
 	workflowImpl struct {
-		domainCache     cache.DomainCache
 		clusterMetadata cluster.Metadata
 
 		ctx          context.Context
@@ -68,7 +66,6 @@ type (
 // NewWorkflow creates a new NDC workflow
 func NewWorkflow(
 	ctx context.Context,
-	domainCache cache.DomainCache,
 	clusterMetadata cluster.Metadata,
 	context Context,
 	mutableState MutableState,
@@ -77,7 +74,6 @@ func NewWorkflow(
 
 	return &workflowImpl{
 		ctx:             ctx,
-		domainCache:     domainCache,
 		clusterMetadata: clusterMetadata,
 
 		context:      context,
@@ -186,11 +182,14 @@ func (r *workflowImpl) SuppressBy(
 		return TransactionPolicyPassive, nil
 	}
 
-	lastWriteCluster := r.clusterMetadata.ClusterNameForFailoverVersion(lastWriteVersion)
+	lastWriteCluster, err := r.clusterMetadata.ClusterNameForFailoverVersion(lastWriteVersion)
+	if err != nil {
+		return TransactionPolicyActive, err
+	}
 	currentCluster := r.clusterMetadata.GetCurrentClusterName()
 
 	if currentCluster == lastWriteCluster {
-		return TransactionPolicyActive, r.terminateWorkflow(lastWriteVersion, incomingLastWriteVersion)
+		return TransactionPolicyActive, r.terminateWorkflow(lastWriteVersion, incomingLastWriteVersion, WorkflowTerminationReason)
 	}
 	return TransactionPolicyPassive, r.zombiefyWorkflow()
 }
@@ -210,7 +209,10 @@ func (r *workflowImpl) FlushBufferedEvents() error {
 		return err
 	}
 
-	lastWriteCluster := r.clusterMetadata.ClusterNameForFailoverVersion(lastWriteVersion)
+	lastWriteCluster, err := r.clusterMetadata.ClusterNameForFailoverVersion(lastWriteVersion)
+	if err != nil {
+		return err
+	}
 	currentCluster := r.clusterMetadata.GetCurrentClusterName()
 
 	if lastWriteCluster != currentCluster {
@@ -219,11 +221,12 @@ func (r *workflowImpl) FlushBufferedEvents() error {
 		}
 	}
 
-	return r.failDecision(lastWriteVersion)
+	return r.failDecision(lastWriteVersion, true)
 }
 
 func (r *workflowImpl) failDecision(
 	lastWriteVersion int64,
+	scheduleNewDecision bool,
 ) error {
 
 	// do not persist the change right now, NDC requires transaction
@@ -236,31 +239,23 @@ func (r *workflowImpl) failDecision(
 		return nil
 	}
 
-	if _, err := r.mutableState.AddDecisionTaskFailedEvent(
-		decision.ScheduleID,
-		decision.StartedID,
-		types.DecisionTaskFailedCauseFailoverCloseDecision,
-		nil,
-		IdentityHistoryService,
-		"",
-		"",
-		"",
-		"",
-		0,
-	); err != nil {
+	if err := FailDecision(r.mutableState, decision, types.DecisionTaskFailedCauseFailoverCloseDecision); err != nil {
 		return err
 	}
-
-	return r.mutableState.FlushBufferedEvents()
+	if scheduleNewDecision {
+		return ScheduleDecision(r.mutableState)
+	}
+	return nil
 }
 
 func (r *workflowImpl) terminateWorkflow(
 	lastWriteVersion int64,
 	incomingLastWriteVersion int64,
+	terminationReason string,
 ) error {
 
 	eventBatchFirstEventID := r.GetMutableState().GetNextEventID()
-	if err := r.failDecision(lastWriteVersion); err != nil {
+	if err := r.failDecision(lastWriteVersion, false); err != nil {
 		return err
 	}
 
@@ -271,7 +266,7 @@ func (r *workflowImpl) terminateWorkflow(
 
 	_, err := r.mutableState.AddWorkflowExecutionTerminatedEvent(
 		eventBatchFirstEventID,
-		WorkflowTerminationReason,
+		terminationReason,
 		[]byte(fmt.Sprintf("terminated by version: %v", incomingLastWriteVersion)),
 		WorkflowTerminationIdentity,
 	)

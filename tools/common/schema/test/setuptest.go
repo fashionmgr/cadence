@@ -30,11 +30,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v2"
 
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/log/testlogger"
 )
 
 // SetupSchemaTestBase is the base test suite for all tests
@@ -52,8 +52,7 @@ type SetupSchemaTestBase struct {
 func (tb *SetupSchemaTestBase) SetupSuiteBase(db DB) {
 	tb.Assertions = require.New(tb.T()) // Have to define our overridden assertions in the test setup. If we did it earlier, tb.T() will return nil
 	var err error
-	tb.Log, err = loggerimpl.NewDevelopment()
-	tb.Require().NoError(err)
+	tb.Log = testlogger.New(tb.T())
 	tb.rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	tb.DBName = fmt.Sprintf("setup_test_%v", tb.rand.Int63())
 	err = db.CreateDatabase(tb.DBName)
@@ -72,8 +71,7 @@ func (tb *SetupSchemaTestBase) TearDownSuiteBase() {
 // RunSetupTest exercises the SetupSchema task
 func (tb *SetupSchemaTestBase) RunSetupTest(
 	app *cli.App, db DB, dbNameFlag string, sqlFileContent string, expectedTables []string) {
-	// test command fails without required arguments
-	tb.NoError(app.Run([]string{"./tool", dbNameFlag, tb.DBName, "-q", "setup-schema"}))
+	tb.Error(app.Run([]string{"./tool", dbNameFlag, tb.DBName, "setup-schema"}), "test command fails without required arguments")
 	tables, err := db.ListTables()
 	tb.NoError(err)
 	tb.Empty(tables)
@@ -89,8 +87,7 @@ func (tb *SetupSchemaTestBase) RunSetupTest(
 	_, err = sqlFile.WriteString(sqlFileContent)
 	tb.NoError(err)
 
-	// make sure command doesn't succeed without version or disable-version
-	tb.NoError(app.Run([]string{"./tool", dbNameFlag, tb.DBName, "-q", "setup-schema", "-f", sqlFile.Name()}))
+	tb.Error(app.Run([]string{"./tool", dbNameFlag, tb.DBName, "setup-schema", "-f", sqlFile.Name()}), "make sure command doesn't succeed without version or disable-version")
 	tables, err = db.ListTables()
 	tb.NoError(err)
 	tb.Empty(tables)

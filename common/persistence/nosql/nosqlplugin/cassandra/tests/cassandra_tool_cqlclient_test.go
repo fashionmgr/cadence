@@ -27,9 +27,11 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/uber/cadence/common/log/tag"
-	_ "github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql/public" // needed to load the default gocql client
+	"github.com/uber/cadence/testflags"
 	"github.com/uber/cadence/tools/cassandra"
 	"github.com/uber/cadence/tools/common/schema/test"
+
+	_ "github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql/public" // needed to load the default gocql client
 )
 
 type (
@@ -38,9 +40,10 @@ type (
 	}
 )
 
-var _ test.DB = (*cassandra.CqlClient)(nil)
+var _ test.DB = (cassandra.CqlClient)(nil)
 
 func TestCQLClientTestSuite(t *testing.T) {
+	testflags.RequireCassandra(t)
 	suite.Run(t, new(CQLClientTestSuite))
 }
 

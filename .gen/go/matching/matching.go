@@ -44,6 +44,696 @@ import (
 	shared "github.com/uber/cadence/.gen/go/shared"
 )
 
+type ActivityTaskDispatchInfo struct {
+	ScheduledEvent                  *shared.HistoryEvent `json:"scheduledEvent,omitempty"`
+	StartedTimestamp                *int64               `json:"startedTimestamp,omitempty"`
+	Attempt                         *int64               `json:"attempt,omitempty"`
+	ScheduledTimestampOfThisAttempt *int64               `json:"scheduledTimestampOfThisAttempt,omitempty"`
+	ScheduledTimestamp              *int64               `json:"scheduledTimestamp,omitempty"`
+	HeartbeatDetails                []byte               `json:"heartbeatDetails,omitempty"`
+	WorkflowType                    *shared.WorkflowType `json:"workflowType,omitempty"`
+	WorkflowDomain                  *string              `json:"workflowDomain,omitempty"`
+}
+
+// ToWire translates a ActivityTaskDispatchInfo struct into a Thrift-level intermediate
+// representation. This intermediate representation may be serialized
+// into bytes using a ThriftRW protocol implementation.
+//
+// An error is returned if the struct or any of its fields failed to
+// validate.
+//
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
+//
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
+func (v *ActivityTaskDispatchInfo) ToWire() (wire.Value, error) {
+	var (
+		fields [8]wire.Field
+		i      int = 0
+		w      wire.Value
+		err    error
+	)
+
+	if v.ScheduledEvent != nil {
+		w, err = v.ScheduledEvent.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 10, Value: w}
+		i++
+	}
+	if v.StartedTimestamp != nil {
+		w, err = wire.NewValueI64(*(v.StartedTimestamp)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 20, Value: w}
+		i++
+	}
+	if v.Attempt != nil {
+		w, err = wire.NewValueI64(*(v.Attempt)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 30, Value: w}
+		i++
+	}
+	if v.ScheduledTimestampOfThisAttempt != nil {
+		w, err = wire.NewValueI64(*(v.ScheduledTimestampOfThisAttempt)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 40, Value: w}
+		i++
+	}
+	if v.ScheduledTimestamp != nil {
+		w, err = wire.NewValueI64(*(v.ScheduledTimestamp)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 50, Value: w}
+		i++
+	}
+	if v.HeartbeatDetails != nil {
+		w, err = wire.NewValueBinary(v.HeartbeatDetails), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 60, Value: w}
+		i++
+	}
+	if v.WorkflowType != nil {
+		w, err = v.WorkflowType.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 70, Value: w}
+		i++
+	}
+	if v.WorkflowDomain != nil {
+		w, err = wire.NewValueString(*(v.WorkflowDomain)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 80, Value: w}
+		i++
+	}
+
+	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
+}
+
+func _HistoryEvent_Read(w wire.Value) (*shared.HistoryEvent, error) {
+	var v shared.HistoryEvent
+	err := v.FromWire(w)
+	return &v, err
+}
+
+func _WorkflowType_Read(w wire.Value) (*shared.WorkflowType, error) {
+	var v shared.WorkflowType
+	err := v.FromWire(w)
+	return &v, err
+}
+
+// FromWire deserializes a ActivityTaskDispatchInfo struct from its Thrift-level
+// representation. The Thrift-level representation may be obtained
+// from a ThriftRW protocol implementation.
+//
+// An error is returned if we were unable to build a ActivityTaskDispatchInfo struct
+// from the provided intermediate representation.
+//
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
+//
+//	var v ActivityTaskDispatchInfo
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
+func (v *ActivityTaskDispatchInfo) FromWire(w wire.Value) error {
+	var err error
+
+	for _, field := range w.GetStruct().Fields {
+		switch field.ID {
+		case 10:
+			if field.Value.Type() == wire.TStruct {
+				v.ScheduledEvent, err = _HistoryEvent_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 20:
+			if field.Value.Type() == wire.TI64 {
+				var x int64
+				x, err = field.Value.GetI64(), error(nil)
+				v.StartedTimestamp = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 30:
+			if field.Value.Type() == wire.TI64 {
+				var x int64
+				x, err = field.Value.GetI64(), error(nil)
+				v.Attempt = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 40:
+			if field.Value.Type() == wire.TI64 {
+				var x int64
+				x, err = field.Value.GetI64(), error(nil)
+				v.ScheduledTimestampOfThisAttempt = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 50:
+			if field.Value.Type() == wire.TI64 {
+				var x int64
+				x, err = field.Value.GetI64(), error(nil)
+				v.ScheduledTimestamp = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 60:
+			if field.Value.Type() == wire.TBinary {
+				v.HeartbeatDetails, err = field.Value.GetBinary(), error(nil)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 70:
+			if field.Value.Type() == wire.TStruct {
+				v.WorkflowType, err = _WorkflowType_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 80:
+			if field.Value.Type() == wire.TBinary {
+				var x string
+				x, err = field.Value.GetString(), error(nil)
+				v.WorkflowDomain = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		}
+	}
+
+	return nil
+}
+
+// Encode serializes a ActivityTaskDispatchInfo struct directly into bytes, without going
+// through an intermediary type.
+//
+// An error is returned if a ActivityTaskDispatchInfo struct could not be encoded.
+func (v *ActivityTaskDispatchInfo) Encode(sw stream.Writer) error {
+	if err := sw.WriteStructBegin(); err != nil {
+		return err
+	}
+
+	if v.ScheduledEvent != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 10, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.ScheduledEvent.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.StartedTimestamp != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 20, Type: wire.TI64}); err != nil {
+			return err
+		}
+		if err := sw.WriteInt64(*(v.StartedTimestamp)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.Attempt != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 30, Type: wire.TI64}); err != nil {
+			return err
+		}
+		if err := sw.WriteInt64(*(v.Attempt)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.ScheduledTimestampOfThisAttempt != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 40, Type: wire.TI64}); err != nil {
+			return err
+		}
+		if err := sw.WriteInt64(*(v.ScheduledTimestampOfThisAttempt)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.ScheduledTimestamp != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 50, Type: wire.TI64}); err != nil {
+			return err
+		}
+		if err := sw.WriteInt64(*(v.ScheduledTimestamp)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.HeartbeatDetails != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 60, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteBinary(v.HeartbeatDetails); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.WorkflowType != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 70, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.WorkflowType.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.WorkflowDomain != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 80, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteString(*(v.WorkflowDomain)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	return sw.WriteStructEnd()
+}
+
+func _HistoryEvent_Decode(sr stream.Reader) (*shared.HistoryEvent, error) {
+	var v shared.HistoryEvent
+	err := v.Decode(sr)
+	return &v, err
+}
+
+func _WorkflowType_Decode(sr stream.Reader) (*shared.WorkflowType, error) {
+	var v shared.WorkflowType
+	err := v.Decode(sr)
+	return &v, err
+}
+
+// Decode deserializes a ActivityTaskDispatchInfo struct directly from its Thrift-level
+// representation, without going through an intemediary type.
+//
+// An error is returned if a ActivityTaskDispatchInfo struct could not be generated from the wire
+// representation.
+func (v *ActivityTaskDispatchInfo) Decode(sr stream.Reader) error {
+
+	if err := sr.ReadStructBegin(); err != nil {
+		return err
+	}
+
+	fh, ok, err := sr.ReadFieldBegin()
+	if err != nil {
+		return err
+	}
+
+	for ok {
+		switch {
+		case fh.ID == 10 && fh.Type == wire.TStruct:
+			v.ScheduledEvent, err = _HistoryEvent_Decode(sr)
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 20 && fh.Type == wire.TI64:
+			var x int64
+			x, err = sr.ReadInt64()
+			v.StartedTimestamp = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 30 && fh.Type == wire.TI64:
+			var x int64
+			x, err = sr.ReadInt64()
+			v.Attempt = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 40 && fh.Type == wire.TI64:
+			var x int64
+			x, err = sr.ReadInt64()
+			v.ScheduledTimestampOfThisAttempt = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 50 && fh.Type == wire.TI64:
+			var x int64
+			x, err = sr.ReadInt64()
+			v.ScheduledTimestamp = &x
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 60 && fh.Type == wire.TBinary:
+			v.HeartbeatDetails, err = sr.ReadBinary()
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 70 && fh.Type == wire.TStruct:
+			v.WorkflowType, err = _WorkflowType_Decode(sr)
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 80 && fh.Type == wire.TBinary:
+			var x string
+			x, err = sr.ReadString()
+			v.WorkflowDomain = &x
+			if err != nil {
+				return err
+			}
+
+		default:
+			if err := sr.Skip(fh.Type); err != nil {
+				return err
+			}
+		}
+
+		if err := sr.ReadFieldEnd(); err != nil {
+			return err
+		}
+
+		if fh, ok, err = sr.ReadFieldBegin(); err != nil {
+			return err
+		}
+	}
+
+	if err := sr.ReadStructEnd(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// String returns a readable string representation of a ActivityTaskDispatchInfo
+// struct.
+func (v *ActivityTaskDispatchInfo) String() string {
+	if v == nil {
+		return "<nil>"
+	}
+
+	var fields [8]string
+	i := 0
+	if v.ScheduledEvent != nil {
+		fields[i] = fmt.Sprintf("ScheduledEvent: %v", v.ScheduledEvent)
+		i++
+	}
+	if v.StartedTimestamp != nil {
+		fields[i] = fmt.Sprintf("StartedTimestamp: %v", *(v.StartedTimestamp))
+		i++
+	}
+	if v.Attempt != nil {
+		fields[i] = fmt.Sprintf("Attempt: %v", *(v.Attempt))
+		i++
+	}
+	if v.ScheduledTimestampOfThisAttempt != nil {
+		fields[i] = fmt.Sprintf("ScheduledTimestampOfThisAttempt: %v", *(v.ScheduledTimestampOfThisAttempt))
+		i++
+	}
+	if v.ScheduledTimestamp != nil {
+		fields[i] = fmt.Sprintf("ScheduledTimestamp: %v", *(v.ScheduledTimestamp))
+		i++
+	}
+	if v.HeartbeatDetails != nil {
+		fields[i] = fmt.Sprintf("HeartbeatDetails: %v", v.HeartbeatDetails)
+		i++
+	}
+	if v.WorkflowType != nil {
+		fields[i] = fmt.Sprintf("WorkflowType: %v", v.WorkflowType)
+		i++
+	}
+	if v.WorkflowDomain != nil {
+		fields[i] = fmt.Sprintf("WorkflowDomain: %v", *(v.WorkflowDomain))
+		i++
+	}
+
+	return fmt.Sprintf("ActivityTaskDispatchInfo{%v}", strings.Join(fields[:i], ", "))
+}
+
+func _I64_EqualsPtr(lhs, rhs *int64) bool {
+	if lhs != nil && rhs != nil {
+
+		x := *lhs
+		y := *rhs
+		return (x == y)
+	}
+	return lhs == nil && rhs == nil
+}
+
+func _String_EqualsPtr(lhs, rhs *string) bool {
+	if lhs != nil && rhs != nil {
+
+		x := *lhs
+		y := *rhs
+		return (x == y)
+	}
+	return lhs == nil && rhs == nil
+}
+
+// Equals returns true if all the fields of this ActivityTaskDispatchInfo match the
+// provided ActivityTaskDispatchInfo.
+//
+// This function performs a deep comparison.
+func (v *ActivityTaskDispatchInfo) Equals(rhs *ActivityTaskDispatchInfo) bool {
+	if v == nil {
+		return rhs == nil
+	} else if rhs == nil {
+		return false
+	}
+	if !((v.ScheduledEvent == nil && rhs.ScheduledEvent == nil) || (v.ScheduledEvent != nil && rhs.ScheduledEvent != nil && v.ScheduledEvent.Equals(rhs.ScheduledEvent))) {
+		return false
+	}
+	if !_I64_EqualsPtr(v.StartedTimestamp, rhs.StartedTimestamp) {
+		return false
+	}
+	if !_I64_EqualsPtr(v.Attempt, rhs.Attempt) {
+		return false
+	}
+	if !_I64_EqualsPtr(v.ScheduledTimestampOfThisAttempt, rhs.ScheduledTimestampOfThisAttempt) {
+		return false
+	}
+	if !_I64_EqualsPtr(v.ScheduledTimestamp, rhs.ScheduledTimestamp) {
+		return false
+	}
+	if !((v.HeartbeatDetails == nil && rhs.HeartbeatDetails == nil) || (v.HeartbeatDetails != nil && rhs.HeartbeatDetails != nil && bytes.Equal(v.HeartbeatDetails, rhs.HeartbeatDetails))) {
+		return false
+	}
+	if !((v.WorkflowType == nil && rhs.WorkflowType == nil) || (v.WorkflowType != nil && rhs.WorkflowType != nil && v.WorkflowType.Equals(rhs.WorkflowType))) {
+		return false
+	}
+	if !_String_EqualsPtr(v.WorkflowDomain, rhs.WorkflowDomain) {
+		return false
+	}
+
+	return true
+}
+
+// MarshalLogObject implements zapcore.ObjectMarshaler, enabling
+// fast logging of ActivityTaskDispatchInfo.
+func (v *ActivityTaskDispatchInfo) MarshalLogObject(enc zapcore.ObjectEncoder) (err error) {
+	if v == nil {
+		return nil
+	}
+	if v.ScheduledEvent != nil {
+		err = multierr.Append(err, enc.AddObject("scheduledEvent", v.ScheduledEvent))
+	}
+	if v.StartedTimestamp != nil {
+		enc.AddInt64("startedTimestamp", *v.StartedTimestamp)
+	}
+	if v.Attempt != nil {
+		enc.AddInt64("attempt", *v.Attempt)
+	}
+	if v.ScheduledTimestampOfThisAttempt != nil {
+		enc.AddInt64("scheduledTimestampOfThisAttempt", *v.ScheduledTimestampOfThisAttempt)
+	}
+	if v.ScheduledTimestamp != nil {
+		enc.AddInt64("scheduledTimestamp", *v.ScheduledTimestamp)
+	}
+	if v.HeartbeatDetails != nil {
+		enc.AddString("heartbeatDetails", base64.StdEncoding.EncodeToString(v.HeartbeatDetails))
+	}
+	if v.WorkflowType != nil {
+		err = multierr.Append(err, enc.AddObject("workflowType", v.WorkflowType))
+	}
+	if v.WorkflowDomain != nil {
+		enc.AddString("workflowDomain", *v.WorkflowDomain)
+	}
+	return err
+}
+
+// GetScheduledEvent returns the value of ScheduledEvent if it is set or its
+// zero value if it is unset.
+func (v *ActivityTaskDispatchInfo) GetScheduledEvent() (o *shared.HistoryEvent) {
+	if v != nil && v.ScheduledEvent != nil {
+		return v.ScheduledEvent
+	}
+
+	return
+}
+
+// IsSetScheduledEvent returns true if ScheduledEvent is not nil.
+func (v *ActivityTaskDispatchInfo) IsSetScheduledEvent() bool {
+	return v != nil && v.ScheduledEvent != nil
+}
+
+// GetStartedTimestamp returns the value of StartedTimestamp if it is set or its
+// zero value if it is unset.
+func (v *ActivityTaskDispatchInfo) GetStartedTimestamp() (o int64) {
+	if v != nil && v.StartedTimestamp != nil {
+		return *v.StartedTimestamp
+	}
+
+	return
+}
+
+// IsSetStartedTimestamp returns true if StartedTimestamp is not nil.
+func (v *ActivityTaskDispatchInfo) IsSetStartedTimestamp() bool {
+	return v != nil && v.StartedTimestamp != nil
+}
+
+// GetAttempt returns the value of Attempt if it is set or its
+// zero value if it is unset.
+func (v *ActivityTaskDispatchInfo) GetAttempt() (o int64) {
+	if v != nil && v.Attempt != nil {
+		return *v.Attempt
+	}
+
+	return
+}
+
+// IsSetAttempt returns true if Attempt is not nil.
+func (v *ActivityTaskDispatchInfo) IsSetAttempt() bool {
+	return v != nil && v.Attempt != nil
+}
+
+// GetScheduledTimestampOfThisAttempt returns the value of ScheduledTimestampOfThisAttempt if it is set or its
+// zero value if it is unset.
+func (v *ActivityTaskDispatchInfo) GetScheduledTimestampOfThisAttempt() (o int64) {
+	if v != nil && v.ScheduledTimestampOfThisAttempt != nil {
+		return *v.ScheduledTimestampOfThisAttempt
+	}
+
+	return
+}
+
+// IsSetScheduledTimestampOfThisAttempt returns true if ScheduledTimestampOfThisAttempt is not nil.
+func (v *ActivityTaskDispatchInfo) IsSetScheduledTimestampOfThisAttempt() bool {
+	return v != nil && v.ScheduledTimestampOfThisAttempt != nil
+}
+
+// GetScheduledTimestamp returns the value of ScheduledTimestamp if it is set or its
+// zero value if it is unset.
+func (v *ActivityTaskDispatchInfo) GetScheduledTimestamp() (o int64) {
+	if v != nil && v.ScheduledTimestamp != nil {
+		return *v.ScheduledTimestamp
+	}
+
+	return
+}
+
+// IsSetScheduledTimestamp returns true if ScheduledTimestamp is not nil.
+func (v *ActivityTaskDispatchInfo) IsSetScheduledTimestamp() bool {
+	return v != nil && v.ScheduledTimestamp != nil
+}
+
+// GetHeartbeatDetails returns the value of HeartbeatDetails if it is set or its
+// zero value if it is unset.
+func (v *ActivityTaskDispatchInfo) GetHeartbeatDetails() (o []byte) {
+	if v != nil && v.HeartbeatDetails != nil {
+		return v.HeartbeatDetails
+	}
+
+	return
+}
+
+// IsSetHeartbeatDetails returns true if HeartbeatDetails is not nil.
+func (v *ActivityTaskDispatchInfo) IsSetHeartbeatDetails() bool {
+	return v != nil && v.HeartbeatDetails != nil
+}
+
+// GetWorkflowType returns the value of WorkflowType if it is set or its
+// zero value if it is unset.
+func (v *ActivityTaskDispatchInfo) GetWorkflowType() (o *shared.WorkflowType) {
+	if v != nil && v.WorkflowType != nil {
+		return v.WorkflowType
+	}
+
+	return
+}
+
+// IsSetWorkflowType returns true if WorkflowType is not nil.
+func (v *ActivityTaskDispatchInfo) IsSetWorkflowType() bool {
+	return v != nil && v.WorkflowType != nil
+}
+
+// GetWorkflowDomain returns the value of WorkflowDomain if it is set or its
+// zero value if it is unset.
+func (v *ActivityTaskDispatchInfo) GetWorkflowDomain() (o string) {
+	if v != nil && v.WorkflowDomain != nil {
+		return *v.WorkflowDomain
+	}
+
+	return
+}
+
+// IsSetWorkflowDomain returns true if WorkflowDomain is not nil.
+func (v *ActivityTaskDispatchInfo) IsSetWorkflowDomain() bool {
+	return v != nil && v.WorkflowDomain != nil
+}
+
 type AddActivityTaskRequest struct {
 	DomainUUID                    *string                   `json:"domainUUID,omitempty"`
 	Execution                     *shared.WorkflowExecution `json:"execution,omitempty"`
@@ -53,7 +743,44 @@ type AddActivityTaskRequest struct {
 	ScheduleToStartTimeoutSeconds *int32                    `json:"scheduleToStartTimeoutSeconds,omitempty"`
 	Source                        *TaskSource               `json:"source,omitempty"`
 	ForwardedFrom                 *string                   `json:"forwardedFrom,omitempty"`
+	ActivityTaskDispatchInfo      *ActivityTaskDispatchInfo `json:"activityTaskDispatchInfo,omitempty"`
+	PartitionConfig               map[string]string         `json:"partitionConfig,omitempty"`
 }
+
+type _Map_String_String_MapItemList map[string]string
+
+func (m _Map_String_String_MapItemList) ForEach(f func(wire.MapItem) error) error {
+	for k, v := range m {
+		kw, err := wire.NewValueString(k), error(nil)
+		if err != nil {
+			return err
+		}
+
+		vw, err := wire.NewValueString(v), error(nil)
+		if err != nil {
+			return err
+		}
+		err = f(wire.MapItem{Key: kw, Value: vw})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m _Map_String_String_MapItemList) Size() int {
+	return len(m)
+}
+
+func (_Map_String_String_MapItemList) KeyType() wire.Type {
+	return wire.TBinary
+}
+
+func (_Map_String_String_MapItemList) ValueType() wire.Type {
+	return wire.TBinary
+}
+
+func (_Map_String_String_MapItemList) Close() {}
 
 // ToWire translates a AddActivityTaskRequest struct into a Thrift-level intermediate
 // representation. This intermediate representation may be serialized
@@ -62,17 +789,17 @@ type AddActivityTaskRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *AddActivityTaskRequest) ToWire() (wire.Value, error) {
 	var (
-		fields [8]wire.Field
+		fields [10]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -142,6 +869,22 @@ func (v *AddActivityTaskRequest) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 70, Value: w}
 		i++
 	}
+	if v.ActivityTaskDispatchInfo != nil {
+		w, err = v.ActivityTaskDispatchInfo.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 80, Value: w}
+		i++
+	}
+	if v.PartitionConfig != nil {
+		w, err = wire.NewValueMap(_Map_String_String_MapItemList(v.PartitionConfig)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 90, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
 }
@@ -164,6 +907,40 @@ func _TaskSource_Read(w wire.Value) (TaskSource, error) {
 	return v, err
 }
 
+func _ActivityTaskDispatchInfo_Read(w wire.Value) (*ActivityTaskDispatchInfo, error) {
+	var v ActivityTaskDispatchInfo
+	err := v.FromWire(w)
+	return &v, err
+}
+
+func _Map_String_String_Read(m wire.MapItemList) (map[string]string, error) {
+	if m.KeyType() != wire.TBinary {
+		return nil, nil
+	}
+
+	if m.ValueType() != wire.TBinary {
+		return nil, nil
+	}
+
+	o := make(map[string]string, m.Size())
+	err := m.ForEach(func(x wire.MapItem) error {
+		k, err := x.Key.GetString(), error(nil)
+		if err != nil {
+			return err
+		}
+
+		v, err := x.Value.GetString(), error(nil)
+		if err != nil {
+			return err
+		}
+
+		o[k] = v
+		return nil
+	})
+	m.Close()
+	return o, err
+}
+
 // FromWire deserializes a AddActivityTaskRequest struct from its Thrift-level
 // representation. The Thrift-level representation may be obtained
 // from a ThriftRW protocol implementation.
@@ -171,16 +948,16 @@ func _TaskSource_Read(w wire.Value) (TaskSource, error) {
 // An error is returned if we were unable to build a AddActivityTaskRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v AddActivityTaskRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v AddActivityTaskRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *AddActivityTaskRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -262,10 +1039,49 @@ func (v *AddActivityTaskRequest) FromWire(w wire.Value) error {
 				}
 
 			}
+		case 80:
+			if field.Value.Type() == wire.TStruct {
+				v.ActivityTaskDispatchInfo, err = _ActivityTaskDispatchInfo_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 90:
+			if field.Value.Type() == wire.TMap {
+				v.PartitionConfig, err = _Map_String_String_Read(field.Value.GetMap())
+				if err != nil {
+					return err
+				}
+
+			}
 		}
 	}
 
 	return nil
+}
+
+func _Map_String_String_Encode(val map[string]string, sw stream.Writer) error {
+
+	mh := stream.MapHeader{
+		KeyType:   wire.TBinary,
+		ValueType: wire.TBinary,
+		Length:    len(val),
+	}
+	if err := sw.WriteMapBegin(mh); err != nil {
+		return err
+	}
+
+	for k, v := range val {
+		if err := sw.WriteString(k); err != nil {
+			return err
+		}
+		if err := sw.WriteString(v); err != nil {
+			return err
+		}
+	}
+
+	return sw.WriteMapEnd()
 }
 
 // Encode serializes a AddActivityTaskRequest struct directly into bytes, without going
@@ -373,6 +1189,30 @@ func (v *AddActivityTaskRequest) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.ActivityTaskDispatchInfo != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 80, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.ActivityTaskDispatchInfo.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.PartitionConfig != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 90, Type: wire.TMap}); err != nil {
+			return err
+		}
+		if err := _Map_String_String_Encode(v.PartitionConfig, sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	return sw.WriteStructEnd()
 }
 
@@ -392,6 +1232,52 @@ func _TaskSource_Decode(sr stream.Reader) (TaskSource, error) {
 	var v TaskSource
 	err := v.Decode(sr)
 	return v, err
+}
+
+func _ActivityTaskDispatchInfo_Decode(sr stream.Reader) (*ActivityTaskDispatchInfo, error) {
+	var v ActivityTaskDispatchInfo
+	err := v.Decode(sr)
+	return &v, err
+}
+
+func _Map_String_String_Decode(sr stream.Reader) (map[string]string, error) {
+	mh, err := sr.ReadMapBegin()
+	if err != nil {
+		return nil, err
+	}
+
+	if mh.KeyType != wire.TBinary || mh.ValueType != wire.TBinary {
+		for i := 0; i < mh.Length; i++ {
+			if err := sr.Skip(mh.KeyType); err != nil {
+				return nil, err
+			}
+
+			if err := sr.Skip(mh.ValueType); err != nil {
+				return nil, err
+			}
+		}
+		return nil, sr.ReadMapEnd()
+	}
+
+	o := make(map[string]string, mh.Length)
+	for i := 0; i < mh.Length; i++ {
+		k, err := sr.ReadString()
+		if err != nil {
+			return nil, err
+		}
+
+		v, err := sr.ReadString()
+		if err != nil {
+			return nil, err
+		}
+
+		o[k] = v
+	}
+
+	if err = sr.ReadMapEnd(); err != nil {
+		return nil, err
+	}
+	return o, err
 }
 
 // Decode deserializes a AddActivityTaskRequest struct directly from its Thrift-level
@@ -472,6 +1358,18 @@ func (v *AddActivityTaskRequest) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 80 && fh.Type == wire.TStruct:
+			v.ActivityTaskDispatchInfo, err = _ActivityTaskDispatchInfo_Decode(sr)
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 90 && fh.Type == wire.TMap:
+			v.PartitionConfig, err = _Map_String_String_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -501,7 +1399,7 @@ func (v *AddActivityTaskRequest) String() string {
 		return "<nil>"
 	}
 
-	var fields [8]string
+	var fields [10]string
 	i := 0
 	if v.DomainUUID != nil {
 		fields[i] = fmt.Sprintf("DomainUUID: %v", *(v.DomainUUID))
@@ -535,28 +1433,16 @@ func (v *AddActivityTaskRequest) String() string {
 		fields[i] = fmt.Sprintf("ForwardedFrom: %v", *(v.ForwardedFrom))
 		i++
 	}
+	if v.ActivityTaskDispatchInfo != nil {
+		fields[i] = fmt.Sprintf("ActivityTaskDispatchInfo: %v", v.ActivityTaskDispatchInfo)
+		i++
+	}
+	if v.PartitionConfig != nil {
+		fields[i] = fmt.Sprintf("PartitionConfig: %v", v.PartitionConfig)
+		i++
+	}
 
 	return fmt.Sprintf("AddActivityTaskRequest{%v}", strings.Join(fields[:i], ", "))
-}
-
-func _String_EqualsPtr(lhs, rhs *string) bool {
-	if lhs != nil && rhs != nil {
-
-		x := *lhs
-		y := *rhs
-		return (x == y)
-	}
-	return lhs == nil && rhs == nil
-}
-
-func _I64_EqualsPtr(lhs, rhs *int64) bool {
-	if lhs != nil && rhs != nil {
-
-		x := *lhs
-		y := *rhs
-		return (x == y)
-	}
-	return lhs == nil && rhs == nil
 }
 
 func _I32_EqualsPtr(lhs, rhs *int32) bool {
@@ -577,6 +1463,23 @@ func _TaskSource_EqualsPtr(lhs, rhs *TaskSource) bool {
 		return x.Equals(y)
 	}
 	return lhs == nil && rhs == nil
+}
+
+func _Map_String_String_Equals(lhs, rhs map[string]string) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+
+	for lk, lv := range lhs {
+		rv, ok := rhs[lk]
+		if !ok {
+			return false
+		}
+		if !(lv == rv) {
+			return false
+		}
+	}
+	return true
 }
 
 // Equals returns true if all the fields of this AddActivityTaskRequest match the
@@ -613,8 +1516,25 @@ func (v *AddActivityTaskRequest) Equals(rhs *AddActivityTaskRequest) bool {
 	if !_String_EqualsPtr(v.ForwardedFrom, rhs.ForwardedFrom) {
 		return false
 	}
+	if !((v.ActivityTaskDispatchInfo == nil && rhs.ActivityTaskDispatchInfo == nil) || (v.ActivityTaskDispatchInfo != nil && rhs.ActivityTaskDispatchInfo != nil && v.ActivityTaskDispatchInfo.Equals(rhs.ActivityTaskDispatchInfo))) {
+		return false
+	}
+	if !((v.PartitionConfig == nil && rhs.PartitionConfig == nil) || (v.PartitionConfig != nil && rhs.PartitionConfig != nil && _Map_String_String_Equals(v.PartitionConfig, rhs.PartitionConfig))) {
+		return false
+	}
 
 	return true
+}
+
+type _Map_String_String_Zapper map[string]string
+
+// MarshalLogObject implements zapcore.ObjectMarshaler, enabling
+// fast logging of _Map_String_String_Zapper.
+func (m _Map_String_String_Zapper) MarshalLogObject(enc zapcore.ObjectEncoder) (err error) {
+	for k, v := range m {
+		enc.AddString((string)(k), v)
+	}
+	return err
 }
 
 // MarshalLogObject implements zapcore.ObjectMarshaler, enabling
@@ -646,6 +1566,12 @@ func (v *AddActivityTaskRequest) MarshalLogObject(enc zapcore.ObjectEncoder) (er
 	}
 	if v.ForwardedFrom != nil {
 		enc.AddString("forwardedFrom", *v.ForwardedFrom)
+	}
+	if v.ActivityTaskDispatchInfo != nil {
+		err = multierr.Append(err, enc.AddObject("activityTaskDispatchInfo", v.ActivityTaskDispatchInfo))
+	}
+	if v.PartitionConfig != nil {
+		err = multierr.Append(err, enc.AddObject("partitionConfig", (_Map_String_String_Zapper)(v.PartitionConfig)))
 	}
 	return err
 }
@@ -770,6 +1696,36 @@ func (v *AddActivityTaskRequest) IsSetForwardedFrom() bool {
 	return v != nil && v.ForwardedFrom != nil
 }
 
+// GetActivityTaskDispatchInfo returns the value of ActivityTaskDispatchInfo if it is set or its
+// zero value if it is unset.
+func (v *AddActivityTaskRequest) GetActivityTaskDispatchInfo() (o *ActivityTaskDispatchInfo) {
+	if v != nil && v.ActivityTaskDispatchInfo != nil {
+		return v.ActivityTaskDispatchInfo
+	}
+
+	return
+}
+
+// IsSetActivityTaskDispatchInfo returns true if ActivityTaskDispatchInfo is not nil.
+func (v *AddActivityTaskRequest) IsSetActivityTaskDispatchInfo() bool {
+	return v != nil && v.ActivityTaskDispatchInfo != nil
+}
+
+// GetPartitionConfig returns the value of PartitionConfig if it is set or its
+// zero value if it is unset.
+func (v *AddActivityTaskRequest) GetPartitionConfig() (o map[string]string) {
+	if v != nil && v.PartitionConfig != nil {
+		return v.PartitionConfig
+	}
+
+	return
+}
+
+// IsSetPartitionConfig returns true if PartitionConfig is not nil.
+func (v *AddActivityTaskRequest) IsSetPartitionConfig() bool {
+	return v != nil && v.PartitionConfig != nil
+}
+
 type AddDecisionTaskRequest struct {
 	DomainUUID                    *string                   `json:"domainUUID,omitempty"`
 	Execution                     *shared.WorkflowExecution `json:"execution,omitempty"`
@@ -778,6 +1734,7 @@ type AddDecisionTaskRequest struct {
 	ScheduleToStartTimeoutSeconds *int32                    `json:"scheduleToStartTimeoutSeconds,omitempty"`
 	Source                        *TaskSource               `json:"source,omitempty"`
 	ForwardedFrom                 *string                   `json:"forwardedFrom,omitempty"`
+	PartitionConfig               map[string]string         `json:"partitionConfig,omitempty"`
 }
 
 // ToWire translates a AddDecisionTaskRequest struct into a Thrift-level intermediate
@@ -787,17 +1744,17 @@ type AddDecisionTaskRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *AddDecisionTaskRequest) ToWire() (wire.Value, error) {
 	var (
-		fields [7]wire.Field
+		fields [8]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -859,6 +1816,14 @@ func (v *AddDecisionTaskRequest) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 60, Value: w}
 		i++
 	}
+	if v.PartitionConfig != nil {
+		w, err = wire.NewValueMap(_Map_String_String_MapItemList(v.PartitionConfig)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 70, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
 }
@@ -870,16 +1835,16 @@ func (v *AddDecisionTaskRequest) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a AddDecisionTaskRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v AddDecisionTaskRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v AddDecisionTaskRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *AddDecisionTaskRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -946,6 +1911,14 @@ func (v *AddDecisionTaskRequest) FromWire(w wire.Value) error {
 				var x string
 				x, err = field.Value.GetString(), error(nil)
 				v.ForwardedFrom = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 70:
+			if field.Value.Type() == wire.TMap {
+				v.PartitionConfig, err = _Map_String_String_Read(field.Value.GetMap())
 				if err != nil {
 					return err
 				}
@@ -1050,6 +2023,18 @@ func (v *AddDecisionTaskRequest) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.PartitionConfig != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 70, Type: wire.TMap}); err != nil {
+			return err
+		}
+		if err := _Map_String_String_Encode(v.PartitionConfig, sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	return sw.WriteStructEnd()
 }
 
@@ -1123,6 +2108,12 @@ func (v *AddDecisionTaskRequest) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 70 && fh.Type == wire.TMap:
+			v.PartitionConfig, err = _Map_String_String_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -1152,7 +2143,7 @@ func (v *AddDecisionTaskRequest) String() string {
 		return "<nil>"
 	}
 
-	var fields [7]string
+	var fields [8]string
 	i := 0
 	if v.DomainUUID != nil {
 		fields[i] = fmt.Sprintf("DomainUUID: %v", *(v.DomainUUID))
@@ -1180,6 +2171,10 @@ func (v *AddDecisionTaskRequest) String() string {
 	}
 	if v.ForwardedFrom != nil {
 		fields[i] = fmt.Sprintf("ForwardedFrom: %v", *(v.ForwardedFrom))
+		i++
+	}
+	if v.PartitionConfig != nil {
+		fields[i] = fmt.Sprintf("PartitionConfig: %v", v.PartitionConfig)
 		i++
 	}
 
@@ -1217,6 +2212,9 @@ func (v *AddDecisionTaskRequest) Equals(rhs *AddDecisionTaskRequest) bool {
 	if !_String_EqualsPtr(v.ForwardedFrom, rhs.ForwardedFrom) {
 		return false
 	}
+	if !((v.PartitionConfig == nil && rhs.PartitionConfig == nil) || (v.PartitionConfig != nil && rhs.PartitionConfig != nil && _Map_String_String_Equals(v.PartitionConfig, rhs.PartitionConfig))) {
+		return false
+	}
 
 	return true
 }
@@ -1247,6 +2245,9 @@ func (v *AddDecisionTaskRequest) MarshalLogObject(enc zapcore.ObjectEncoder) (er
 	}
 	if v.ForwardedFrom != nil {
 		enc.AddString("forwardedFrom", *v.ForwardedFrom)
+	}
+	if v.PartitionConfig != nil {
+		err = multierr.Append(err, enc.AddObject("partitionConfig", (_Map_String_String_Zapper)(v.PartitionConfig)))
 	}
 	return err
 }
@@ -1356,6 +2357,21 @@ func (v *AddDecisionTaskRequest) IsSetForwardedFrom() bool {
 	return v != nil && v.ForwardedFrom != nil
 }
 
+// GetPartitionConfig returns the value of PartitionConfig if it is set or its
+// zero value if it is unset.
+func (v *AddDecisionTaskRequest) GetPartitionConfig() (o map[string]string) {
+	if v != nil && v.PartitionConfig != nil {
+		return v.PartitionConfig
+	}
+
+	return
+}
+
+// IsSetPartitionConfig returns true if PartitionConfig is not nil.
+func (v *AddDecisionTaskRequest) IsSetPartitionConfig() bool {
+	return v != nil && v.PartitionConfig != nil
+}
+
 type CancelOutstandingPollRequest struct {
 	DomainUUID   *string          `json:"domainUUID,omitempty"`
 	TaskListType *int32           `json:"taskListType,omitempty"`
@@ -1370,14 +2386,14 @@ type CancelOutstandingPollRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *CancelOutstandingPollRequest) ToWire() (wire.Value, error) {
 	var (
 		fields [4]wire.Field
@@ -1429,16 +2445,16 @@ func (v *CancelOutstandingPollRequest) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a CancelOutstandingPollRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v CancelOutstandingPollRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v CancelOutstandingPollRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *CancelOutstandingPollRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -1766,14 +2782,14 @@ type DescribeTaskListRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *DescribeTaskListRequest) ToWire() (wire.Value, error) {
 	var (
 		fields [2]wire.Field
@@ -1815,16 +2831,16 @@ func _DescribeTaskListRequest_Read(w wire.Value) (*shared.DescribeTaskListReques
 // An error is returned if we were unable to build a DescribeTaskListRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v DescribeTaskListRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v DescribeTaskListRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *DescribeTaskListRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -2048,14 +3064,14 @@ type ListTaskListPartitionsRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *ListTaskListPartitionsRequest) ToWire() (wire.Value, error) {
 	var (
 		fields [2]wire.Field
@@ -2091,16 +3107,16 @@ func (v *ListTaskListPartitionsRequest) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a ListTaskListPartitionsRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v ListTaskListPartitionsRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v ListTaskListPartitionsRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *ListTaskListPartitionsRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -2307,10 +3323,11 @@ func (v *ListTaskListPartitionsRequest) IsSetTaskList() bool {
 }
 
 type PollForActivityTaskRequest struct {
-	DomainUUID    *string                            `json:"domainUUID,omitempty"`
-	PollerID      *string                            `json:"pollerID,omitempty"`
-	PollRequest   *shared.PollForActivityTaskRequest `json:"pollRequest,omitempty"`
-	ForwardedFrom *string                            `json:"forwardedFrom,omitempty"`
+	DomainUUID     *string                            `json:"domainUUID,omitempty"`
+	PollerID       *string                            `json:"pollerID,omitempty"`
+	PollRequest    *shared.PollForActivityTaskRequest `json:"pollRequest,omitempty"`
+	ForwardedFrom  *string                            `json:"forwardedFrom,omitempty"`
+	IsolationGroup *string                            `json:"isolationGroup,omitempty"`
 }
 
 // ToWire translates a PollForActivityTaskRequest struct into a Thrift-level intermediate
@@ -2320,17 +3337,17 @@ type PollForActivityTaskRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *PollForActivityTaskRequest) ToWire() (wire.Value, error) {
 	var (
-		fields [4]wire.Field
+		fields [5]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -2368,6 +3385,14 @@ func (v *PollForActivityTaskRequest) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 30, Value: w}
 		i++
 	}
+	if v.IsolationGroup != nil {
+		w, err = wire.NewValueString(*(v.IsolationGroup)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 40, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
 }
@@ -2385,16 +3410,16 @@ func _PollForActivityTaskRequest_Read(w wire.Value) (*shared.PollForActivityTask
 // An error is returned if we were unable to build a PollForActivityTaskRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v PollForActivityTaskRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v PollForActivityTaskRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *PollForActivityTaskRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -2433,6 +3458,16 @@ func (v *PollForActivityTaskRequest) FromWire(w wire.Value) error {
 				var x string
 				x, err = field.Value.GetString(), error(nil)
 				v.ForwardedFrom = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 40:
+			if field.Value.Type() == wire.TBinary {
+				var x string
+				x, err = field.Value.GetString(), error(nil)
+				v.IsolationGroup = &x
 				if err != nil {
 					return err
 				}
@@ -2501,6 +3536,18 @@ func (v *PollForActivityTaskRequest) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.IsolationGroup != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 40, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteString(*(v.IsolationGroup)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	return sw.WriteStructEnd()
 }
 
@@ -2558,6 +3605,14 @@ func (v *PollForActivityTaskRequest) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 40 && fh.Type == wire.TBinary:
+			var x string
+			x, err = sr.ReadString()
+			v.IsolationGroup = &x
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -2587,7 +3642,7 @@ func (v *PollForActivityTaskRequest) String() string {
 		return "<nil>"
 	}
 
-	var fields [4]string
+	var fields [5]string
 	i := 0
 	if v.DomainUUID != nil {
 		fields[i] = fmt.Sprintf("DomainUUID: %v", *(v.DomainUUID))
@@ -2603,6 +3658,10 @@ func (v *PollForActivityTaskRequest) String() string {
 	}
 	if v.ForwardedFrom != nil {
 		fields[i] = fmt.Sprintf("ForwardedFrom: %v", *(v.ForwardedFrom))
+		i++
+	}
+	if v.IsolationGroup != nil {
+		fields[i] = fmt.Sprintf("IsolationGroup: %v", *(v.IsolationGroup))
 		i++
 	}
 
@@ -2631,6 +3690,9 @@ func (v *PollForActivityTaskRequest) Equals(rhs *PollForActivityTaskRequest) boo
 	if !_String_EqualsPtr(v.ForwardedFrom, rhs.ForwardedFrom) {
 		return false
 	}
+	if !_String_EqualsPtr(v.IsolationGroup, rhs.IsolationGroup) {
+		return false
+	}
 
 	return true
 }
@@ -2652,6 +3714,9 @@ func (v *PollForActivityTaskRequest) MarshalLogObject(enc zapcore.ObjectEncoder)
 	}
 	if v.ForwardedFrom != nil {
 		enc.AddString("forwardedFrom", *v.ForwardedFrom)
+	}
+	if v.IsolationGroup != nil {
+		enc.AddString("isolationGroup", *v.IsolationGroup)
 	}
 	return err
 }
@@ -2716,11 +3781,27 @@ func (v *PollForActivityTaskRequest) IsSetForwardedFrom() bool {
 	return v != nil && v.ForwardedFrom != nil
 }
 
+// GetIsolationGroup returns the value of IsolationGroup if it is set or its
+// zero value if it is unset.
+func (v *PollForActivityTaskRequest) GetIsolationGroup() (o string) {
+	if v != nil && v.IsolationGroup != nil {
+		return *v.IsolationGroup
+	}
+
+	return
+}
+
+// IsSetIsolationGroup returns true if IsolationGroup is not nil.
+func (v *PollForActivityTaskRequest) IsSetIsolationGroup() bool {
+	return v != nil && v.IsolationGroup != nil
+}
+
 type PollForDecisionTaskRequest struct {
-	DomainUUID    *string                            `json:"domainUUID,omitempty"`
-	PollerID      *string                            `json:"pollerID,omitempty"`
-	PollRequest   *shared.PollForDecisionTaskRequest `json:"pollRequest,omitempty"`
-	ForwardedFrom *string                            `json:"forwardedFrom,omitempty"`
+	DomainUUID     *string                            `json:"domainUUID,omitempty"`
+	PollerID       *string                            `json:"pollerID,omitempty"`
+	PollRequest    *shared.PollForDecisionTaskRequest `json:"pollRequest,omitempty"`
+	ForwardedFrom  *string                            `json:"forwardedFrom,omitempty"`
+	IsolationGroup *string                            `json:"isolationGroup,omitempty"`
 }
 
 // ToWire translates a PollForDecisionTaskRequest struct into a Thrift-level intermediate
@@ -2730,17 +3811,17 @@ type PollForDecisionTaskRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *PollForDecisionTaskRequest) ToWire() (wire.Value, error) {
 	var (
-		fields [4]wire.Field
+		fields [5]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -2778,6 +3859,14 @@ func (v *PollForDecisionTaskRequest) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 30, Value: w}
 		i++
 	}
+	if v.IsolationGroup != nil {
+		w, err = wire.NewValueString(*(v.IsolationGroup)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 40, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
 }
@@ -2795,16 +3884,16 @@ func _PollForDecisionTaskRequest_Read(w wire.Value) (*shared.PollForDecisionTask
 // An error is returned if we were unable to build a PollForDecisionTaskRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v PollForDecisionTaskRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v PollForDecisionTaskRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *PollForDecisionTaskRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -2843,6 +3932,16 @@ func (v *PollForDecisionTaskRequest) FromWire(w wire.Value) error {
 				var x string
 				x, err = field.Value.GetString(), error(nil)
 				v.ForwardedFrom = &x
+				if err != nil {
+					return err
+				}
+
+			}
+		case 40:
+			if field.Value.Type() == wire.TBinary {
+				var x string
+				x, err = field.Value.GetString(), error(nil)
+				v.IsolationGroup = &x
 				if err != nil {
 					return err
 				}
@@ -2911,6 +4010,18 @@ func (v *PollForDecisionTaskRequest) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.IsolationGroup != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 40, Type: wire.TBinary}); err != nil {
+			return err
+		}
+		if err := sw.WriteString(*(v.IsolationGroup)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	return sw.WriteStructEnd()
 }
 
@@ -2968,6 +4079,14 @@ func (v *PollForDecisionTaskRequest) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 40 && fh.Type == wire.TBinary:
+			var x string
+			x, err = sr.ReadString()
+			v.IsolationGroup = &x
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -2997,7 +4116,7 @@ func (v *PollForDecisionTaskRequest) String() string {
 		return "<nil>"
 	}
 
-	var fields [4]string
+	var fields [5]string
 	i := 0
 	if v.DomainUUID != nil {
 		fields[i] = fmt.Sprintf("DomainUUID: %v", *(v.DomainUUID))
@@ -3013,6 +4132,10 @@ func (v *PollForDecisionTaskRequest) String() string {
 	}
 	if v.ForwardedFrom != nil {
 		fields[i] = fmt.Sprintf("ForwardedFrom: %v", *(v.ForwardedFrom))
+		i++
+	}
+	if v.IsolationGroup != nil {
+		fields[i] = fmt.Sprintf("IsolationGroup: %v", *(v.IsolationGroup))
 		i++
 	}
 
@@ -3041,6 +4164,9 @@ func (v *PollForDecisionTaskRequest) Equals(rhs *PollForDecisionTaskRequest) boo
 	if !_String_EqualsPtr(v.ForwardedFrom, rhs.ForwardedFrom) {
 		return false
 	}
+	if !_String_EqualsPtr(v.IsolationGroup, rhs.IsolationGroup) {
+		return false
+	}
 
 	return true
 }
@@ -3062,6 +4188,9 @@ func (v *PollForDecisionTaskRequest) MarshalLogObject(enc zapcore.ObjectEncoder)
 	}
 	if v.ForwardedFrom != nil {
 		enc.AddString("forwardedFrom", *v.ForwardedFrom)
+	}
+	if v.IsolationGroup != nil {
+		enc.AddString("isolationGroup", *v.IsolationGroup)
 	}
 	return err
 }
@@ -3126,6 +4255,21 @@ func (v *PollForDecisionTaskRequest) IsSetForwardedFrom() bool {
 	return v != nil && v.ForwardedFrom != nil
 }
 
+// GetIsolationGroup returns the value of IsolationGroup if it is set or its
+// zero value if it is unset.
+func (v *PollForDecisionTaskRequest) GetIsolationGroup() (o string) {
+	if v != nil && v.IsolationGroup != nil {
+		return *v.IsolationGroup
+	}
+
+	return
+}
+
+// IsSetIsolationGroup returns true if IsolationGroup is not nil.
+func (v *PollForDecisionTaskRequest) IsSetIsolationGroup() bool {
+	return v != nil && v.IsolationGroup != nil
+}
+
 type PollForDecisionTaskResponse struct {
 	TaskToken                 []byte                           `json:"taskToken,omitempty"`
 	WorkflowExecution         *shared.WorkflowExecution        `json:"workflowExecution,omitempty"`
@@ -3144,6 +4288,7 @@ type PollForDecisionTaskResponse struct {
 	ScheduledTimestamp        *int64                           `json:"scheduledTimestamp,omitempty"`
 	StartedTimestamp          *int64                           `json:"startedTimestamp,omitempty"`
 	Queries                   map[string]*shared.WorkflowQuery `json:"queries,omitempty"`
+	TotalHistoryBytes         *int64                           `json:"totalHistoryBytes,omitempty"`
 }
 
 type _Map_String_WorkflowQuery_MapItemList map[string]*shared.WorkflowQuery
@@ -3191,17 +4336,17 @@ func (_Map_String_WorkflowQuery_MapItemList) Close() {}
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *PollForDecisionTaskResponse) ToWire() (wire.Value, error) {
 	var (
-		fields [17]wire.Field
+		fields [18]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -3343,14 +4488,16 @@ func (v *PollForDecisionTaskResponse) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 150, Value: w}
 		i++
 	}
+	if v.TotalHistoryBytes != nil {
+		w, err = wire.NewValueI64(*(v.TotalHistoryBytes)), error(nil)
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 160, Value: w}
+		i++
+	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
-}
-
-func _WorkflowType_Read(w wire.Value) (*shared.WorkflowType, error) {
-	var v shared.WorkflowType
-	err := v.FromWire(w)
-	return &v, err
 }
 
 func _WorkflowQuery_Read(w wire.Value) (*shared.WorkflowQuery, error) {
@@ -3400,16 +4547,16 @@ func _Map_String_WorkflowQuery_Read(m wire.MapItemList) (map[string]*shared.Work
 // An error is returned if we were unable to build a PollForDecisionTaskResponse struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v PollForDecisionTaskResponse
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v PollForDecisionTaskResponse
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *PollForDecisionTaskResponse) FromWire(w wire.Value) error {
 	var err error
 
@@ -3564,6 +4711,16 @@ func (v *PollForDecisionTaskResponse) FromWire(w wire.Value) error {
 		case 150:
 			if field.Value.Type() == wire.TMap {
 				v.Queries, err = _Map_String_WorkflowQuery_Read(field.Value.GetMap())
+				if err != nil {
+					return err
+				}
+
+			}
+		case 160:
+			if field.Value.Type() == wire.TI64 {
+				var x int64
+				x, err = field.Value.GetI64(), error(nil)
+				v.TotalHistoryBytes = &x
 				if err != nil {
 					return err
 				}
@@ -3814,13 +4971,19 @@ func (v *PollForDecisionTaskResponse) Encode(sw stream.Writer) error {
 		}
 	}
 
-	return sw.WriteStructEnd()
-}
+	if v.TotalHistoryBytes != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 160, Type: wire.TI64}); err != nil {
+			return err
+		}
+		if err := sw.WriteInt64(*(v.TotalHistoryBytes)); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
 
-func _WorkflowType_Decode(sr stream.Reader) (*shared.WorkflowType, error) {
-	var v shared.WorkflowType
-	err := v.Decode(sr)
-	return &v, err
+	return sw.WriteStructEnd()
 }
 
 func _WorkflowQuery_Decode(sr stream.Reader) (*shared.WorkflowQuery, error) {
@@ -4013,6 +5176,14 @@ func (v *PollForDecisionTaskResponse) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 160 && fh.Type == wire.TI64:
+			var x int64
+			x, err = sr.ReadInt64()
+			v.TotalHistoryBytes = &x
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -4042,7 +5213,7 @@ func (v *PollForDecisionTaskResponse) String() string {
 		return "<nil>"
 	}
 
-	var fields [17]string
+	var fields [18]string
 	i := 0
 	if v.TaskToken != nil {
 		fields[i] = fmt.Sprintf("TaskToken: %v", v.TaskToken)
@@ -4110,6 +5281,10 @@ func (v *PollForDecisionTaskResponse) String() string {
 	}
 	if v.Queries != nil {
 		fields[i] = fmt.Sprintf("Queries: %v", v.Queries)
+		i++
+	}
+	if v.TotalHistoryBytes != nil {
+		fields[i] = fmt.Sprintf("TotalHistoryBytes: %v", *(v.TotalHistoryBytes))
 		i++
 	}
 
@@ -4204,6 +5379,9 @@ func (v *PollForDecisionTaskResponse) Equals(rhs *PollForDecisionTaskResponse) b
 	if !((v.Queries == nil && rhs.Queries == nil) || (v.Queries != nil && rhs.Queries != nil && _Map_String_WorkflowQuery_Equals(v.Queries, rhs.Queries))) {
 		return false
 	}
+	if !_I64_EqualsPtr(v.TotalHistoryBytes, rhs.TotalHistoryBytes) {
+		return false
+	}
 
 	return true
 }
@@ -4275,6 +5453,9 @@ func (v *PollForDecisionTaskResponse) MarshalLogObject(enc zapcore.ObjectEncoder
 	}
 	if v.Queries != nil {
 		err = multierr.Append(err, enc.AddObject("queries", (_Map_String_WorkflowQuery_Zapper)(v.Queries)))
+	}
+	if v.TotalHistoryBytes != nil {
+		enc.AddInt64("totalHistoryBytes", *v.TotalHistoryBytes)
 	}
 	return err
 }
@@ -4534,6 +5715,21 @@ func (v *PollForDecisionTaskResponse) IsSetQueries() bool {
 	return v != nil && v.Queries != nil
 }
 
+// GetTotalHistoryBytes returns the value of TotalHistoryBytes if it is set or its
+// zero value if it is unset.
+func (v *PollForDecisionTaskResponse) GetTotalHistoryBytes() (o int64) {
+	if v != nil && v.TotalHistoryBytes != nil {
+		return *v.TotalHistoryBytes
+	}
+
+	return
+}
+
+// IsSetTotalHistoryBytes returns true if TotalHistoryBytes is not nil.
+func (v *PollForDecisionTaskResponse) IsSetTotalHistoryBytes() bool {
+	return v != nil && v.TotalHistoryBytes != nil
+}
+
 type QueryWorkflowRequest struct {
 	DomainUUID    *string                      `json:"domainUUID,omitempty"`
 	TaskList      *shared.TaskList             `json:"taskList,omitempty"`
@@ -4548,14 +5744,14 @@ type QueryWorkflowRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *QueryWorkflowRequest) ToWire() (wire.Value, error) {
 	var (
 		fields [4]wire.Field
@@ -4613,16 +5809,16 @@ func _QueryWorkflowRequest_Read(w wire.Value) (*shared.QueryWorkflowRequest, err
 // An error is returned if we were unable to build a QueryWorkflowRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v QueryWorkflowRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v QueryWorkflowRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *QueryWorkflowRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -4954,14 +6150,14 @@ type RespondQueryTaskCompletedRequest struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *RespondQueryTaskCompletedRequest) ToWire() (wire.Value, error) {
 	var (
 		fields [4]wire.Field
@@ -5019,16 +6215,16 @@ func _RespondQueryTaskCompletedRequest_Read(w wire.Value) (*shared.RespondQueryT
 // An error is returned if we were unable to build a RespondQueryTaskCompletedRequest struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v RespondQueryTaskCompletedRequest
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v RespondQueryTaskCompletedRequest
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *RespondQueryTaskCompletedRequest) FromWire(w wire.Value) error {
 	var err error
 
@@ -5364,8 +6560,8 @@ func TaskSource_Values() []TaskSource {
 // UnmarshalText tries to decode TaskSource from a byte slice
 // containing its name.
 //
-//   var v TaskSource
-//   err := v.UnmarshalText([]byte("HISTORY"))
+//	var v TaskSource
+//	err := v.UnmarshalText([]byte("HISTORY"))
 func (v *TaskSource) UnmarshalText(value []byte) error {
 	switch s := string(value); s {
 	case "HISTORY":
@@ -5422,10 +6618,10 @@ func (v TaskSource) Ptr() *TaskSource {
 
 // Encode encodes TaskSource directly to bytes.
 //
-//   sWriter := BinaryStreamer.Writer(writer)
+//	sWriter := BinaryStreamer.Writer(writer)
 //
-//   var v TaskSource
-//   return v.Encode(sWriter)
+//	var v TaskSource
+//	return v.Encode(sWriter)
 func (v TaskSource) Encode(sw stream.Writer) error {
 	return sw.WriteInt32(int32(v))
 }
@@ -5442,16 +6638,16 @@ func (v TaskSource) ToWire() (wire.Value, error) {
 // FromWire deserializes TaskSource from its Thrift-level
 // representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TI32)
-//   if err != nil {
-//     return TaskSource(0), err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TI32)
+//	if err != nil {
+//	  return TaskSource(0), err
+//	}
 //
-//   var v TaskSource
-//   if err := v.FromWire(x); err != nil {
-//     return TaskSource(0), err
-//   }
-//   return v, nil
+//	var v TaskSource
+//	if err := v.FromWire(x); err != nil {
+//	  return TaskSource(0), err
+//	}
+//	return v, nil
 func (v *TaskSource) FromWire(w wire.Value) error {
 	*v = (TaskSource)(w.GetI32())
 	return nil
@@ -5459,13 +6655,13 @@ func (v *TaskSource) FromWire(w wire.Value) error {
 
 // Decode reads off the encoded TaskSource directly off of the wire.
 //
-//   sReader := BinaryStreamer.Reader(reader)
+//	sReader := BinaryStreamer.Reader(reader)
 //
-//   var v TaskSource
-//   if err := v.Decode(sReader); err != nil {
-//     return TaskSource(0), err
-//   }
-//   return v, nil
+//	var v TaskSource
+//	if err := v.Decode(sReader); err != nil {
+//	  return TaskSource(0), err
+//	}
+//	return v, nil
 func (v *TaskSource) Decode(sr stream.Reader) error {
 	i, err := sr.ReadInt32()
 	if err != nil {
@@ -5550,14 +6746,14 @@ var ThriftModule = &thriftreflect.ThriftModule{
 	Name:     "matching",
 	Package:  "github.com/uber/cadence/.gen/go/matching",
 	FilePath: "matching.thrift",
-	SHA1:     "dfeeaa9142345924cb1a3a7e18106dc72465efdf",
+	SHA1:     "783f78afea40b3b610396c5ec94ec78f490a3f4c",
 	Includes: []*thriftreflect.ThriftModule{
 		shared.ThriftModule,
 	},
 	Raw: rawIDL,
 }
 
-const rawIDL = "// Copyright (c) 2017 Uber Technologies, Inc.\n//\n// Permission is hereby granted, free of charge, to any person obtaining a copy\n// of this software and associated documentation files (the \"Software\"), to deal\n// in the Software without restriction, including without limitation the rights\n// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n// copies of the Software, and to permit persons to whom the Software is\n// furnished to do so, subject to the following conditions:\n//\n// The above copyright notice and this permission notice shall be included in\n// all copies or substantial portions of the Software.\n//\n// THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n// THE SOFTWARE.\n\ninclude \"shared.thrift\"\n\nnamespace java com.uber.cadence.matching\n\n// TaskSource is the source from which a task was produced\nenum TaskSource {\n    HISTORY,    // Task produced by history service\n    DB_BACKLOG // Task produced from matching db backlog\n}\n\nstruct PollForDecisionTaskRequest {\n  10: optional string domainUUID\n  15: optional string pollerID\n  20: optional shared.PollForDecisionTaskRequest pollRequest\n  30: optional string forwardedFrom\n}\n\nstruct PollForDecisionTaskResponse {\n  10: optional binary taskToken\n  20: optional shared.WorkflowExecution workflowExecution\n  30: optional shared.WorkflowType workflowType\n  40: optional i64 (js.type = \"Long\") previousStartedEventId\n  50: optional i64 (js.type = \"Long\") startedEventId\n  51: optional i64 (js.type = \"Long\") attempt\n  60: optional i64 (js.type = \"Long\") nextEventId\n  65: optional i64 (js.type = \"Long\") backlogCountHint\n  70: optional bool stickyExecutionEnabled\n  80: optional shared.WorkflowQuery query\n  90: optional shared.TransientDecisionInfo decisionInfo\n  100: optional shared.TaskList WorkflowExecutionTaskList\n  110: optional i32 eventStoreVersion\n  120: optional binary branchToken\n  130: optional i64 (js.type = \"Long\") scheduledTimestamp\n  140: optional i64 (js.type = \"Long\") startedTimestamp\n  150: optional map<string, shared.WorkflowQuery> queries\n}\n\nstruct PollForActivityTaskRequest {\n  10: optional string domainUUID\n  15: optional string pollerID\n  20: optional shared.PollForActivityTaskRequest pollRequest\n  30: optional string forwardedFrom\n}\n\nstruct AddDecisionTaskRequest {\n  10: optional string domainUUID\n  20: optional shared.WorkflowExecution execution\n  30: optional shared.TaskList taskList\n  40: optional i64 (js.type = \"Long\") scheduleId\n  50: optional i32 scheduleToStartTimeoutSeconds\n  59: optional TaskSource source\n  60: optional string forwardedFrom\n}\n\nstruct AddActivityTaskRequest {\n  10: optional string domainUUID\n  20: optional shared.WorkflowExecution execution\n  30: optional string sourceDomainUUID\n  40: optional shared.TaskList taskList\n  50: optional i64 (js.type = \"Long\") scheduleId\n  60: optional i32 scheduleToStartTimeoutSeconds\n  69: optional TaskSource source\n  70: optional string forwardedFrom\n}\n\nstruct QueryWorkflowRequest {\n  10: optional string domainUUID\n  20: optional shared.TaskList taskList\n  30: optional shared.QueryWorkflowRequest queryRequest\n  40: optional string forwardedFrom\n}\n\nstruct RespondQueryTaskCompletedRequest {\n  10: optional string domainUUID\n  20: optional shared.TaskList taskList\n  30: optional string taskID\n  40: optional shared.RespondQueryTaskCompletedRequest completedRequest\n}\n\nstruct CancelOutstandingPollRequest {\n  10: optional string domainUUID\n  20: optional i32 taskListType\n  30: optional shared.TaskList taskList\n  40: optional string pollerID\n}\n\nstruct DescribeTaskListRequest {\n  10: optional string domainUUID\n  20: optional shared.DescribeTaskListRequest descRequest\n}\n\nstruct ListTaskListPartitionsRequest {\n  10: optional string domain\n  20: optional shared.TaskList taskList\n}\n\n/**\n* MatchingService API is exposed to provide support for polling from long running applications.\n* Such applications are expected to have a worker which regularly polls for DecisionTask and ActivityTask.  For each\n* DecisionTask, application is expected to process the history of events for that session and respond back with next\n* decisions.  For each ActivityTask, application is expected to execute the actual logic for that task and respond back\n* with completion or failure.\n**/\nservice MatchingService {\n  /**\n  * PollForDecisionTask is called by frontend to process DecisionTask from a specific taskList.  A\n  * DecisionTask is dispatched to callers for active workflow executions, with pending decisions.\n  **/\n  PollForDecisionTaskResponse PollForDecisionTask(1: PollForDecisionTaskRequest pollRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.LimitExceededError limitExceededError,\n      4: shared.ServiceBusyError serviceBusyError,\n    )\n\n  /**\n  * PollForActivityTask is called by frontend to process ActivityTask from a specific taskList.  ActivityTask\n  * is dispatched to callers whenever a ScheduleTask decision is made for a workflow execution.\n  **/\n  shared.PollForActivityTaskResponse PollForActivityTask(1: PollForActivityTaskRequest pollRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.LimitExceededError limitExceededError,\n      4: shared.ServiceBusyError serviceBusyError,\n    )\n\n  /**\n  * AddDecisionTask is called by the history service when a decision task is scheduled, so that it can be dispatched\n  * by the MatchingEngine.\n  **/\n  void AddDecisionTask(1: AddDecisionTaskRequest addRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.ServiceBusyError serviceBusyError,\n      4: shared.LimitExceededError limitExceededError,\n      5: shared.DomainNotActiveError domainNotActiveError,\n      6: shared.RemoteSyncMatchedError remoteSyncMatchedError,\n    )\n\n  /**\n  * AddActivityTask is called by the history service when a decision task is scheduled, so that it can be dispatched\n  * by the MatchingEngine.\n  **/\n  void AddActivityTask(1: AddActivityTaskRequest addRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.ServiceBusyError serviceBusyError,\n      4: shared.LimitExceededError limitExceededError,\n      5: shared.DomainNotActiveError domainNotActiveError,\n      6: shared.RemoteSyncMatchedError remoteSyncMatchedError,\n    )\n\n  /**\n  * QueryWorkflow is called by frontend to query a workflow.\n  **/\n  shared.QueryWorkflowResponse QueryWorkflow(1: QueryWorkflowRequest queryRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.EntityNotExistsError entityNotExistError,\n      4: shared.QueryFailedError queryFailedError,\n      5: shared.LimitExceededError limitExceededError,\n      6: shared.ServiceBusyError serviceBusyError,\n    )\n\n  /**\n  * RespondQueryTaskCompleted is called by frontend to respond query completed.\n  **/\n  void RespondQueryTaskCompleted(1: RespondQueryTaskCompletedRequest request)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.EntityNotExistsError entityNotExistError,\n      4: shared.LimitExceededError limitExceededError,\n      5: shared.ServiceBusyError serviceBusyError,\n    )\n\n  /**\n    * CancelOutstandingPoll is called by frontend to unblock long polls on matching for zombie pollers.\n    * Our rpc stack does not support context propagation, so when a client connection goes away frontend sees\n    * cancellation of context for that handler, but any corresponding calls (long-poll) to matching service does not\n    * see the cancellation propagated so it can unblock corresponding long-polls on its end.  This results is tasks\n    * being dispatched to zombie pollers in this situation.  This API is added so everytime frontend makes a long-poll\n    * api call to matching it passes in a pollerID and then calls this API when it detects client connection is closed\n    * to unblock long polls for this poller and prevent tasks being sent to these zombie pollers.\n    **/\n  void CancelOutstandingPoll(1: CancelOutstandingPollRequest request)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.ServiceBusyError serviceBusyError,\n    )\n\n  /**\n  * DescribeTaskList returns information about the target tasklist, right now this API returns the\n  * pollers which polled this tasklist in last few minutes.\n  **/\n  shared.DescribeTaskListResponse DescribeTaskList(1: DescribeTaskListRequest request)\n    throws (\n        1: shared.BadRequestError badRequestError,\n        2: shared.InternalServiceError internalServiceError,\n        3: shared.EntityNotExistsError entityNotExistError,\n        4: shared.ServiceBusyError serviceBusyError,\n      )\n\n  /**\n  * GetTaskListsByDomain returns the list of all the task lists for a domainName.\n  **/\n  shared.GetTaskListsByDomainResponse GetTaskListsByDomain(1: shared.GetTaskListsByDomainRequest request)\n    throws (\n        1: shared.BadRequestError badRequestError,\n        2: shared.InternalServiceError internalServiceError,\n        3: shared.EntityNotExistsError entityNotExistError,\n        4: shared.ServiceBusyError serviceBusyError,\n      )\n\n  /**\n  * ListTaskListPartitions returns a map of partitionKey and hostAddress for a taskList\n  **/\n  shared.ListTaskListPartitionsResponse ListTaskListPartitions(1: ListTaskListPartitionsRequest request)\n    throws (\n        1: shared.BadRequestError badRequestError,\n        2: shared.InternalServiceError internalServiceError,\n        4: shared.ServiceBusyError serviceBusyError,\n    )\n}\n"
+const rawIDL = "// Copyright (c) 2017 Uber Technologies, Inc.\n//\n// Permission is hereby granted, free of charge, to any person obtaining a copy\n// of this software and associated documentation files (the \"Software\"), to deal\n// in the Software without restriction, including without limitation the rights\n// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n// copies of the Software, and to permit persons to whom the Software is\n// furnished to do so, subject to the following conditions:\n//\n// The above copyright notice and this permission notice shall be included in\n// all copies or substantial portions of the Software.\n//\n// THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n// THE SOFTWARE.\n\ninclude \"shared.thrift\"\n\nnamespace java com.uber.cadence.matching\n\n// TaskSource is the source from which a task was produced\nenum TaskSource {\n    HISTORY,    // Task produced by history service\n    DB_BACKLOG // Task produced from matching db backlog\n}\n\nstruct PollForDecisionTaskRequest {\n  10: optional string domainUUID\n  15: optional string pollerID\n  20: optional shared.PollForDecisionTaskRequest pollRequest\n  30: optional string forwardedFrom\n  40: optional string isolationGroup\n}\n\nstruct PollForDecisionTaskResponse {\n  10: optional binary taskToken\n  20: optional shared.WorkflowExecution workflowExecution\n  30: optional shared.WorkflowType workflowType\n  40: optional i64 (js.type = \"Long\") previousStartedEventId\n  50: optional i64 (js.type = \"Long\") startedEventId\n  51: optional i64 (js.type = \"Long\") attempt\n  60: optional i64 (js.type = \"Long\") nextEventId\n  65: optional i64 (js.type = \"Long\") backlogCountHint\n  70: optional bool stickyExecutionEnabled\n  80: optional shared.WorkflowQuery query\n  90: optional shared.TransientDecisionInfo decisionInfo\n  100: optional shared.TaskList WorkflowExecutionTaskList\n  110: optional i32 eventStoreVersion\n  120: optional binary branchToken\n  130: optional i64 (js.type = \"Long\") scheduledTimestamp\n  140: optional i64 (js.type = \"Long\") startedTimestamp\n  150: optional map<string, shared.WorkflowQuery> queries\n  160: optional i64 (js.type = \"Long\") totalHistoryBytes\n}\n\nstruct PollForActivityTaskRequest {\n  10: optional string domainUUID\n  15: optional string pollerID\n  20: optional shared.PollForActivityTaskRequest pollRequest\n  30: optional string forwardedFrom\n  40: optional string isolationGroup\n}\n\nstruct AddDecisionTaskRequest {\n  10: optional string domainUUID\n  20: optional shared.WorkflowExecution execution\n  30: optional shared.TaskList taskList\n  40: optional i64 (js.type = \"Long\") scheduleId\n  50: optional i32 scheduleToStartTimeoutSeconds\n  59: optional TaskSource source\n  60: optional string forwardedFrom\n  70: optional map<string, string> partitionConfig\n}\n\nstruct AddActivityTaskRequest {\n  10: optional string domainUUID\n  20: optional shared.WorkflowExecution execution\n  30: optional string sourceDomainUUID\n  40: optional shared.TaskList taskList\n  50: optional i64 (js.type = \"Long\") scheduleId\n  60: optional i32 scheduleToStartTimeoutSeconds\n  69: optional TaskSource source\n  70: optional string forwardedFrom\n  80: optional ActivityTaskDispatchInfo activityTaskDispatchInfo\n  90: optional map<string, string> partitionConfig\n}\n\nstruct ActivityTaskDispatchInfo {\n   10: optional shared.HistoryEvent scheduledEvent\n   20: optional i64 (js.type = \"Long\") startedTimestamp\n   30: optional i64 (js.type = \"Long\") attempt\n   40: optional i64 (js.type = \"Long\") scheduledTimestampOfThisAttempt\n   50: optional i64 (js.type = \"Long\") scheduledTimestamp\n   60: optional binary heartbeatDetails\n   70: optional shared.WorkflowType workflowType\n   80: optional string workflowDomain\n}\n\nstruct QueryWorkflowRequest {\n  10: optional string domainUUID\n  20: optional shared.TaskList taskList\n  30: optional shared.QueryWorkflowRequest queryRequest\n  40: optional string forwardedFrom\n}\n\nstruct RespondQueryTaskCompletedRequest {\n  10: optional string domainUUID\n  20: optional shared.TaskList taskList\n  30: optional string taskID\n  40: optional shared.RespondQueryTaskCompletedRequest completedRequest\n}\n\nstruct CancelOutstandingPollRequest {\n  10: optional string domainUUID\n  20: optional i32 taskListType\n  30: optional shared.TaskList taskList\n  40: optional string pollerID\n}\n\nstruct DescribeTaskListRequest {\n  10: optional string domainUUID\n  20: optional shared.DescribeTaskListRequest descRequest\n}\n\nstruct ListTaskListPartitionsRequest {\n  10: optional string domain\n  20: optional shared.TaskList taskList\n}\n\n/**\n* MatchingService API is exposed to provide support for polling from long running applications.\n* Such applications are expected to have a worker which regularly polls for DecisionTask and ActivityTask.  For each\n* DecisionTask, application is expected to process the history of events for that session and respond back with next\n* decisions.  For each ActivityTask, application is expected to execute the actual logic for that task and respond back\n* with completion or failure.\n**/\nservice MatchingService {\n  /**\n  * PollForDecisionTask is called by frontend to process DecisionTask from a specific taskList.  A\n  * DecisionTask is dispatched to callers for active workflow executions, with pending decisions.\n  **/\n  PollForDecisionTaskResponse PollForDecisionTask(1: PollForDecisionTaskRequest pollRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.LimitExceededError limitExceededError,\n      4: shared.ServiceBusyError serviceBusyError,\n    )\n\n  /**\n  * PollForActivityTask is called by frontend to process ActivityTask from a specific taskList.  ActivityTask\n  * is dispatched to callers whenever a ScheduleTask decision is made for a workflow execution.\n  **/\n  shared.PollForActivityTaskResponse PollForActivityTask(1: PollForActivityTaskRequest pollRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.LimitExceededError limitExceededError,\n      4: shared.ServiceBusyError serviceBusyError,\n    )\n\n  /**\n  * AddDecisionTask is called by the history service when a decision task is scheduled, so that it can be dispatched\n  * by the MatchingEngine.\n  **/\n  void AddDecisionTask(1: AddDecisionTaskRequest addRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.ServiceBusyError serviceBusyError,\n      4: shared.LimitExceededError limitExceededError,\n      5: shared.DomainNotActiveError domainNotActiveError,\n      6: shared.RemoteSyncMatchedError remoteSyncMatchedError,\n      7: shared.StickyWorkerUnavailableError stickyWorkerUnavailableError,\n      8: shared.TaskListNotOwnedByHostError taskListNotOwnedByHostError,\n    )\n\n  /**\n  * AddActivityTask is called by the history service when a decision task is scheduled, so that it can be dispatched\n  * by the MatchingEngine.\n  **/\n  void AddActivityTask(1: AddActivityTaskRequest addRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.ServiceBusyError serviceBusyError,\n      4: shared.LimitExceededError limitExceededError,\n      5: shared.DomainNotActiveError domainNotActiveError,\n      6: shared.RemoteSyncMatchedError remoteSyncMatchedError,\n      7: shared.TaskListNotOwnedByHostError taskListNotOwnedByHostError,\n    )\n\n  /**\n  * QueryWorkflow is called by frontend to query a workflow.\n  **/\n  shared.QueryWorkflowResponse QueryWorkflow(1: QueryWorkflowRequest queryRequest)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.EntityNotExistsError entityNotExistError,\n      4: shared.QueryFailedError queryFailedError,\n      5: shared.LimitExceededError limitExceededError,\n      6: shared.ServiceBusyError serviceBusyError,\n      7: shared.StickyWorkerUnavailableError stickyWorkerUnavailableError,\n      8: shared.TaskListNotOwnedByHostError taskListNotOwnedByHostError,\n    )\n\n  /**\n  * RespondQueryTaskCompleted is called by frontend to respond query completed.\n  **/\n  void RespondQueryTaskCompleted(1: RespondQueryTaskCompletedRequest request)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.EntityNotExistsError entityNotExistError,\n      4: shared.LimitExceededError limitExceededError,\n      5: shared.ServiceBusyError serviceBusyError,\n    )\n\n  /**\n    * CancelOutstandingPoll is called by frontend to unblock long polls on matching for zombie pollers.\n    * Our rpc stack does not support context propagation, so when a client connection goes away frontend sees\n    * cancellation of context for that handler, but any corresponding calls (long-poll) to matching service does not\n    * see the cancellation propagated so it can unblock corresponding long-polls on its end.  This results is tasks\n    * being dispatched to zombie pollers in this situation.  This API is added so everytime frontend makes a long-poll\n    * api call to matching it passes in a pollerID and then calls this API when it detects client connection is closed\n    * to unblock long polls for this poller and prevent tasks being sent to these zombie pollers.\n    **/\n  void CancelOutstandingPoll(1: CancelOutstandingPollRequest request)\n    throws (\n      1: shared.BadRequestError badRequestError,\n      2: shared.InternalServiceError internalServiceError,\n      3: shared.ServiceBusyError serviceBusyError,\n      4: shared.TaskListNotOwnedByHostError taskListNotOwnedByHostError,\n    )\n\n  /**\n  * DescribeTaskList returns information about the target tasklist, right now this API returns the\n  * pollers which polled this tasklist in last few minutes.\n  **/\n  shared.DescribeTaskListResponse DescribeTaskList(1: DescribeTaskListRequest request)\n    throws (\n        1: shared.BadRequestError badRequestError,\n        2: shared.InternalServiceError internalServiceError,\n        3: shared.EntityNotExistsError entityNotExistError,\n        4: shared.ServiceBusyError serviceBusyError,\n        5: shared.TaskListNotOwnedByHostError taskListNotOwnedByHostError,\n      )\n\n  /**\n  * GetTaskListsByDomain returns the list of all the task lists for a domainName.\n  **/\n  shared.GetTaskListsByDomainResponse GetTaskListsByDomain(1: shared.GetTaskListsByDomainRequest request)\n    throws (\n        1: shared.BadRequestError badRequestError,\n        2: shared.InternalServiceError internalServiceError,\n        3: shared.EntityNotExistsError entityNotExistError,\n        4: shared.ServiceBusyError serviceBusyError,\n      )\n\n  /**\n  * ListTaskListPartitions returns a map of partitionKey and hostAddress for a taskList\n  **/\n  shared.ListTaskListPartitionsResponse ListTaskListPartitions(1: ListTaskListPartitionsRequest request)\n    throws (\n        1: shared.BadRequestError badRequestError,\n        2: shared.InternalServiceError internalServiceError,\n        4: shared.ServiceBusyError serviceBusyError,\n    )\n}\n"
 
 // MatchingService_AddActivityTask_Args represents the arguments for the MatchingService.AddActivityTask function.
 //
@@ -5573,14 +6769,14 @@ type MatchingService_AddActivityTask_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_AddActivityTask_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -5614,16 +6810,16 @@ func _AddActivityTaskRequest_Read(w wire.Value) (*AddActivityTaskRequest, error)
 // An error is returned if we were unable to build a MatchingService_AddActivityTask_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_AddActivityTask_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_AddActivityTask_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_AddActivityTask_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -5864,6 +7060,8 @@ func init() {
 			return true
 		case *shared.RemoteSyncMatchedError:
 			return true
+		case *shared.TaskListNotOwnedByHostError:
+			return true
 		default:
 			return false
 		}
@@ -5905,6 +7103,11 @@ func init() {
 				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_AddActivityTask_Result.RemoteSyncMatchedError")
 			}
 			return &MatchingService_AddActivityTask_Result{RemoteSyncMatchedError: e}, nil
+		case *shared.TaskListNotOwnedByHostError:
+			if e == nil {
+				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_AddActivityTask_Result.TaskListNotOwnedByHostError")
+			}
+			return &MatchingService_AddActivityTask_Result{TaskListNotOwnedByHostError: e}, nil
 		}
 
 		return nil, err
@@ -5934,6 +7137,10 @@ func init() {
 			err = result.RemoteSyncMatchedError
 			return
 		}
+		if result.TaskListNotOwnedByHostError != nil {
+			err = result.TaskListNotOwnedByHostError
+			return
+		}
 		return
 	}
 
@@ -5943,12 +7150,13 @@ func init() {
 //
 // The result of a AddActivityTask execution is sent and received over the wire as this struct.
 type MatchingService_AddActivityTask_Result struct {
-	BadRequestError        *shared.BadRequestError        `json:"badRequestError,omitempty"`
-	InternalServiceError   *shared.InternalServiceError   `json:"internalServiceError,omitempty"`
-	ServiceBusyError       *shared.ServiceBusyError       `json:"serviceBusyError,omitempty"`
-	LimitExceededError     *shared.LimitExceededError     `json:"limitExceededError,omitempty"`
-	DomainNotActiveError   *shared.DomainNotActiveError   `json:"domainNotActiveError,omitempty"`
-	RemoteSyncMatchedError *shared.RemoteSyncMatchedError `json:"remoteSyncMatchedError,omitempty"`
+	BadRequestError             *shared.BadRequestError             `json:"badRequestError,omitempty"`
+	InternalServiceError        *shared.InternalServiceError        `json:"internalServiceError,omitempty"`
+	ServiceBusyError            *shared.ServiceBusyError            `json:"serviceBusyError,omitempty"`
+	LimitExceededError          *shared.LimitExceededError          `json:"limitExceededError,omitempty"`
+	DomainNotActiveError        *shared.DomainNotActiveError        `json:"domainNotActiveError,omitempty"`
+	RemoteSyncMatchedError      *shared.RemoteSyncMatchedError      `json:"remoteSyncMatchedError,omitempty"`
+	TaskListNotOwnedByHostError *shared.TaskListNotOwnedByHostError `json:"taskListNotOwnedByHostError,omitempty"`
 }
 
 // ToWire translates a MatchingService_AddActivityTask_Result struct into a Thrift-level intermediate
@@ -5958,17 +7166,17 @@ type MatchingService_AddActivityTask_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_AddActivityTask_Result) ToWire() (wire.Value, error) {
 	var (
-		fields [6]wire.Field
+		fields [7]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -6022,6 +7230,14 @@ func (v *MatchingService_AddActivityTask_Result) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 6, Value: w}
 		i++
 	}
+	if v.TaskListNotOwnedByHostError != nil {
+		w, err = v.TaskListNotOwnedByHostError.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 7, Value: w}
+		i++
+	}
 
 	if i > 1 {
 		return wire.Value{}, fmt.Errorf("MatchingService_AddActivityTask_Result should have at most one field: got %v fields", i)
@@ -6066,6 +7282,12 @@ func _RemoteSyncMatchedError_Read(w wire.Value) (*shared.RemoteSyncMatchedError,
 	return &v, err
 }
 
+func _TaskListNotOwnedByHostError_Read(w wire.Value) (*shared.TaskListNotOwnedByHostError, error) {
+	var v shared.TaskListNotOwnedByHostError
+	err := v.FromWire(w)
+	return &v, err
+}
+
 // FromWire deserializes a MatchingService_AddActivityTask_Result struct from its Thrift-level
 // representation. The Thrift-level representation may be obtained
 // from a ThriftRW protocol implementation.
@@ -6073,16 +7295,16 @@ func _RemoteSyncMatchedError_Read(w wire.Value) (*shared.RemoteSyncMatchedError,
 // An error is returned if we were unable to build a MatchingService_AddActivityTask_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_AddActivityTask_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_AddActivityTask_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_AddActivityTask_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -6136,6 +7358,14 @@ func (v *MatchingService_AddActivityTask_Result) FromWire(w wire.Value) error {
 				}
 
 			}
+		case 7:
+			if field.Value.Type() == wire.TStruct {
+				v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
 		}
 	}
 
@@ -6156,6 +7386,9 @@ func (v *MatchingService_AddActivityTask_Result) FromWire(w wire.Value) error {
 		count++
 	}
 	if v.RemoteSyncMatchedError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 	if count > 1 {
@@ -6246,6 +7479,18 @@ func (v *MatchingService_AddActivityTask_Result) Encode(sw stream.Writer) error 
 		}
 	}
 
+	if v.TaskListNotOwnedByHostError != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 7, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.TaskListNotOwnedByHostError.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	count := 0
 	if v.BadRequestError != nil {
 		count++
@@ -6263,6 +7508,9 @@ func (v *MatchingService_AddActivityTask_Result) Encode(sw stream.Writer) error 
 		count++
 	}
 	if v.RemoteSyncMatchedError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 
@@ -6305,6 +7553,12 @@ func _DomainNotActiveError_Decode(sr stream.Reader) (*shared.DomainNotActiveErro
 
 func _RemoteSyncMatchedError_Decode(sr stream.Reader) (*shared.RemoteSyncMatchedError, error) {
 	var v shared.RemoteSyncMatchedError
+	err := v.Decode(sr)
+	return &v, err
+}
+
+func _TaskListNotOwnedByHostError_Decode(sr stream.Reader) (*shared.TaskListNotOwnedByHostError, error) {
+	var v shared.TaskListNotOwnedByHostError
 	err := v.Decode(sr)
 	return &v, err
 }
@@ -6363,6 +7617,12 @@ func (v *MatchingService_AddActivityTask_Result) Decode(sr stream.Reader) error 
 				return err
 			}
 
+		case fh.ID == 7 && fh.Type == wire.TStruct:
+			v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -6401,6 +7661,9 @@ func (v *MatchingService_AddActivityTask_Result) Decode(sr stream.Reader) error 
 	if v.RemoteSyncMatchedError != nil {
 		count++
 	}
+	if v.TaskListNotOwnedByHostError != nil {
+		count++
+	}
 	if count > 1 {
 		return fmt.Errorf("MatchingService_AddActivityTask_Result should have at most one field: got %v fields", count)
 	}
@@ -6415,7 +7678,7 @@ func (v *MatchingService_AddActivityTask_Result) String() string {
 		return "<nil>"
 	}
 
-	var fields [6]string
+	var fields [7]string
 	i := 0
 	if v.BadRequestError != nil {
 		fields[i] = fmt.Sprintf("BadRequestError: %v", v.BadRequestError)
@@ -6439,6 +7702,10 @@ func (v *MatchingService_AddActivityTask_Result) String() string {
 	}
 	if v.RemoteSyncMatchedError != nil {
 		fields[i] = fmt.Sprintf("RemoteSyncMatchedError: %v", v.RemoteSyncMatchedError)
+		i++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		fields[i] = fmt.Sprintf("TaskListNotOwnedByHostError: %v", v.TaskListNotOwnedByHostError)
 		i++
 	}
 
@@ -6473,6 +7740,9 @@ func (v *MatchingService_AddActivityTask_Result) Equals(rhs *MatchingService_Add
 	if !((v.RemoteSyncMatchedError == nil && rhs.RemoteSyncMatchedError == nil) || (v.RemoteSyncMatchedError != nil && rhs.RemoteSyncMatchedError != nil && v.RemoteSyncMatchedError.Equals(rhs.RemoteSyncMatchedError))) {
 		return false
 	}
+	if !((v.TaskListNotOwnedByHostError == nil && rhs.TaskListNotOwnedByHostError == nil) || (v.TaskListNotOwnedByHostError != nil && rhs.TaskListNotOwnedByHostError != nil && v.TaskListNotOwnedByHostError.Equals(rhs.TaskListNotOwnedByHostError))) {
+		return false
+	}
 
 	return true
 }
@@ -6500,6 +7770,9 @@ func (v *MatchingService_AddActivityTask_Result) MarshalLogObject(enc zapcore.Ob
 	}
 	if v.RemoteSyncMatchedError != nil {
 		err = multierr.Append(err, enc.AddObject("remoteSyncMatchedError", v.RemoteSyncMatchedError))
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		err = multierr.Append(err, enc.AddObject("taskListNotOwnedByHostError", v.TaskListNotOwnedByHostError))
 	}
 	return err
 }
@@ -6594,6 +7867,21 @@ func (v *MatchingService_AddActivityTask_Result) IsSetRemoteSyncMatchedError() b
 	return v != nil && v.RemoteSyncMatchedError != nil
 }
 
+// GetTaskListNotOwnedByHostError returns the value of TaskListNotOwnedByHostError if it is set or its
+// zero value if it is unset.
+func (v *MatchingService_AddActivityTask_Result) GetTaskListNotOwnedByHostError() (o *shared.TaskListNotOwnedByHostError) {
+	if v != nil && v.TaskListNotOwnedByHostError != nil {
+		return v.TaskListNotOwnedByHostError
+	}
+
+	return
+}
+
+// IsSetTaskListNotOwnedByHostError returns true if TaskListNotOwnedByHostError is not nil.
+func (v *MatchingService_AddActivityTask_Result) IsSetTaskListNotOwnedByHostError() bool {
+	return v != nil && v.TaskListNotOwnedByHostError != nil
+}
+
 // MethodName returns the name of the Thrift function as specified in
 // the IDL, for which this struct represent the result.
 //
@@ -6623,14 +7911,14 @@ type MatchingService_AddDecisionTask_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_AddDecisionTask_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -6664,16 +7952,16 @@ func _AddDecisionTaskRequest_Read(w wire.Value) (*AddDecisionTaskRequest, error)
 // An error is returned if we were unable to build a MatchingService_AddDecisionTask_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_AddDecisionTask_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_AddDecisionTask_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_AddDecisionTask_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -6914,6 +8202,10 @@ func init() {
 			return true
 		case *shared.RemoteSyncMatchedError:
 			return true
+		case *shared.StickyWorkerUnavailableError:
+			return true
+		case *shared.TaskListNotOwnedByHostError:
+			return true
 		default:
 			return false
 		}
@@ -6955,6 +8247,16 @@ func init() {
 				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_AddDecisionTask_Result.RemoteSyncMatchedError")
 			}
 			return &MatchingService_AddDecisionTask_Result{RemoteSyncMatchedError: e}, nil
+		case *shared.StickyWorkerUnavailableError:
+			if e == nil {
+				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_AddDecisionTask_Result.StickyWorkerUnavailableError")
+			}
+			return &MatchingService_AddDecisionTask_Result{StickyWorkerUnavailableError: e}, nil
+		case *shared.TaskListNotOwnedByHostError:
+			if e == nil {
+				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_AddDecisionTask_Result.TaskListNotOwnedByHostError")
+			}
+			return &MatchingService_AddDecisionTask_Result{TaskListNotOwnedByHostError: e}, nil
 		}
 
 		return nil, err
@@ -6984,6 +8286,14 @@ func init() {
 			err = result.RemoteSyncMatchedError
 			return
 		}
+		if result.StickyWorkerUnavailableError != nil {
+			err = result.StickyWorkerUnavailableError
+			return
+		}
+		if result.TaskListNotOwnedByHostError != nil {
+			err = result.TaskListNotOwnedByHostError
+			return
+		}
 		return
 	}
 
@@ -6993,12 +8303,14 @@ func init() {
 //
 // The result of a AddDecisionTask execution is sent and received over the wire as this struct.
 type MatchingService_AddDecisionTask_Result struct {
-	BadRequestError        *shared.BadRequestError        `json:"badRequestError,omitempty"`
-	InternalServiceError   *shared.InternalServiceError   `json:"internalServiceError,omitempty"`
-	ServiceBusyError       *shared.ServiceBusyError       `json:"serviceBusyError,omitempty"`
-	LimitExceededError     *shared.LimitExceededError     `json:"limitExceededError,omitempty"`
-	DomainNotActiveError   *shared.DomainNotActiveError   `json:"domainNotActiveError,omitempty"`
-	RemoteSyncMatchedError *shared.RemoteSyncMatchedError `json:"remoteSyncMatchedError,omitempty"`
+	BadRequestError              *shared.BadRequestError              `json:"badRequestError,omitempty"`
+	InternalServiceError         *shared.InternalServiceError         `json:"internalServiceError,omitempty"`
+	ServiceBusyError             *shared.ServiceBusyError             `json:"serviceBusyError,omitempty"`
+	LimitExceededError           *shared.LimitExceededError           `json:"limitExceededError,omitempty"`
+	DomainNotActiveError         *shared.DomainNotActiveError         `json:"domainNotActiveError,omitempty"`
+	RemoteSyncMatchedError       *shared.RemoteSyncMatchedError       `json:"remoteSyncMatchedError,omitempty"`
+	StickyWorkerUnavailableError *shared.StickyWorkerUnavailableError `json:"stickyWorkerUnavailableError,omitempty"`
+	TaskListNotOwnedByHostError  *shared.TaskListNotOwnedByHostError  `json:"taskListNotOwnedByHostError,omitempty"`
 }
 
 // ToWire translates a MatchingService_AddDecisionTask_Result struct into a Thrift-level intermediate
@@ -7008,17 +8320,17 @@ type MatchingService_AddDecisionTask_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_AddDecisionTask_Result) ToWire() (wire.Value, error) {
 	var (
-		fields [6]wire.Field
+		fields [8]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -7072,12 +8384,34 @@ func (v *MatchingService_AddDecisionTask_Result) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 6, Value: w}
 		i++
 	}
+	if v.StickyWorkerUnavailableError != nil {
+		w, err = v.StickyWorkerUnavailableError.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 7, Value: w}
+		i++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		w, err = v.TaskListNotOwnedByHostError.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 8, Value: w}
+		i++
+	}
 
 	if i > 1 {
 		return wire.Value{}, fmt.Errorf("MatchingService_AddDecisionTask_Result should have at most one field: got %v fields", i)
 	}
 
 	return wire.NewValueStruct(wire.Struct{Fields: fields[:i]}), nil
+}
+
+func _StickyWorkerUnavailableError_Read(w wire.Value) (*shared.StickyWorkerUnavailableError, error) {
+	var v shared.StickyWorkerUnavailableError
+	err := v.FromWire(w)
+	return &v, err
 }
 
 // FromWire deserializes a MatchingService_AddDecisionTask_Result struct from its Thrift-level
@@ -7087,16 +8421,16 @@ func (v *MatchingService_AddDecisionTask_Result) ToWire() (wire.Value, error) {
 // An error is returned if we were unable to build a MatchingService_AddDecisionTask_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_AddDecisionTask_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_AddDecisionTask_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_AddDecisionTask_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -7150,6 +8484,22 @@ func (v *MatchingService_AddDecisionTask_Result) FromWire(w wire.Value) error {
 				}
 
 			}
+		case 7:
+			if field.Value.Type() == wire.TStruct {
+				v.StickyWorkerUnavailableError, err = _StickyWorkerUnavailableError_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 8:
+			if field.Value.Type() == wire.TStruct {
+				v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
 		}
 	}
 
@@ -7170,6 +8520,12 @@ func (v *MatchingService_AddDecisionTask_Result) FromWire(w wire.Value) error {
 		count++
 	}
 	if v.RemoteSyncMatchedError != nil {
+		count++
+	}
+	if v.StickyWorkerUnavailableError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 	if count > 1 {
@@ -7260,6 +8616,30 @@ func (v *MatchingService_AddDecisionTask_Result) Encode(sw stream.Writer) error 
 		}
 	}
 
+	if v.StickyWorkerUnavailableError != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 7, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.StickyWorkerUnavailableError.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.TaskListNotOwnedByHostError != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 8, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.TaskListNotOwnedByHostError.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	count := 0
 	if v.BadRequestError != nil {
 		count++
@@ -7279,12 +8659,24 @@ func (v *MatchingService_AddDecisionTask_Result) Encode(sw stream.Writer) error 
 	if v.RemoteSyncMatchedError != nil {
 		count++
 	}
+	if v.StickyWorkerUnavailableError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		count++
+	}
 
 	if count > 1 {
 		return fmt.Errorf("MatchingService_AddDecisionTask_Result should have at most one field: got %v fields", count)
 	}
 
 	return sw.WriteStructEnd()
+}
+
+func _StickyWorkerUnavailableError_Decode(sr stream.Reader) (*shared.StickyWorkerUnavailableError, error) {
+	var v shared.StickyWorkerUnavailableError
+	err := v.Decode(sr)
+	return &v, err
 }
 
 // Decode deserializes a MatchingService_AddDecisionTask_Result struct directly from its Thrift-level
@@ -7341,6 +8733,18 @@ func (v *MatchingService_AddDecisionTask_Result) Decode(sr stream.Reader) error 
 				return err
 			}
 
+		case fh.ID == 7 && fh.Type == wire.TStruct:
+			v.StickyWorkerUnavailableError, err = _StickyWorkerUnavailableError_Decode(sr)
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 8 && fh.Type == wire.TStruct:
+			v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -7379,6 +8783,12 @@ func (v *MatchingService_AddDecisionTask_Result) Decode(sr stream.Reader) error 
 	if v.RemoteSyncMatchedError != nil {
 		count++
 	}
+	if v.StickyWorkerUnavailableError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		count++
+	}
 	if count > 1 {
 		return fmt.Errorf("MatchingService_AddDecisionTask_Result should have at most one field: got %v fields", count)
 	}
@@ -7393,7 +8803,7 @@ func (v *MatchingService_AddDecisionTask_Result) String() string {
 		return "<nil>"
 	}
 
-	var fields [6]string
+	var fields [8]string
 	i := 0
 	if v.BadRequestError != nil {
 		fields[i] = fmt.Sprintf("BadRequestError: %v", v.BadRequestError)
@@ -7417,6 +8827,14 @@ func (v *MatchingService_AddDecisionTask_Result) String() string {
 	}
 	if v.RemoteSyncMatchedError != nil {
 		fields[i] = fmt.Sprintf("RemoteSyncMatchedError: %v", v.RemoteSyncMatchedError)
+		i++
+	}
+	if v.StickyWorkerUnavailableError != nil {
+		fields[i] = fmt.Sprintf("StickyWorkerUnavailableError: %v", v.StickyWorkerUnavailableError)
+		i++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		fields[i] = fmt.Sprintf("TaskListNotOwnedByHostError: %v", v.TaskListNotOwnedByHostError)
 		i++
 	}
 
@@ -7451,6 +8869,12 @@ func (v *MatchingService_AddDecisionTask_Result) Equals(rhs *MatchingService_Add
 	if !((v.RemoteSyncMatchedError == nil && rhs.RemoteSyncMatchedError == nil) || (v.RemoteSyncMatchedError != nil && rhs.RemoteSyncMatchedError != nil && v.RemoteSyncMatchedError.Equals(rhs.RemoteSyncMatchedError))) {
 		return false
 	}
+	if !((v.StickyWorkerUnavailableError == nil && rhs.StickyWorkerUnavailableError == nil) || (v.StickyWorkerUnavailableError != nil && rhs.StickyWorkerUnavailableError != nil && v.StickyWorkerUnavailableError.Equals(rhs.StickyWorkerUnavailableError))) {
+		return false
+	}
+	if !((v.TaskListNotOwnedByHostError == nil && rhs.TaskListNotOwnedByHostError == nil) || (v.TaskListNotOwnedByHostError != nil && rhs.TaskListNotOwnedByHostError != nil && v.TaskListNotOwnedByHostError.Equals(rhs.TaskListNotOwnedByHostError))) {
+		return false
+	}
 
 	return true
 }
@@ -7478,6 +8902,12 @@ func (v *MatchingService_AddDecisionTask_Result) MarshalLogObject(enc zapcore.Ob
 	}
 	if v.RemoteSyncMatchedError != nil {
 		err = multierr.Append(err, enc.AddObject("remoteSyncMatchedError", v.RemoteSyncMatchedError))
+	}
+	if v.StickyWorkerUnavailableError != nil {
+		err = multierr.Append(err, enc.AddObject("stickyWorkerUnavailableError", v.StickyWorkerUnavailableError))
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		err = multierr.Append(err, enc.AddObject("taskListNotOwnedByHostError", v.TaskListNotOwnedByHostError))
 	}
 	return err
 }
@@ -7572,6 +9002,36 @@ func (v *MatchingService_AddDecisionTask_Result) IsSetRemoteSyncMatchedError() b
 	return v != nil && v.RemoteSyncMatchedError != nil
 }
 
+// GetStickyWorkerUnavailableError returns the value of StickyWorkerUnavailableError if it is set or its
+// zero value if it is unset.
+func (v *MatchingService_AddDecisionTask_Result) GetStickyWorkerUnavailableError() (o *shared.StickyWorkerUnavailableError) {
+	if v != nil && v.StickyWorkerUnavailableError != nil {
+		return v.StickyWorkerUnavailableError
+	}
+
+	return
+}
+
+// IsSetStickyWorkerUnavailableError returns true if StickyWorkerUnavailableError is not nil.
+func (v *MatchingService_AddDecisionTask_Result) IsSetStickyWorkerUnavailableError() bool {
+	return v != nil && v.StickyWorkerUnavailableError != nil
+}
+
+// GetTaskListNotOwnedByHostError returns the value of TaskListNotOwnedByHostError if it is set or its
+// zero value if it is unset.
+func (v *MatchingService_AddDecisionTask_Result) GetTaskListNotOwnedByHostError() (o *shared.TaskListNotOwnedByHostError) {
+	if v != nil && v.TaskListNotOwnedByHostError != nil {
+		return v.TaskListNotOwnedByHostError
+	}
+
+	return
+}
+
+// IsSetTaskListNotOwnedByHostError returns true if TaskListNotOwnedByHostError is not nil.
+func (v *MatchingService_AddDecisionTask_Result) IsSetTaskListNotOwnedByHostError() bool {
+	return v != nil && v.TaskListNotOwnedByHostError != nil
+}
+
 // MethodName returns the name of the Thrift function as specified in
 // the IDL, for which this struct represent the result.
 //
@@ -7601,14 +9061,14 @@ type MatchingService_CancelOutstandingPoll_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_CancelOutstandingPoll_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -7642,16 +9102,16 @@ func _CancelOutstandingPollRequest_Read(w wire.Value) (*CancelOutstandingPollReq
 // An error is returned if we were unable to build a MatchingService_CancelOutstandingPoll_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_CancelOutstandingPoll_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_CancelOutstandingPoll_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_CancelOutstandingPoll_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -7886,6 +9346,8 @@ func init() {
 			return true
 		case *shared.ServiceBusyError:
 			return true
+		case *shared.TaskListNotOwnedByHostError:
+			return true
 		default:
 			return false
 		}
@@ -7912,6 +9374,11 @@ func init() {
 				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_CancelOutstandingPoll_Result.ServiceBusyError")
 			}
 			return &MatchingService_CancelOutstandingPoll_Result{ServiceBusyError: e}, nil
+		case *shared.TaskListNotOwnedByHostError:
+			if e == nil {
+				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_CancelOutstandingPoll_Result.TaskListNotOwnedByHostError")
+			}
+			return &MatchingService_CancelOutstandingPoll_Result{TaskListNotOwnedByHostError: e}, nil
 		}
 
 		return nil, err
@@ -7929,6 +9396,10 @@ func init() {
 			err = result.ServiceBusyError
 			return
 		}
+		if result.TaskListNotOwnedByHostError != nil {
+			err = result.TaskListNotOwnedByHostError
+			return
+		}
 		return
 	}
 
@@ -7938,9 +9409,10 @@ func init() {
 //
 // The result of a CancelOutstandingPoll execution is sent and received over the wire as this struct.
 type MatchingService_CancelOutstandingPoll_Result struct {
-	BadRequestError      *shared.BadRequestError      `json:"badRequestError,omitempty"`
-	InternalServiceError *shared.InternalServiceError `json:"internalServiceError,omitempty"`
-	ServiceBusyError     *shared.ServiceBusyError     `json:"serviceBusyError,omitempty"`
+	BadRequestError             *shared.BadRequestError             `json:"badRequestError,omitempty"`
+	InternalServiceError        *shared.InternalServiceError        `json:"internalServiceError,omitempty"`
+	ServiceBusyError            *shared.ServiceBusyError            `json:"serviceBusyError,omitempty"`
+	TaskListNotOwnedByHostError *shared.TaskListNotOwnedByHostError `json:"taskListNotOwnedByHostError,omitempty"`
 }
 
 // ToWire translates a MatchingService_CancelOutstandingPoll_Result struct into a Thrift-level intermediate
@@ -7950,17 +9422,17 @@ type MatchingService_CancelOutstandingPoll_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_CancelOutstandingPoll_Result) ToWire() (wire.Value, error) {
 	var (
-		fields [3]wire.Field
+		fields [4]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -7990,6 +9462,14 @@ func (v *MatchingService_CancelOutstandingPoll_Result) ToWire() (wire.Value, err
 		fields[i] = wire.Field{ID: 3, Value: w}
 		i++
 	}
+	if v.TaskListNotOwnedByHostError != nil {
+		w, err = v.TaskListNotOwnedByHostError.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 4, Value: w}
+		i++
+	}
 
 	if i > 1 {
 		return wire.Value{}, fmt.Errorf("MatchingService_CancelOutstandingPoll_Result should have at most one field: got %v fields", i)
@@ -8005,16 +9485,16 @@ func (v *MatchingService_CancelOutstandingPoll_Result) ToWire() (wire.Value, err
 // An error is returned if we were unable to build a MatchingService_CancelOutstandingPoll_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_CancelOutstandingPoll_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_CancelOutstandingPoll_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_CancelOutstandingPoll_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -8044,6 +9524,14 @@ func (v *MatchingService_CancelOutstandingPoll_Result) FromWire(w wire.Value) er
 				}
 
 			}
+		case 4:
+			if field.Value.Type() == wire.TStruct {
+				v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
 		}
 	}
 
@@ -8055,6 +9543,9 @@ func (v *MatchingService_CancelOutstandingPoll_Result) FromWire(w wire.Value) er
 		count++
 	}
 	if v.ServiceBusyError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 	if count > 1 {
@@ -8109,6 +9600,18 @@ func (v *MatchingService_CancelOutstandingPoll_Result) Encode(sw stream.Writer) 
 		}
 	}
 
+	if v.TaskListNotOwnedByHostError != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 4, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.TaskListNotOwnedByHostError.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	count := 0
 	if v.BadRequestError != nil {
 		count++
@@ -8117,6 +9620,9 @@ func (v *MatchingService_CancelOutstandingPoll_Result) Encode(sw stream.Writer) 
 		count++
 	}
 	if v.ServiceBusyError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 
@@ -8163,6 +9669,12 @@ func (v *MatchingService_CancelOutstandingPoll_Result) Decode(sr stream.Reader) 
 				return err
 			}
 
+		case fh.ID == 4 && fh.Type == wire.TStruct:
+			v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -8192,6 +9704,9 @@ func (v *MatchingService_CancelOutstandingPoll_Result) Decode(sr stream.Reader) 
 	if v.ServiceBusyError != nil {
 		count++
 	}
+	if v.TaskListNotOwnedByHostError != nil {
+		count++
+	}
 	if count > 1 {
 		return fmt.Errorf("MatchingService_CancelOutstandingPoll_Result should have at most one field: got %v fields", count)
 	}
@@ -8206,7 +9721,7 @@ func (v *MatchingService_CancelOutstandingPoll_Result) String() string {
 		return "<nil>"
 	}
 
-	var fields [3]string
+	var fields [4]string
 	i := 0
 	if v.BadRequestError != nil {
 		fields[i] = fmt.Sprintf("BadRequestError: %v", v.BadRequestError)
@@ -8218,6 +9733,10 @@ func (v *MatchingService_CancelOutstandingPoll_Result) String() string {
 	}
 	if v.ServiceBusyError != nil {
 		fields[i] = fmt.Sprintf("ServiceBusyError: %v", v.ServiceBusyError)
+		i++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		fields[i] = fmt.Sprintf("TaskListNotOwnedByHostError: %v", v.TaskListNotOwnedByHostError)
 		i++
 	}
 
@@ -8243,6 +9762,9 @@ func (v *MatchingService_CancelOutstandingPoll_Result) Equals(rhs *MatchingServi
 	if !((v.ServiceBusyError == nil && rhs.ServiceBusyError == nil) || (v.ServiceBusyError != nil && rhs.ServiceBusyError != nil && v.ServiceBusyError.Equals(rhs.ServiceBusyError))) {
 		return false
 	}
+	if !((v.TaskListNotOwnedByHostError == nil && rhs.TaskListNotOwnedByHostError == nil) || (v.TaskListNotOwnedByHostError != nil && rhs.TaskListNotOwnedByHostError != nil && v.TaskListNotOwnedByHostError.Equals(rhs.TaskListNotOwnedByHostError))) {
+		return false
+	}
 
 	return true
 }
@@ -8261,6 +9783,9 @@ func (v *MatchingService_CancelOutstandingPoll_Result) MarshalLogObject(enc zapc
 	}
 	if v.ServiceBusyError != nil {
 		err = multierr.Append(err, enc.AddObject("serviceBusyError", v.ServiceBusyError))
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		err = multierr.Append(err, enc.AddObject("taskListNotOwnedByHostError", v.TaskListNotOwnedByHostError))
 	}
 	return err
 }
@@ -8310,6 +9835,21 @@ func (v *MatchingService_CancelOutstandingPoll_Result) IsSetServiceBusyError() b
 	return v != nil && v.ServiceBusyError != nil
 }
 
+// GetTaskListNotOwnedByHostError returns the value of TaskListNotOwnedByHostError if it is set or its
+// zero value if it is unset.
+func (v *MatchingService_CancelOutstandingPoll_Result) GetTaskListNotOwnedByHostError() (o *shared.TaskListNotOwnedByHostError) {
+	if v != nil && v.TaskListNotOwnedByHostError != nil {
+		return v.TaskListNotOwnedByHostError
+	}
+
+	return
+}
+
+// IsSetTaskListNotOwnedByHostError returns true if TaskListNotOwnedByHostError is not nil.
+func (v *MatchingService_CancelOutstandingPoll_Result) IsSetTaskListNotOwnedByHostError() bool {
+	return v != nil && v.TaskListNotOwnedByHostError != nil
+}
+
 // MethodName returns the name of the Thrift function as specified in
 // the IDL, for which this struct represent the result.
 //
@@ -8339,14 +9879,14 @@ type MatchingService_DescribeTaskList_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_DescribeTaskList_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -8380,16 +9920,16 @@ func _DescribeTaskListRequest_1_Read(w wire.Value) (*DescribeTaskListRequest, er
 // An error is returned if we were unable to build a MatchingService_DescribeTaskList_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_DescribeTaskList_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_DescribeTaskList_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_DescribeTaskList_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -8625,6 +10165,8 @@ func init() {
 			return true
 		case *shared.ServiceBusyError:
 			return true
+		case *shared.TaskListNotOwnedByHostError:
+			return true
 		default:
 			return false
 		}
@@ -8656,6 +10198,11 @@ func init() {
 				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_DescribeTaskList_Result.ServiceBusyError")
 			}
 			return &MatchingService_DescribeTaskList_Result{ServiceBusyError: e}, nil
+		case *shared.TaskListNotOwnedByHostError:
+			if e == nil {
+				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_DescribeTaskList_Result.TaskListNotOwnedByHostError")
+			}
+			return &MatchingService_DescribeTaskList_Result{TaskListNotOwnedByHostError: e}, nil
 		}
 
 		return nil, err
@@ -8677,6 +10224,10 @@ func init() {
 			err = result.ServiceBusyError
 			return
 		}
+		if result.TaskListNotOwnedByHostError != nil {
+			err = result.TaskListNotOwnedByHostError
+			return
+		}
 
 		if result.Success != nil {
 			success = result.Success
@@ -8696,11 +10247,12 @@ func init() {
 // Success is set only if the function did not throw an exception.
 type MatchingService_DescribeTaskList_Result struct {
 	// Value returned by DescribeTaskList after a successful execution.
-	Success              *shared.DescribeTaskListResponse `json:"success,omitempty"`
-	BadRequestError      *shared.BadRequestError          `json:"badRequestError,omitempty"`
-	InternalServiceError *shared.InternalServiceError     `json:"internalServiceError,omitempty"`
-	EntityNotExistError  *shared.EntityNotExistsError     `json:"entityNotExistError,omitempty"`
-	ServiceBusyError     *shared.ServiceBusyError         `json:"serviceBusyError,omitempty"`
+	Success                     *shared.DescribeTaskListResponse    `json:"success,omitempty"`
+	BadRequestError             *shared.BadRequestError             `json:"badRequestError,omitempty"`
+	InternalServiceError        *shared.InternalServiceError        `json:"internalServiceError,omitempty"`
+	EntityNotExistError         *shared.EntityNotExistsError        `json:"entityNotExistError,omitempty"`
+	ServiceBusyError            *shared.ServiceBusyError            `json:"serviceBusyError,omitempty"`
+	TaskListNotOwnedByHostError *shared.TaskListNotOwnedByHostError `json:"taskListNotOwnedByHostError,omitempty"`
 }
 
 // ToWire translates a MatchingService_DescribeTaskList_Result struct into a Thrift-level intermediate
@@ -8710,17 +10262,17 @@ type MatchingService_DescribeTaskList_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_DescribeTaskList_Result) ToWire() (wire.Value, error) {
 	var (
-		fields [5]wire.Field
+		fields [6]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -8766,6 +10318,14 @@ func (v *MatchingService_DescribeTaskList_Result) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 4, Value: w}
 		i++
 	}
+	if v.TaskListNotOwnedByHostError != nil {
+		w, err = v.TaskListNotOwnedByHostError.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 5, Value: w}
+		i++
+	}
 
 	if i != 1 {
 		return wire.Value{}, fmt.Errorf("MatchingService_DescribeTaskList_Result should have exactly one field: got %v fields", i)
@@ -8793,16 +10353,16 @@ func _EntityNotExistsError_Read(w wire.Value) (*shared.EntityNotExistsError, err
 // An error is returned if we were unable to build a MatchingService_DescribeTaskList_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_DescribeTaskList_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_DescribeTaskList_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_DescribeTaskList_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -8848,6 +10408,14 @@ func (v *MatchingService_DescribeTaskList_Result) FromWire(w wire.Value) error {
 				}
 
 			}
+		case 5:
+			if field.Value.Type() == wire.TStruct {
+				v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
 		}
 	}
 
@@ -8865,6 +10433,9 @@ func (v *MatchingService_DescribeTaskList_Result) FromWire(w wire.Value) error {
 		count++
 	}
 	if v.ServiceBusyError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 	if count != 1 {
@@ -8943,6 +10514,18 @@ func (v *MatchingService_DescribeTaskList_Result) Encode(sw stream.Writer) error
 		}
 	}
 
+	if v.TaskListNotOwnedByHostError != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 5, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.TaskListNotOwnedByHostError.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	count := 0
 	if v.Success != nil {
 		count++
@@ -8957,6 +10540,9 @@ func (v *MatchingService_DescribeTaskList_Result) Encode(sw stream.Writer) error
 		count++
 	}
 	if v.ServiceBusyError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 
@@ -9027,6 +10613,12 @@ func (v *MatchingService_DescribeTaskList_Result) Decode(sr stream.Reader) error
 				return err
 			}
 
+		case fh.ID == 5 && fh.Type == wire.TStruct:
+			v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -9062,6 +10654,9 @@ func (v *MatchingService_DescribeTaskList_Result) Decode(sr stream.Reader) error
 	if v.ServiceBusyError != nil {
 		count++
 	}
+	if v.TaskListNotOwnedByHostError != nil {
+		count++
+	}
 	if count != 1 {
 		return fmt.Errorf("MatchingService_DescribeTaskList_Result should have exactly one field: got %v fields", count)
 	}
@@ -9076,7 +10671,7 @@ func (v *MatchingService_DescribeTaskList_Result) String() string {
 		return "<nil>"
 	}
 
-	var fields [5]string
+	var fields [6]string
 	i := 0
 	if v.Success != nil {
 		fields[i] = fmt.Sprintf("Success: %v", v.Success)
@@ -9096,6 +10691,10 @@ func (v *MatchingService_DescribeTaskList_Result) String() string {
 	}
 	if v.ServiceBusyError != nil {
 		fields[i] = fmt.Sprintf("ServiceBusyError: %v", v.ServiceBusyError)
+		i++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		fields[i] = fmt.Sprintf("TaskListNotOwnedByHostError: %v", v.TaskListNotOwnedByHostError)
 		i++
 	}
 
@@ -9127,6 +10726,9 @@ func (v *MatchingService_DescribeTaskList_Result) Equals(rhs *MatchingService_De
 	if !((v.ServiceBusyError == nil && rhs.ServiceBusyError == nil) || (v.ServiceBusyError != nil && rhs.ServiceBusyError != nil && v.ServiceBusyError.Equals(rhs.ServiceBusyError))) {
 		return false
 	}
+	if !((v.TaskListNotOwnedByHostError == nil && rhs.TaskListNotOwnedByHostError == nil) || (v.TaskListNotOwnedByHostError != nil && rhs.TaskListNotOwnedByHostError != nil && v.TaskListNotOwnedByHostError.Equals(rhs.TaskListNotOwnedByHostError))) {
+		return false
+	}
 
 	return true
 }
@@ -9151,6 +10753,9 @@ func (v *MatchingService_DescribeTaskList_Result) MarshalLogObject(enc zapcore.O
 	}
 	if v.ServiceBusyError != nil {
 		err = multierr.Append(err, enc.AddObject("serviceBusyError", v.ServiceBusyError))
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		err = multierr.Append(err, enc.AddObject("taskListNotOwnedByHostError", v.TaskListNotOwnedByHostError))
 	}
 	return err
 }
@@ -9230,6 +10835,21 @@ func (v *MatchingService_DescribeTaskList_Result) IsSetServiceBusyError() bool {
 	return v != nil && v.ServiceBusyError != nil
 }
 
+// GetTaskListNotOwnedByHostError returns the value of TaskListNotOwnedByHostError if it is set or its
+// zero value if it is unset.
+func (v *MatchingService_DescribeTaskList_Result) GetTaskListNotOwnedByHostError() (o *shared.TaskListNotOwnedByHostError) {
+	if v != nil && v.TaskListNotOwnedByHostError != nil {
+		return v.TaskListNotOwnedByHostError
+	}
+
+	return
+}
+
+// IsSetTaskListNotOwnedByHostError returns true if TaskListNotOwnedByHostError is not nil.
+func (v *MatchingService_DescribeTaskList_Result) IsSetTaskListNotOwnedByHostError() bool {
+	return v != nil && v.TaskListNotOwnedByHostError != nil
+}
+
 // MethodName returns the name of the Thrift function as specified in
 // the IDL, for which this struct represent the result.
 //
@@ -9259,14 +10879,14 @@ type MatchingService_GetTaskListsByDomain_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_GetTaskListsByDomain_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -9300,16 +10920,16 @@ func _GetTaskListsByDomainRequest_Read(w wire.Value) (*shared.GetTaskListsByDoma
 // An error is returned if we were unable to build a MatchingService_GetTaskListsByDomain_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_GetTaskListsByDomain_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_GetTaskListsByDomain_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_GetTaskListsByDomain_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -9630,14 +11250,14 @@ type MatchingService_GetTaskListsByDomain_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_GetTaskListsByDomain_Result) ToWire() (wire.Value, error) {
 	var (
 		fields [5]wire.Field
@@ -9707,16 +11327,16 @@ func _GetTaskListsByDomainResponse_Read(w wire.Value) (*shared.GetTaskListsByDom
 // An error is returned if we were unable to build a MatchingService_GetTaskListsByDomain_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_GetTaskListsByDomain_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_GetTaskListsByDomain_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_GetTaskListsByDomain_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -10167,14 +11787,14 @@ type MatchingService_ListTaskListPartitions_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_ListTaskListPartitions_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -10208,16 +11828,16 @@ func _ListTaskListPartitionsRequest_Read(w wire.Value) (*ListTaskListPartitionsR
 // An error is returned if we were unable to build a MatchingService_ListTaskListPartitions_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_ListTaskListPartitions_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_ListTaskListPartitions_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_ListTaskListPartitions_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -10526,14 +12146,14 @@ type MatchingService_ListTaskListPartitions_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_ListTaskListPartitions_Result) ToWire() (wire.Value, error) {
 	var (
 		fields [4]wire.Field
@@ -10595,16 +12215,16 @@ func _ListTaskListPartitionsResponse_Read(w wire.Value) (*shared.ListTaskListPar
 // An error is returned if we were unable to build a MatchingService_ListTaskListPartitions_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_ListTaskListPartitions_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_ListTaskListPartitions_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_ListTaskListPartitions_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -10995,14 +12615,14 @@ type MatchingService_PollForActivityTask_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_PollForActivityTask_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -11036,16 +12656,16 @@ func _PollForActivityTaskRequest_1_Read(w wire.Value) (*PollForActivityTaskReque
 // An error is returned if we were unable to build a MatchingService_PollForActivityTask_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_PollForActivityTask_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_PollForActivityTask_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_PollForActivityTask_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -11366,14 +12986,14 @@ type MatchingService_PollForActivityTask_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_PollForActivityTask_Result) ToWire() (wire.Value, error) {
 	var (
 		fields [5]wire.Field
@@ -11443,16 +13063,16 @@ func _PollForActivityTaskResponse_Read(w wire.Value) (*shared.PollForActivityTas
 // An error is returned if we were unable to build a MatchingService_PollForActivityTask_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_PollForActivityTask_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_PollForActivityTask_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_PollForActivityTask_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -11903,14 +13523,14 @@ type MatchingService_PollForDecisionTask_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_PollForDecisionTask_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -11944,16 +13564,16 @@ func _PollForDecisionTaskRequest_1_Read(w wire.Value) (*PollForDecisionTaskReque
 // An error is returned if we were unable to build a MatchingService_PollForDecisionTask_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_PollForDecisionTask_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_PollForDecisionTask_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_PollForDecisionTask_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -12274,14 +13894,14 @@ type MatchingService_PollForDecisionTask_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_PollForDecisionTask_Result) ToWire() (wire.Value, error) {
 	var (
 		fields [5]wire.Field
@@ -12351,16 +13971,16 @@ func _PollForDecisionTaskResponse_Read(w wire.Value) (*PollForDecisionTaskRespon
 // An error is returned if we were unable to build a MatchingService_PollForDecisionTask_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_PollForDecisionTask_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_PollForDecisionTask_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_PollForDecisionTask_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -12811,14 +14431,14 @@ type MatchingService_QueryWorkflow_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_QueryWorkflow_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -12852,16 +14472,16 @@ func _QueryWorkflowRequest_1_Read(w wire.Value) (*QueryWorkflowRequest, error) {
 // An error is returned if we were unable to build a MatchingService_QueryWorkflow_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_QueryWorkflow_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_QueryWorkflow_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_QueryWorkflow_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -13101,6 +14721,10 @@ func init() {
 			return true
 		case *shared.ServiceBusyError:
 			return true
+		case *shared.StickyWorkerUnavailableError:
+			return true
+		case *shared.TaskListNotOwnedByHostError:
+			return true
 		default:
 			return false
 		}
@@ -13142,6 +14766,16 @@ func init() {
 				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_QueryWorkflow_Result.ServiceBusyError")
 			}
 			return &MatchingService_QueryWorkflow_Result{ServiceBusyError: e}, nil
+		case *shared.StickyWorkerUnavailableError:
+			if e == nil {
+				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_QueryWorkflow_Result.StickyWorkerUnavailableError")
+			}
+			return &MatchingService_QueryWorkflow_Result{StickyWorkerUnavailableError: e}, nil
+		case *shared.TaskListNotOwnedByHostError:
+			if e == nil {
+				return nil, errors.New("WrapResponse received non-nil error type with nil value for MatchingService_QueryWorkflow_Result.TaskListNotOwnedByHostError")
+			}
+			return &MatchingService_QueryWorkflow_Result{TaskListNotOwnedByHostError: e}, nil
 		}
 
 		return nil, err
@@ -13171,6 +14805,14 @@ func init() {
 			err = result.ServiceBusyError
 			return
 		}
+		if result.StickyWorkerUnavailableError != nil {
+			err = result.StickyWorkerUnavailableError
+			return
+		}
+		if result.TaskListNotOwnedByHostError != nil {
+			err = result.TaskListNotOwnedByHostError
+			return
+		}
 
 		if result.Success != nil {
 			success = result.Success
@@ -13190,13 +14832,15 @@ func init() {
 // Success is set only if the function did not throw an exception.
 type MatchingService_QueryWorkflow_Result struct {
 	// Value returned by QueryWorkflow after a successful execution.
-	Success              *shared.QueryWorkflowResponse `json:"success,omitempty"`
-	BadRequestError      *shared.BadRequestError       `json:"badRequestError,omitempty"`
-	InternalServiceError *shared.InternalServiceError  `json:"internalServiceError,omitempty"`
-	EntityNotExistError  *shared.EntityNotExistsError  `json:"entityNotExistError,omitempty"`
-	QueryFailedError     *shared.QueryFailedError      `json:"queryFailedError,omitempty"`
-	LimitExceededError   *shared.LimitExceededError    `json:"limitExceededError,omitempty"`
-	ServiceBusyError     *shared.ServiceBusyError      `json:"serviceBusyError,omitempty"`
+	Success                      *shared.QueryWorkflowResponse        `json:"success,omitempty"`
+	BadRequestError              *shared.BadRequestError              `json:"badRequestError,omitempty"`
+	InternalServiceError         *shared.InternalServiceError         `json:"internalServiceError,omitempty"`
+	EntityNotExistError          *shared.EntityNotExistsError         `json:"entityNotExistError,omitempty"`
+	QueryFailedError             *shared.QueryFailedError             `json:"queryFailedError,omitempty"`
+	LimitExceededError           *shared.LimitExceededError           `json:"limitExceededError,omitempty"`
+	ServiceBusyError             *shared.ServiceBusyError             `json:"serviceBusyError,omitempty"`
+	StickyWorkerUnavailableError *shared.StickyWorkerUnavailableError `json:"stickyWorkerUnavailableError,omitempty"`
+	TaskListNotOwnedByHostError  *shared.TaskListNotOwnedByHostError  `json:"taskListNotOwnedByHostError,omitempty"`
 }
 
 // ToWire translates a MatchingService_QueryWorkflow_Result struct into a Thrift-level intermediate
@@ -13206,17 +14850,17 @@ type MatchingService_QueryWorkflow_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_QueryWorkflow_Result) ToWire() (wire.Value, error) {
 	var (
-		fields [7]wire.Field
+		fields [9]wire.Field
 		i      int = 0
 		w      wire.Value
 		err    error
@@ -13278,6 +14922,22 @@ func (v *MatchingService_QueryWorkflow_Result) ToWire() (wire.Value, error) {
 		fields[i] = wire.Field{ID: 6, Value: w}
 		i++
 	}
+	if v.StickyWorkerUnavailableError != nil {
+		w, err = v.StickyWorkerUnavailableError.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 7, Value: w}
+		i++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		w, err = v.TaskListNotOwnedByHostError.ToWire()
+		if err != nil {
+			return w, err
+		}
+		fields[i] = wire.Field{ID: 8, Value: w}
+		i++
+	}
 
 	if i != 1 {
 		return wire.Value{}, fmt.Errorf("MatchingService_QueryWorkflow_Result should have exactly one field: got %v fields", i)
@@ -13305,16 +14965,16 @@ func _QueryFailedError_Read(w wire.Value) (*shared.QueryFailedError, error) {
 // An error is returned if we were unable to build a MatchingService_QueryWorkflow_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_QueryWorkflow_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_QueryWorkflow_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_QueryWorkflow_Result) FromWire(w wire.Value) error {
 	var err error
 
@@ -13376,6 +15036,22 @@ func (v *MatchingService_QueryWorkflow_Result) FromWire(w wire.Value) error {
 				}
 
 			}
+		case 7:
+			if field.Value.Type() == wire.TStruct {
+				v.StickyWorkerUnavailableError, err = _StickyWorkerUnavailableError_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
+		case 8:
+			if field.Value.Type() == wire.TStruct {
+				v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Read(field.Value)
+				if err != nil {
+					return err
+				}
+
+			}
 		}
 	}
 
@@ -13399,6 +15075,12 @@ func (v *MatchingService_QueryWorkflow_Result) FromWire(w wire.Value) error {
 		count++
 	}
 	if v.ServiceBusyError != nil {
+		count++
+	}
+	if v.StickyWorkerUnavailableError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 	if count != 1 {
@@ -13501,6 +15183,30 @@ func (v *MatchingService_QueryWorkflow_Result) Encode(sw stream.Writer) error {
 		}
 	}
 
+	if v.StickyWorkerUnavailableError != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 7, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.StickyWorkerUnavailableError.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
+	if v.TaskListNotOwnedByHostError != nil {
+		if err := sw.WriteFieldBegin(stream.FieldHeader{ID: 8, Type: wire.TStruct}); err != nil {
+			return err
+		}
+		if err := v.TaskListNotOwnedByHostError.Encode(sw); err != nil {
+			return err
+		}
+		if err := sw.WriteFieldEnd(); err != nil {
+			return err
+		}
+	}
+
 	count := 0
 	if v.Success != nil {
 		count++
@@ -13521,6 +15227,12 @@ func (v *MatchingService_QueryWorkflow_Result) Encode(sw stream.Writer) error {
 		count++
 	}
 	if v.ServiceBusyError != nil {
+		count++
+	}
+	if v.StickyWorkerUnavailableError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
 		count++
 	}
 
@@ -13603,6 +15315,18 @@ func (v *MatchingService_QueryWorkflow_Result) Decode(sr stream.Reader) error {
 				return err
 			}
 
+		case fh.ID == 7 && fh.Type == wire.TStruct:
+			v.StickyWorkerUnavailableError, err = _StickyWorkerUnavailableError_Decode(sr)
+			if err != nil {
+				return err
+			}
+
+		case fh.ID == 8 && fh.Type == wire.TStruct:
+			v.TaskListNotOwnedByHostError, err = _TaskListNotOwnedByHostError_Decode(sr)
+			if err != nil {
+				return err
+			}
+
 		default:
 			if err := sr.Skip(fh.Type); err != nil {
 				return err
@@ -13644,6 +15368,12 @@ func (v *MatchingService_QueryWorkflow_Result) Decode(sr stream.Reader) error {
 	if v.ServiceBusyError != nil {
 		count++
 	}
+	if v.StickyWorkerUnavailableError != nil {
+		count++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		count++
+	}
 	if count != 1 {
 		return fmt.Errorf("MatchingService_QueryWorkflow_Result should have exactly one field: got %v fields", count)
 	}
@@ -13658,7 +15388,7 @@ func (v *MatchingService_QueryWorkflow_Result) String() string {
 		return "<nil>"
 	}
 
-	var fields [7]string
+	var fields [9]string
 	i := 0
 	if v.Success != nil {
 		fields[i] = fmt.Sprintf("Success: %v", v.Success)
@@ -13686,6 +15416,14 @@ func (v *MatchingService_QueryWorkflow_Result) String() string {
 	}
 	if v.ServiceBusyError != nil {
 		fields[i] = fmt.Sprintf("ServiceBusyError: %v", v.ServiceBusyError)
+		i++
+	}
+	if v.StickyWorkerUnavailableError != nil {
+		fields[i] = fmt.Sprintf("StickyWorkerUnavailableError: %v", v.StickyWorkerUnavailableError)
+		i++
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		fields[i] = fmt.Sprintf("TaskListNotOwnedByHostError: %v", v.TaskListNotOwnedByHostError)
 		i++
 	}
 
@@ -13723,6 +15461,12 @@ func (v *MatchingService_QueryWorkflow_Result) Equals(rhs *MatchingService_Query
 	if !((v.ServiceBusyError == nil && rhs.ServiceBusyError == nil) || (v.ServiceBusyError != nil && rhs.ServiceBusyError != nil && v.ServiceBusyError.Equals(rhs.ServiceBusyError))) {
 		return false
 	}
+	if !((v.StickyWorkerUnavailableError == nil && rhs.StickyWorkerUnavailableError == nil) || (v.StickyWorkerUnavailableError != nil && rhs.StickyWorkerUnavailableError != nil && v.StickyWorkerUnavailableError.Equals(rhs.StickyWorkerUnavailableError))) {
+		return false
+	}
+	if !((v.TaskListNotOwnedByHostError == nil && rhs.TaskListNotOwnedByHostError == nil) || (v.TaskListNotOwnedByHostError != nil && rhs.TaskListNotOwnedByHostError != nil && v.TaskListNotOwnedByHostError.Equals(rhs.TaskListNotOwnedByHostError))) {
+		return false
+	}
 
 	return true
 }
@@ -13753,6 +15497,12 @@ func (v *MatchingService_QueryWorkflow_Result) MarshalLogObject(enc zapcore.Obje
 	}
 	if v.ServiceBusyError != nil {
 		err = multierr.Append(err, enc.AddObject("serviceBusyError", v.ServiceBusyError))
+	}
+	if v.StickyWorkerUnavailableError != nil {
+		err = multierr.Append(err, enc.AddObject("stickyWorkerUnavailableError", v.StickyWorkerUnavailableError))
+	}
+	if v.TaskListNotOwnedByHostError != nil {
+		err = multierr.Append(err, enc.AddObject("taskListNotOwnedByHostError", v.TaskListNotOwnedByHostError))
 	}
 	return err
 }
@@ -13862,6 +15612,36 @@ func (v *MatchingService_QueryWorkflow_Result) IsSetServiceBusyError() bool {
 	return v != nil && v.ServiceBusyError != nil
 }
 
+// GetStickyWorkerUnavailableError returns the value of StickyWorkerUnavailableError if it is set or its
+// zero value if it is unset.
+func (v *MatchingService_QueryWorkflow_Result) GetStickyWorkerUnavailableError() (o *shared.StickyWorkerUnavailableError) {
+	if v != nil && v.StickyWorkerUnavailableError != nil {
+		return v.StickyWorkerUnavailableError
+	}
+
+	return
+}
+
+// IsSetStickyWorkerUnavailableError returns true if StickyWorkerUnavailableError is not nil.
+func (v *MatchingService_QueryWorkflow_Result) IsSetStickyWorkerUnavailableError() bool {
+	return v != nil && v.StickyWorkerUnavailableError != nil
+}
+
+// GetTaskListNotOwnedByHostError returns the value of TaskListNotOwnedByHostError if it is set or its
+// zero value if it is unset.
+func (v *MatchingService_QueryWorkflow_Result) GetTaskListNotOwnedByHostError() (o *shared.TaskListNotOwnedByHostError) {
+	if v != nil && v.TaskListNotOwnedByHostError != nil {
+		return v.TaskListNotOwnedByHostError
+	}
+
+	return
+}
+
+// IsSetTaskListNotOwnedByHostError returns true if TaskListNotOwnedByHostError is not nil.
+func (v *MatchingService_QueryWorkflow_Result) IsSetTaskListNotOwnedByHostError() bool {
+	return v != nil && v.TaskListNotOwnedByHostError != nil
+}
+
 // MethodName returns the name of the Thrift function as specified in
 // the IDL, for which this struct represent the result.
 //
@@ -13891,14 +15671,14 @@ type MatchingService_RespondQueryTaskCompleted_Args struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_RespondQueryTaskCompleted_Args) ToWire() (wire.Value, error) {
 	var (
 		fields [1]wire.Field
@@ -13932,16 +15712,16 @@ func _RespondQueryTaskCompletedRequest_1_Read(w wire.Value) (*RespondQueryTaskCo
 // An error is returned if we were unable to build a MatchingService_RespondQueryTaskCompleted_Args struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_RespondQueryTaskCompleted_Args
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_RespondQueryTaskCompleted_Args
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_RespondQueryTaskCompleted_Args) FromWire(w wire.Value) error {
 	var err error
 
@@ -14264,14 +16044,14 @@ type MatchingService_RespondQueryTaskCompleted_Result struct {
 // An error is returned if the struct or any of its fields failed to
 // validate.
 //
-//   x, err := v.ToWire()
-//   if err != nil {
-//     return err
-//   }
+//	x, err := v.ToWire()
+//	if err != nil {
+//	  return err
+//	}
 //
-//   if err := binaryProtocol.Encode(x, writer); err != nil {
-//     return err
-//   }
+//	if err := binaryProtocol.Encode(x, writer); err != nil {
+//	  return err
+//	}
 func (v *MatchingService_RespondQueryTaskCompleted_Result) ToWire() (wire.Value, error) {
 	var (
 		fields [5]wire.Field
@@ -14335,16 +16115,16 @@ func (v *MatchingService_RespondQueryTaskCompleted_Result) ToWire() (wire.Value,
 // An error is returned if we were unable to build a MatchingService_RespondQueryTaskCompleted_Result struct
 // from the provided intermediate representation.
 //
-//   x, err := binaryProtocol.Decode(reader, wire.TStruct)
-//   if err != nil {
-//     return nil, err
-//   }
+//	x, err := binaryProtocol.Decode(reader, wire.TStruct)
+//	if err != nil {
+//	  return nil, err
+//	}
 //
-//   var v MatchingService_RespondQueryTaskCompleted_Result
-//   if err := v.FromWire(x); err != nil {
-//     return nil, err
-//   }
-//   return &v, nil
+//	var v MatchingService_RespondQueryTaskCompleted_Result
+//	if err := v.FromWire(x); err != nil {
+//	  return nil, err
+//	}
+//	return &v, nil
 func (v *MatchingService_RespondQueryTaskCompleted_Result) FromWire(w wire.Value) error {
 	var err error
 

@@ -18,6 +18,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interfaces_mock.go -self_package github.com/uber/cadence/common/persistence/nosql/nosqlplugin
+
 package nosqlplugin
 
 import (
@@ -32,13 +34,13 @@ import (
 type (
 	// Plugin defines the interface for any NoSQL database that needs to implement
 	Plugin interface {
-		CreateDB(cfg *config.NoSQL, logger log.Logger) (DB, error)
-		CreateAdminDB(cfg *config.NoSQL, logger log.Logger) (AdminDB, error)
+		CreateDB(cfg *config.NoSQL, logger log.Logger, dc *persistence.DynamicConfiguration) (DB, error)
+		CreateAdminDB(cfg *config.NoSQL, logger log.Logger, dc *persistence.DynamicConfiguration) (AdminDB, error)
 	}
 
 	// AdminDB is for tooling and testing
 	AdminDB interface {
-		SetupTestDatabase(schemaBaseDir string) error
+		SetupTestDatabase(schemaBaseDir string, replicas int) error
 		TeardownTestDatabase() error
 	}
 
@@ -76,6 +78,7 @@ type (
 		IsTimeoutError(error) bool
 		IsNotFoundError(error) bool
 		IsThrottlingError(error) bool
+		IsDBUnavailableError(error) bool
 	}
 
 	/**
@@ -116,7 +119,7 @@ type (
 	 * queue_metadata partition key: (queueType), range key: N/A, query condition column(version)
 	 */
 	MessageQueueCRUD interface {
-		//Insert message into queue, return error if failed or already exists
+		// Insert message into queue, return error if failed or already exists
 		// Must return conditionFailed error if row already exists
 		InsertIntoQueue(ctx context.Context, row *QueueMessageRow) error
 		// Get the ID of last message inserted into the queue
@@ -341,6 +344,8 @@ type (
 		// DeleteTask delete a batch of tasks
 		// Also return the number of rows deleted -- if it's not supported then ignore the batchSize, and return persistence.UnknownNumRowsAffected
 		RangeDeleteTasks(ctx context.Context, filter *TasksFilter) (rowsDeleted int, err error)
+		// GetTasksCount return the number of tasks
+		GetTasksCount(ctx context.Context, filter *TasksFilter) (int64, error)
 	}
 
 	/**
@@ -408,6 +413,7 @@ type (
 		// The API returns error if there is any. If any of the condition is not met, returns WorkflowOperationConditionFailure
 		InsertWorkflowExecutionWithTasks(
 			ctx context.Context,
+			requests *WorkflowRequestsWriteRequest,
 			currentWorkflowRequest *CurrentWorkflowWriteRequest,
 			execution *WorkflowExecutionRequest,
 			transferTasks []*TransferTask,
@@ -435,6 +441,7 @@ type (
 		// The API returns error if there is any. If any of the condition is not met, returns WorkflowOperationConditionFailure
 		UpdateWorkflowExecutionWithTasks(
 			ctx context.Context,
+			requests *WorkflowRequestsWriteRequest,
 			currentWorkflowRequest *CurrentWorkflowWriteRequest,
 			mutatedExecution *WorkflowExecutionRequest,
 			insertedExecution *WorkflowExecutionRequest,

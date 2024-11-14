@@ -148,22 +148,6 @@ func (s *ShardInfo) GetTransferProcessingQueueStatesEncoding() (o string) {
 	return
 }
 
-// GetCrossClusterProcessingQueueStates internal sql blob getter
-func (s *ShardInfo) GetCrossClusterProcessingQueueStates() (o []byte) {
-	if s != nil {
-		return s.CrossClusterProcessingQueueStates
-	}
-	return
-}
-
-// GetCrossClusterProcessingQueueStatesEncoding internal sql blob getter
-func (s *ShardInfo) GetCrossClusterProcessingQueueStatesEncoding() (o string) {
-	if s != nil {
-		return s.CrossClusterProcessingQueueStatesEncoding
-	}
-	return
-}
-
 // GetTimerProcessingQueueStates internal sql blob getter
 func (s *ShardInfo) GetTimerProcessingQueueStates() (o []byte) {
 	if s != nil {
@@ -868,6 +852,38 @@ func (w *WorkflowExecutionInfo) GetHasRetryPolicy() (o bool) {
 	return
 }
 
+// GetFirstExecutionRunID internal sql blob getter
+func (w *WorkflowExecutionInfo) GetFirstExecutionRunID() (o []byte) {
+	if w != nil {
+		return w.FirstExecutionRunID
+	}
+	return
+}
+
+// GetPartitionConfig internal sql blob getter
+func (w *WorkflowExecutionInfo) GetPartitionConfig() (o map[string]string) {
+	if w != nil {
+		return w.PartitionConfig
+	}
+	return
+}
+
+// GetCheckSum internal sql blob getter
+func (w *WorkflowExecutionInfo) GetChecksum() (o []byte) {
+	if w != nil {
+		return w.Checksum
+	}
+	return
+}
+
+// GetCheckSumEncoding internal sql blob getter
+func (w *WorkflowExecutionInfo) GetChecksumEncoding() (o string) {
+	if w != nil {
+		return w.ChecksumEncoding
+	}
+	return
+}
+
 // GetVersion internal sql blob getter
 func (a *ActivityInfo) GetVersion() (o int64) {
 	if a != nil {
@@ -1370,6 +1386,14 @@ func (t *TaskInfo) GetCreatedTimestamp() time.Time {
 		return t.CreatedTimestamp
 	}
 	return time.Unix(0, 0)
+}
+
+// GetPartitionConfig internal sql blob getter
+func (t *TaskInfo) GetPartitionConfig() (o map[string]string) {
+	if t != nil {
+		return t.PartitionConfig
+	}
+	return
 }
 
 // GetKind internal sql blob getter

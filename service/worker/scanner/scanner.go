@@ -26,12 +26,12 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	"go.uber.org/zap"
-
-	"go.uber.org/cadence/.gen/go/shared"
+	"go.uber.org/cadence"
+	"go.uber.org/cadence/.gen/go/cadence/workflowserviceclient"
 	"go.uber.org/cadence/activity"
 	"go.uber.org/cadence/client"
 	"go.uber.org/cadence/worker"
+	"go.uber.org/zap"
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cluster"
@@ -92,9 +92,11 @@ type (
 	// of database tables to cleanup resources, monitor anomalies
 	// and emit stats for analytics
 	Scanner struct {
-		context    scannerContext
-		tallyScope tally.Scope
-		zapLogger  *zap.Logger
+		context                  scannerContext
+		tallyScope               tally.Scope
+		zapLogger                *zap.Logger
+		startWorkflowWithRetryFn func(string, time.Duration, resource.Resource, func(client client.Client) error) error
+		newWorkerFn              func(workflowserviceclient.Interface, string, string, worker.Options) worker.Worker
 	}
 )
 
@@ -112,13 +114,16 @@ func New(
 	if err != nil {
 		resource.GetLogger().Fatal("failed to initialize zap logger", tag.Error(err))
 	}
+	zapLogger.Info("Initializing new scanner")
 	return &Scanner{
 		context: scannerContext{
 			resource: resource,
 			cfg:      params.Config,
 		},
-		tallyScope: params.TallyScope,
-		zapLogger:  zapLogger.Named("scanner"),
+		tallyScope:               params.TallyScope,
+		zapLogger:                zapLogger.Named("scanner"),
+		startWorkflowWithRetryFn: workercommon.StartWorkflowWithRetry,
+		newWorkerFn:              worker.New,
 	}
 
 }
@@ -160,15 +165,18 @@ func (s *Scanner) Start() error {
 	}
 
 	for _, tl := range workerTaskListNames {
-		if err := worker.New(s.context.resource.GetSDKClient(), common.SystemLocalDomainName, tl, workerOpts).Start(); err != nil {
+		s.zapLogger.Info("Starting worker for task list", zap.String("TaskList", tl))
+		if err := s.newWorkerFn(s.context.resource.GetSDKClient(), common.SystemLocalDomainName, tl, workerOpts).Start(); err != nil {
+			s.zapLogger.Error("Failed to start worker", zap.String("TaskList", tl), zap.Error(err))
 			return err
 		}
 	}
+	s.zapLogger.Info("Scanner started successfully", zap.Strings("workerTaskListNames", workerTaskListNames))
 	return nil
 }
 
 func (s *Scanner) startScanner(ctx context.Context, options client.StartWorkflowOptions, workflowName string) context.Context {
-	go workercommon.StartWorkflowWithRetry(workflowName, scannerStartUpDelay, s.context.resource, func(client client.Client) error {
+	go s.startWorkflowWithRetryFn(workflowName, scannerStartUpDelay, s.context.resource, func(client client.Client) error {
 		return s.startWorkflow(client, options, workflowName, nil)
 	})
 	return NewScannerContext(ctx, workflowName, s.context)
@@ -185,7 +193,7 @@ func (s *Scanner) startShardScanner(
 			config.ScannerWFTypeName,
 			shardscanner.NewShardScannerContext(s.context.resource, config),
 		)
-		go workercommon.StartWorkflowWithRetry(
+		go s.startWorkflowWithRetryFn(
 			config.ScannerWFTypeName,
 			scannerStartUpDelay,
 			s.context.resource,
@@ -209,7 +217,7 @@ func (s *Scanner) startShardScanner(
 			config.FixerWFTypeName,
 			shardscanner.NewShardFixerContext(s.context.resource, config),
 		)
-		go workercommon.StartWorkflowWithRetry(
+		go s.startWorkflowWithRetryFn(
 			config.FixerWFTypeName,
 			scannerStartUpDelay,
 			s.context.resource,
@@ -243,12 +251,16 @@ func (s *Scanner) startWorkflow(
 
 	cancel()
 
-	switch err.(type) {
-	case *shared.WorkflowExecutionAlreadyStartedError, nil:
+	if cadence.IsWorkflowExecutionAlreadyStartedError(err) {
+		s.zapLogger.Error("Workflow had already started", zap.String("workflowType", workflowType), zap.Error(err))
 		return nil
-	default:
-		return err
 	}
+	if err != nil {
+		s.zapLogger.Error("Failed to start workflow", zap.String("workflowType", workflowType), zap.Error(err))
+	} else {
+		s.zapLogger.Info("Workflow started", zap.String("workflowType", workflowType))
+	}
+	return err
 }
 
 // NewScannerContext provides context to be used as background activity context

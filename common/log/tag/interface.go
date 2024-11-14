@@ -69,7 +69,7 @@ func newBoolTag(key string, value bool) Tag {
 }
 
 func newErrorTag(key string, value error) Tag {
-	//NOTE zap already chosen "error" as key
+	// NOTE zap already chosen "error" as key
 	return Tag{
 		field: zap.Error(value),
 	}
@@ -96,5 +96,11 @@ func newObjectTag(key string, value interface{}) Tag {
 func newPredefinedStringTag(key string, value string) Tag {
 	return Tag{
 		field: zap.String(key, value),
+	}
+}
+
+func newPredefinedDynamicTag(key string, value interface{}) Tag {
+	return Tag{
+		field: zap.Any(key, value),
 	}
 }

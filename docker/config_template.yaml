@@ -97,6 +97,7 @@ persistence:
 
 ringpop:
     name: cadence
+    broadcastAddress: {{ default .Env.BROADCAST_ADDRESS "" }}
     bootstrapMode: {{ default .Env.RINGPOP_BOOTSTRAP_MODE "hosts" }}
     {{- if .Env.RINGPOP_SEEDS }}
     bootstrapHosts:
@@ -118,6 +119,14 @@ services:
             port: {{ default .Env.FRONTEND_PORT "7933" }}
             grpcPort: {{ default .Env.GRPC_FRONTEND_PORT "7833" }}
             bindOnIP: {{ default .Env.BIND_ON_IP "127.0.0.1" }}
+            {{- if .Env.FRONTEND_HTTP_PORT }}
+            http:
+                port: {{ .Env.FRONTEND_HTTP_PORT }}
+                procedures:
+                {{- range $seed := (split .Env.FRONTEND_HTTP_PROCEDURES ",") }}
+                    - {{ . }}
+                {{- end }}
+            {{- end }}
         {{- if .Env.STATSD_ENDPOINT }}
         metrics:
             statsd:
@@ -134,7 +143,11 @@ services:
                 timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
                 listenAddress: {{ .Env.PROMETHEUS_ENDPOINT_0 }}
         {{- end }}
-
+        {{- if .Env.FRONTEND_PPROF_PORT }}
+        pprof:
+            port: {{ .Env.FRONTEND_PPROF_PORT }}
+            host: {{ default .Env.BIND_ON_IP "localhost" }}
+        {{- end }}
     matching:
         rpc:
             port: {{ default .Env.MATCHING_PORT "7935" }}
@@ -156,7 +169,11 @@ services:
                 timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
                 listenAddress: {{ .Env.PROMETHEUS_ENDPOINT_1 }}
         {{- end }}
-
+      {{- if .Env.MATCHING_PPROF_PORT }}
+        pprof:
+            port: {{ .Env.MATCHING_PPROF_PORT }}
+            host: {{ default .Env.BIND_ON_IP "localhost" }}
+      {{- end }}
     history:
         rpc:
             port: {{ default .Env.HISTORY_PORT "7934" }}
@@ -178,7 +195,11 @@ services:
                 timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
                 listenAddress: {{ .Env.PROMETHEUS_ENDPOINT_2 }}
         {{- end }}
-
+      {{- if .Env.HISTORY_PPROF_PORT }}
+        pprof:
+            port: {{ .Env.HISTORY_PPROF_PORT }}
+            host: {{ default .Env.BIND_ON_IP "localhost" }}
+      {{- end }}
     worker:
         rpc:
             port: {{ default .Env.WORKER_PORT "7939" }}
@@ -199,20 +220,23 @@ services:
                 timerType: {{ default .Env.PROMETHEUS_TIMER_TYPE "histogram" }}
                 listenAddress: {{ .Env.PROMETHEUS_ENDPOINT_3 }}
         {{- end }}
-
+      {{- if .Env.WORKER_PPROF_PORT }}
+        pprof:
+            port: {{ .Env.WORKER_PPROF_PORT }}
+            host: {{ default .Env.BIND_ON_IP "localhost" }}
+      {{- end }}
 clusterGroupMetadata:
-    enableGlobalDomain: {{ default .Env.ENABLE_GLOBAL_DOMAIN "true" }}
     clusterRedirectionPolicy:
         policy: {{ default .Env.CLUSTER_REDIRECT_POLICY "all-domain-apis-forwarding" }}
     failoverVersionIncrement: 10
-    primaryClusterName: "primary"
+    primaryClusterName: "cluster0"
     {{- if .Env.IS_NOT_PRIMARY }}
-    currentClusterName: "secondary"
+    currentClusterName: "cluster1"
     {{- else }}
-    currentClusterName: "primary"
+    currentClusterName: "cluster0"
     {{- end }}
     clusterGroup:
-        primary:
+        cluster0:
             enabled: true
             initialFailoverVersion: 0
             rpcName: "cadence-frontend"
@@ -223,7 +247,7 @@ clusterGroupMetadata:
                 type: "OAuthAuthorization"
                 privateKey: {{ default .Env.OAUTH_PRIVATE_KEY "" }}
         {{- if .Env.ENABLE_GLOBAL_DOMAIN }}
-        secondary:
+        cluster1:
             enabled: true
             initialFailoverVersion: 2
             rpcName: "cadence-frontend"
@@ -297,3 +321,14 @@ authorization:
         jwtCredentials:
             algorithm: "RS256"
             publicKey: {{ default .Env.OAUTH_PUBLIC_KEY "" }}
+
+{{- if .Env.ASYNC_WF_KAFKA_QUEUE_ENABLED }}
+asyncWorkflowQueues:
+  queue1:
+    type: "kafka"
+    config:
+      connection:
+        brokers:
+          - {{ default .Env.KAFKA_SEEDS "" }}:{{ default .Env.KAFKA_PORT "9092" }}
+      topic: {{ default .Env.ASYNC_WF_KAFKA_QUEUE_TOPIC "default-topic" }}
+{{- end }}

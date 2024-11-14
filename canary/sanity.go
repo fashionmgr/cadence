@@ -21,7 +21,10 @@
 package canary
 
 import (
+	"fmt"
+
 	"go.uber.org/cadence/workflow"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -41,6 +44,7 @@ var sanityChildWFList = []string{
 	wfTypeHistoryArchival,
 	wfTypeVisibilityArchival,
 	wfTypeBatch,
+	wfTypeCrossClusterParent,
 }
 
 func init() {
@@ -93,6 +97,7 @@ func forkChildWorkflows(ctx workflow.Context, domain string, names []string) (wo
 		selector.AddFuture(future, func(f workflow.Future) {
 			if err := f.Get(ctx, nil); err != nil {
 				workflow.GetLogger(ctx).Error("child workflow failed", zap.Error(err))
+				err = fmt.Errorf("child workflow %s failed: %w", childName, err)
 				resultC.Send(ctx, err)
 				return
 			}
@@ -111,9 +116,7 @@ func joinChildWorkflows(ctx workflow.Context, names []string, selector workflow.
 		selector.Select(ctx)
 		var err1 error
 		resultC.Receive(ctx, &err1)
-		if err1 != nil {
-			err = err1
-		}
+		err = multierr.Append(err, err1)
 	}
 	return err
 }

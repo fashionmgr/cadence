@@ -39,6 +39,7 @@ CREATE TYPE workflow_execution (
   domain_id                        uuid,
   workflow_id                      text,
   run_id                           uuid,
+  first_run_id                     uuid,   -- Run ID of the first run of a ContinuedAsNew workflow
   parent_domain_id                 uuid,   -- Domain ID of parent workflow which started the workflow execution
   parent_workflow_id               text,   -- ID of parent workflow which started the workflow execution
   parent_run_id                    uuid,   -- RunID of parent workflow which started the workflow execution
@@ -93,7 +94,8 @@ CREATE TYPE workflow_execution (
   auto_reset_points                blob, -- the resetting points for auto-reset feature
   auto_reset_points_encoding       text, -- encoding for auto_reset_points_data
   search_attributes                map<text, blob>,
-  memo                             map<text, blob>
+  memo                             map<text, blob>,
+  partition_config                 map<text, text>
 );
 
 -- Replication information for each cluster
@@ -254,8 +256,16 @@ CREATE TYPE task (
   workflow_id      text,
   run_id           uuid,
   schedule_id      bigint,
-  created_time     timestamp
+  created_time     timestamp,
+  partition_config map<text, text>
 );
+
+CREATE TYPE task_list_partition_config (
+  version              bigint,
+  num_read_partitions  int,
+  num_write_partitions int
+);
+
 
 CREATE TYPE task_list (
   domain_id        uuid,
@@ -263,7 +273,8 @@ CREATE TYPE task_list (
   type             int, -- enum TaskRowType {ActivityTask, DecisionTask}
   ack_level        bigint, -- task_id of the last acknowledged message
   kind             int, -- enum TaskListKind {Normal, Sticky}
-  last_updated     timestamp
+  last_updated     timestamp,
+  adaptive_partition_config frozen<task_list_partition_config>
 );
 
 CREATE TYPE domain (
@@ -286,6 +297,10 @@ CREATE TYPE domain_config (
   visibility_archival_uri text,
   bad_binaries    blob,
   bad_binaries_encoding blob,
+  isolation_groups blob,
+  isolation_groups_encoding text,
+  async_workflow_config blob,
+  async_workflow_config_encoding text,
 );
 
 CREATE TYPE cluster_replication_config (

@@ -22,11 +22,12 @@ package esutils
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
+	"testing"
 	"time"
 
 	"github.com/olivere/elastic/v7"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/require"
 )
 
 type (
@@ -45,47 +46,61 @@ func newV7Client(url string) (*v7Client, error) {
 	}, err
 }
 
-func (es *v7Client) PutIndexTemplate(s suite.Suite, templateConfigFile, templateName string) {
+func (es *v7Client) PutIndexTemplate(t *testing.T, templateConfigFile, templateName string) {
 	// This function is used exclusively in tests. Excluding it from security checks.
 	// #nosec
-	template, err := ioutil.ReadFile(templateConfigFile)
-	s.Require().NoError(err)
-	putTemplate, err := es.client.IndexPutTemplate(templateName).BodyString(string(template)).Do(createContext())
-	s.Require().NoError(err)
-	s.Require().True(putTemplate.Acknowledged)
+	template, err := os.ReadFile(templateConfigFile)
+	require.NoError(t, err)
+	ctx, cancel := createContext()
+	defer cancel()
+	putTemplate, err := es.client.IndexPutTemplate(templateName).BodyString(string(template)).Do(ctx)
+	require.NoError(t, err)
+	require.True(t, putTemplate.Acknowledged)
 }
 
-func (es *v7Client) CreateIndex(s suite.Suite, indexName string) {
-	exists, err := es.client.IndexExists(indexName).Do(createContext())
-	s.Require().NoError(err)
+func (es *v7Client) CreateIndex(t *testing.T, indexName string) {
+	ctx, cancel := createContext()
+	defer cancel()
+	exists, err := es.client.IndexExists(indexName).Do(ctx)
+	require.NoError(t, err)
+
 	if exists {
-		deleteTestIndex, err := es.client.DeleteIndex(indexName).Do(createContext())
-		s.Require().Nil(err)
-		s.Require().True(deleteTestIndex.Acknowledged)
+		ctx, cancel := createContext()
+		defer cancel()
+		deleteTestIndex, err := es.client.DeleteIndex(indexName).Do(ctx)
+		require.Nil(t, err)
+		require.True(t, deleteTestIndex.Acknowledged)
 	}
 
-	createTestIndex, err := es.client.CreateIndex(indexName).Do(createContext())
-	s.Require().NoError(err)
-	s.Require().True(createTestIndex.Acknowledged)
+	ctx, cancel = createContext()
+	defer cancel()
+	createTestIndex, err := es.client.CreateIndex(indexName).Do(ctx)
+	require.NoError(t, err)
+	require.True(t, createTestIndex.Acknowledged)
 }
 
-func (es *v7Client) DeleteIndex(s suite.Suite, indexName string) {
-	deleteTestIndex, err := es.client.DeleteIndex(indexName).Do(createContext())
-	s.Nil(err)
-	s.True(deleteTestIndex.Acknowledged)
+func (es *v7Client) DeleteIndex(t *testing.T, indexName string) {
+	ctx, cancel := createContext()
+	defer cancel()
+	deleteTestIndex, err := es.client.DeleteIndex(indexName).Do(ctx)
+	require.Nil(t, err)
+	require.True(t, deleteTestIndex.Acknowledged)
 }
 
-func (es *v7Client) PutMaxResultWindow(indexName string, maxResultWindow int) error {
+func (es *v7Client) PutMaxResultWindow(t *testing.T, indexName string, maxResultWindow int) error {
+	ctx, cancel := createContext()
+	defer cancel()
 	_, err := es.client.IndexPutSettings(indexName).
 		BodyString(fmt.Sprintf(`{"max_result_window" : %d}`, maxResultWindow)).
-		Do(createContext())
+		Do(ctx)
+	require.NoError(t, err)
 	return err
 }
 
-func (es *v7Client) GetMaxResultWindow(indexName string) (string, error) {
-	settings, err := es.client.IndexGetSettings(indexName).Do(createContext())
-	if err != nil {
-		return "", err
-	}
+func (es *v7Client) GetMaxResultWindow(t *testing.T, indexName string) (string, error) {
+	ctx, cancel := createContext()
+	defer cancel()
+	settings, err := es.client.IndexGetSettings(indexName).Do(ctx)
+	require.NoError(t, err)
 	return settings[indexName].Settings["index"].(map[string]interface{})["max_result_window"].(string), nil
 }

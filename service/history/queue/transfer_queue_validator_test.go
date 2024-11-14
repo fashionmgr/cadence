@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	gomock "github.com/golang/mock/gomock"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -34,6 +34,7 @@ import (
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/metrics/mocks"
 	"github.com/uber/cadence/common/persistence"
+	hcommon "github.com/uber/cadence/service/history/common"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
@@ -68,6 +69,7 @@ func (s *transferQueueValidatorSuite) SetupTest() {
 
 	s.controller = gomock.NewController(s.T())
 	s.mockShard = shard.NewTestContext(
+		s.T(),
 		s.controller,
 		&persistence.ShardInfo{
 			RangeID:          1,
@@ -112,59 +114,59 @@ func (s *transferQueueValidatorSuite) TearDownTest() {
 func (s *transferQueueValidatorSuite) TestAddTasks_NoTaskDropped() {
 	executionInfo := &persistence.WorkflowExecutionInfo{}
 	tasks := []persistence.Task{
-		&persistence.DecisionTask{TaskID: 0},
-		&persistence.DecisionTask{TaskID: 1},
-		&persistence.DecisionTask{TaskID: 2},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 0}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 1}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 2}},
 	}
 	expectedPendingTasksLen := len(tasks)
 
-	s.validator.addTasks(executionInfo, tasks)
+	s.validator.addTasks(&hcommon.NotifyTaskInfo{ExecutionInfo: executionInfo, Tasks: tasks, PersistenceError: false})
 	s.Len(s.validator.pendingTaskInfos, expectedPendingTasksLen)
 
 	tasks = []persistence.Task{
-		&persistence.DecisionTask{TaskID: 4},
-		&persistence.DecisionTask{TaskID: 5},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 4}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 5}},
 	}
 	expectedPendingTasksLen += len(tasks)
 
-	s.validator.addTasks(executionInfo, tasks)
+	s.validator.addTasks(&hcommon.NotifyTaskInfo{ExecutionInfo: executionInfo, Tasks: tasks, PersistenceError: false})
 	s.Len(s.validator.pendingTaskInfos, expectedPendingTasksLen)
 }
 
 func (s *transferQueueValidatorSuite) TestAddTasks_TaskDropped() {
 	executionInfo := &persistence.WorkflowExecutionInfo{}
 	tasks := []persistence.Task{
-		&persistence.DecisionTask{TaskID: 0},
-		&persistence.DecisionTask{TaskID: 1},
-		&persistence.DecisionTask{TaskID: 2},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 0}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 1}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 2}},
 	}
 	expectedPendingTasksLen := len(tasks)
 
-	s.validator.addTasks(executionInfo, tasks)
+	s.validator.addTasks(&hcommon.NotifyTaskInfo{ExecutionInfo: executionInfo, Tasks: tasks, PersistenceError: false})
 	s.Len(s.validator.pendingTaskInfos, expectedPendingTasksLen)
 
 	tasks = []persistence.Task{}
 	for i := 0; i != defaultMaxPendingTasksSize; i++ {
-		tasks = append(tasks, &persistence.DecisionTask{TaskID: int64(i + expectedPendingTasksLen)})
+		tasks = append(tasks, &persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: int64(i + expectedPendingTasksLen)}})
 	}
 
 	numDroppedTasks := expectedPendingTasksLen + len(tasks) - defaultMaxPendingTasksSize
 	s.mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Times(1)
 	s.mockMetricScope.On("AddCounter", metrics.QueueValidatorDropTaskCounter, int64(numDroppedTasks)).Times(1)
 
-	s.validator.addTasks(executionInfo, tasks)
+	s.validator.addTasks(&hcommon.NotifyTaskInfo{ExecutionInfo: executionInfo, Tasks: tasks, PersistenceError: false})
 	s.Len(s.validator.pendingTaskInfos, defaultMaxPendingTasksSize)
 }
 
 func (s *transferQueueValidatorSuite) TestAckTasks_NoTaskLost() {
 	executionInfo := &persistence.WorkflowExecutionInfo{}
 	pendingTasks := []persistence.Task{
-		&persistence.DecisionTask{TaskID: 0},
-		&persistence.DecisionTask{TaskID: 1},
-		&persistence.DecisionTask{TaskID: 2},
-		&persistence.DecisionTask{TaskID: 100},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 0}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 1}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 2}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 100}},
 	}
-	s.validator.addTasks(executionInfo, pendingTasks)
+	s.validator.addTasks(&hcommon.NotifyTaskInfo{ExecutionInfo: executionInfo, Tasks: pendingTasks, PersistenceError: false})
 
 	loadedTasks := make(map[task.Key]task.Task, len(pendingTasks))
 	for _, pendingTask := range pendingTasks[:len(pendingTasks)-1] {
@@ -191,11 +193,11 @@ func (s *transferQueueValidatorSuite) TestAckTasks_NoTaskLost() {
 func (s *transferQueueValidatorSuite) TestAckTasks_TaskLost() {
 	executionInfo := &persistence.WorkflowExecutionInfo{}
 	pendingTasks := []persistence.Task{
-		&persistence.DecisionTask{TaskID: 0},
-		&persistence.DecisionTask{TaskID: 1},
-		&persistence.DecisionTask{TaskID: 2},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 0}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 1}},
+		&persistence.DecisionTask{TaskData: persistence.TaskData{TaskID: 2}},
 	}
-	s.validator.addTasks(executionInfo, pendingTasks)
+	s.validator.addTasks(&hcommon.NotifyTaskInfo{ExecutionInfo: executionInfo, Tasks: pendingTasks, PersistenceError: false})
 
 	loadedTasks := make(map[task.Key]task.Task, len(pendingTasks))
 	for _, pendingTask := range pendingTasks[1:] {

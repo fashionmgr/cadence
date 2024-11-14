@@ -24,7 +24,9 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/pborman/uuid"
@@ -44,6 +46,7 @@ import (
 
 var (
 	errDomainUpdateTooFrequent = &types.ServiceBusyError{Message: "Domain update too frequent."}
+	errInvalidDomainName       = &types.BadRequestError{Message: "Domain name can only include alphanumeric and dash characters."}
 )
 
 type (
@@ -69,6 +72,14 @@ type (
 			ctx context.Context,
 			updateRequest *types.UpdateDomainRequest,
 		) (*types.UpdateDomainResponse, error)
+		UpdateIsolationGroups(
+			ctx context.Context,
+			updateRequest types.UpdateDomainIsolationGroupsRequest,
+		) error
+		UpdateAsyncWorkflowConfiguraton(
+			ctx context.Context,
+			updateRequest types.UpdateDomainAsyncWorkflowConfiguratonRequest,
+		) error
 	}
 
 	// handlerImpl is the domain operation handler implementation
@@ -91,6 +102,20 @@ type (
 		RequiredDomainDataKeys dynamicconfig.MapPropertyFn
 		MaxBadBinaryCount      dynamicconfig.IntPropertyFnWithDomainFilter
 		FailoverCoolDown       dynamicconfig.DurationPropertyFnWithDomainFilter
+		FailoverHistoryMaxSize dynamicconfig.IntPropertyFnWithDomainFilter
+	}
+
+	// FailoverEvent is the failover information to be stored for each failover event in domain data
+	FailoverEvent struct {
+		EventTime    time.Time `json:"eventTime"`
+		FromCluster  string    `json:"fromCluster"`
+		ToCluster    string    `json:"toCluster"`
+		FailoverType string    `json:"failoverType"`
+	}
+
+	// FailoverHistory is the history of failovers for a domain limited by the FailoverHistoryMaxSize config
+	FailoverHistory struct {
+		FailoverEvents []FailoverEvent
 	}
 )
 
@@ -126,16 +151,9 @@ func (d *handlerImpl) RegisterDomain(
 	registerRequest *types.RegisterDomainRequest,
 ) error {
 
-	if !d.clusterMetadata.IsGlobalDomainEnabled() {
-		if registerRequest.IsGlobalDomain {
-			return &types.BadRequestError{Message: "Cannot register global domain when not enabled. Please update config to enable global domain(recommended), " +
-				"or specify explicit parameter to create legacy local domain. Global domain of single cluster has zero overhead, but only advantages for future migration and fail over. Please check Cadence documentation for more details."}
-		}
-	} else {
-		// cluster global domain enabled
-		if !d.clusterMetadata.IsPrimaryCluster() && registerRequest.GetIsGlobalDomain() {
-			return errNotPrimaryCluster
-		}
+	// cluster global domain enabled
+	if !d.clusterMetadata.IsPrimaryCluster() && registerRequest.GetIsGlobalDomain() {
+		return errNotPrimaryCluster
 	}
 
 	// first check if the name is already registered as the local domain
@@ -149,6 +167,15 @@ func (d *handlerImpl) RegisterDomain(
 	default:
 		// other err
 		return err
+	}
+
+	// input validation on domain name
+	matchedRegex, err := regexp.MatchString("^[a-zA-Z0-9-]+$", registerRequest.GetName())
+	if err != nil {
+		return err
+	}
+	if !matchedRegex {
+		return errInvalidDomainName
 	}
 
 	activeClusterName := d.clusterMetadata.GetCurrentClusterName()
@@ -245,7 +272,7 @@ func (d *handlerImpl) RegisterDomain(
 
 	failoverVersion := common.EmptyVersion
 	if registerRequest.GetIsGlobalDomain() {
-		failoverVersion = d.clusterMetadata.GetNextFailoverVersion(activeClusterName, 0)
+		failoverVersion = d.clusterMetadata.GetNextFailoverVersion(activeClusterName, 0, registerRequest.Name)
 	}
 
 	domainRequest := &persistence.CreateDomainRequest{
@@ -400,29 +427,15 @@ func (d *handlerImpl) UpdateDomain(
 	configurationChanged := false
 
 	// Update history archival state
-	historyArchivalState, historyArchivalConfigChanged, err := d.getHistoryArchivalState(
-		config,
-		updateRequest,
-	)
+	historyArchivalConfigChanged, err = d.updateHistoryArchivalState(config, updateRequest)
 	if err != nil {
 		return nil, err
-	}
-	if historyArchivalConfigChanged {
-		config.HistoryArchivalStatus = historyArchivalState.Status
-		config.HistoryArchivalURI = historyArchivalState.URI
 	}
 
 	// Update visibility archival state
-	visibilityArchivalState, visibilityArchivalConfigChanged, err := d.getVisibilityArchivalState(
-		config,
-		updateRequest,
-	)
+	visibilityArchivalConfigChanged, err = d.updateVisibilityArchivalState(config, updateRequest)
 	if err != nil {
 		return nil, err
-	}
-	if visibilityArchivalConfigChanged {
-		config.VisibilityArchivalStatus = visibilityArchivalState.Status
-		config.VisibilityArchivalURI = visibilityArchivalState.URI
 	}
 
 	// Update domain info
@@ -430,6 +443,7 @@ func (d *handlerImpl) UpdateDomain(
 		updateRequest,
 		info,
 	)
+
 	// Update domain config
 	config, domainConfigChanged, err := d.updateDomainConfiguration(
 		updateRequest.GetName(),
@@ -460,51 +474,30 @@ func (d *handlerImpl) UpdateDomain(
 
 	// Handle graceful failover request
 	if updateRequest.FailoverTimeoutInSeconds != nil {
-		// must update active cluster on a global domain
-		if !activeClusterChanged || !isGlobalDomain {
-			return nil, errInvalidGracefulFailover
+		gracefulFailoverEndTime, previousFailoverVersion, err = d.handleGracefulFailover(
+			updateRequest,
+			replicationConfig,
+			currentActiveCluster,
+			gracefulFailoverEndTime,
+			failoverVersion,
+			activeClusterChanged,
+			isGlobalDomain,
+		)
+		if err != nil {
+			return nil, err
 		}
-		// must start with the passive -> active cluster
-		if replicationConfig.ActiveClusterName != d.clusterMetadata.GetCurrentClusterName() {
-			return nil, errCannotDoGracefulFailoverFromCluster
-		}
-		if replicationConfig.ActiveClusterName == currentActiveCluster {
-			return nil, errGracefulFailoverInActiveCluster
-		}
-		// cannot have concurrent failover
-		if gracefulFailoverEndTime != nil {
-			return nil, errOngoingGracefulFailover
-		}
-		endTime := d.timeSource.Now().Add(time.Duration(updateRequest.GetFailoverTimeoutInSeconds()) * time.Second).UnixNano()
-		gracefulFailoverEndTime = &endTime
-		previousFailoverVersion = failoverVersion
 	}
 
 	configurationChanged = historyArchivalConfigChanged || visibilityArchivalConfigChanged || domainInfoChanged || domainConfigChanged || deleteBinaryChanged || replicationConfigChanged
 
-	if err := d.domainAttrValidator.validateDomainConfig(config); err != nil {
+	if err = d.domainAttrValidator.validateDomainConfig(config); err != nil {
 		return nil, err
 	}
-	if isGlobalDomain {
-		if err := d.domainAttrValidator.validateDomainReplicationConfigForGlobalDomain(
-			replicationConfig,
-		); err != nil {
-			return nil, err
-		}
 
-		if configurationChanged && activeClusterChanged {
-			return nil, errCannotDoDomainFailoverAndUpdate
-		}
+	err = d.validateDomainReplicationConfigForUpdateDomain(replicationConfig, isGlobalDomain, configurationChanged, activeClusterChanged)
 
-		if !activeClusterChanged && !d.clusterMetadata.IsPrimaryCluster() {
-			return nil, errNotPrimaryCluster
-		}
-	} else {
-		if err := d.domainAttrValidator.validateDomainReplicationConfigForLocalDomain(
-			replicationConfig,
-		); err != nil {
-			return nil, err
-		}
+	if err != nil {
+		return nil, err
 	}
 
 	if configurationChanged || activeClusterChanged {
@@ -518,9 +511,14 @@ func (d *handlerImpl) UpdateDomain(
 		if configurationChanged {
 			configVersion++
 		}
+
 		if activeClusterChanged && isGlobalDomain {
+			var failoverType common.FailoverType = common.FailoverTypeGrace
+
 			// Force failover cleans graceful failover state
 			if updateRequest.FailoverTimeoutInSeconds == nil {
+				failoverType = common.FailoverTypeForce
+
 				// force failover cleanup graceful failover state
 				gracefulFailoverEndTime = nil
 				previousFailoverVersion = common.InitialPreviousFailoverVersion
@@ -528,30 +526,38 @@ func (d *handlerImpl) UpdateDomain(
 			failoverVersion = d.clusterMetadata.GetNextFailoverVersion(
 				replicationConfig.ActiveClusterName,
 				failoverVersion,
+				updateRequest.Name,
 			)
+			err = updateFailoverHistory(info, d.config, now, currentActiveCluster, *updateRequest.ActiveClusterName, failoverType)
+			if err != nil {
+				d.logger.Warn("failed to update failover history", tag.Error(err))
+			}
+
 			failoverNotificationVersion = notificationVersion
 		}
 		lastUpdatedTime = now
-		updateReq := &persistence.UpdateDomainRequest{
-			Info:                        info,
-			Config:                      config,
-			ReplicationConfig:           replicationConfig,
-			ConfigVersion:               configVersion,
-			FailoverVersion:             failoverVersion,
-			FailoverNotificationVersion: failoverNotificationVersion,
-			FailoverEndTime:             gracefulFailoverEndTime,
-			PreviousFailoverVersion:     previousFailoverVersion,
-			LastUpdatedTime:             lastUpdatedTime.UnixNano(),
-			NotificationVersion:         notificationVersion,
-		}
-		err = d.domainManager.UpdateDomain(ctx, updateReq)
+
+		updateReq := createUpdateRequest(
+			info,
+			config,
+			replicationConfig,
+			configVersion,
+			failoverVersion,
+			failoverNotificationVersion,
+			gracefulFailoverEndTime,
+			previousFailoverVersion,
+			lastUpdatedTime,
+			notificationVersion,
+		)
+
+		err = d.domainManager.UpdateDomain(ctx, &updateReq)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	if isGlobalDomain {
-		if err := d.domainReplicator.HandleTransmissionTask(
+		if err = d.domainReplicator.HandleTransmissionTask(
 			ctx,
 			types.DomainOperationUpdate,
 			info,
@@ -606,19 +612,20 @@ func (d *handlerImpl) DeprecateDomain(
 	getResponse.ConfigVersion = getResponse.ConfigVersion + 1
 	getResponse.Info.Status = persistence.DomainStatusDeprecated
 
-	updateReq := &persistence.UpdateDomainRequest{
-		Info:                        getResponse.Info,
-		Config:                      getResponse.Config,
-		ReplicationConfig:           getResponse.ReplicationConfig,
-		ConfigVersion:               getResponse.ConfigVersion,
-		FailoverVersion:             getResponse.FailoverVersion,
-		FailoverNotificationVersion: getResponse.FailoverNotificationVersion,
-		FailoverEndTime:             getResponse.FailoverEndTime,
-		PreviousFailoverVersion:     getResponse.PreviousFailoverVersion,
-		LastUpdatedTime:             d.timeSource.Now().UnixNano(),
-		NotificationVersion:         notificationVersion,
-	}
-	err = d.domainManager.UpdateDomain(ctx, updateReq)
+	updateReq := createUpdateRequest(
+		getResponse.Info,
+		getResponse.Config,
+		getResponse.ReplicationConfig,
+		getResponse.ConfigVersion,
+		getResponse.FailoverVersion,
+		getResponse.FailoverNotificationVersion,
+		getResponse.FailoverEndTime,
+		getResponse.PreviousFailoverVersion,
+		d.timeSource.Now(),
+		notificationVersion,
+	)
+
+	err = d.domainManager.UpdateDomain(ctx, &updateReq)
 	if err != nil {
 		return err
 	}
@@ -646,6 +653,209 @@ func (d *handlerImpl) DeprecateDomain(
 	return nil
 }
 
+// UpdateIsolationGroups is used for draining and undraining of isolation-groups for a domain.
+// Like the isolation-group API, this controller expects Upsert semantics for
+// isolation-groups and does not modify any other domain information.
+//
+// Isolation-groups are regional in their configuration scope, so it's expected that this upsert
+// includes configuration for both clusters every time.
+//
+// The update is handled like other domain updates in that they expected to be replicated. So
+// unlike the global isolation-group API it shouldn't be necessary to call
+func (d *handlerImpl) UpdateIsolationGroups(
+	ctx context.Context,
+	updateRequest types.UpdateDomainIsolationGroupsRequest,
+) error {
+
+	// must get the metadata (notificationVersion) first
+	// this version can be regarded as the lock on the v2 domain table
+	// and since we do not know which table will return the domain afterwards
+	// this call has to be made
+	metadata, err := d.domainManager.GetMetadata(ctx)
+	if err != nil {
+		return err
+	}
+	notificationVersion := metadata.NotificationVersion
+
+	if updateRequest.IsolationGroups == nil {
+		return fmt.Errorf("invalid request, isolationGroup configuration must be set: Got: %v", updateRequest)
+	}
+
+	currentDomainConfig, err := d.domainManager.GetDomain(ctx, &persistence.GetDomainRequest{Name: updateRequest.Domain})
+	if err != nil {
+		return err
+	}
+	if currentDomainConfig.Config == nil {
+		return fmt.Errorf("unable to load config for domain as expected")
+	}
+
+	configVersion := currentDomainConfig.ConfigVersion
+	lastUpdatedTime := time.Unix(0, currentDomainConfig.LastUpdatedTime)
+
+	// Check the failover cool down time
+	if lastUpdatedTime.Add(d.config.FailoverCoolDown(currentDomainConfig.Info.Name)).After(d.timeSource.Now()) {
+		return errDomainUpdateTooFrequent
+	}
+
+	if !d.clusterMetadata.IsPrimaryCluster() && currentDomainConfig.IsGlobalDomain {
+		return errNotPrimaryCluster
+	}
+
+	configVersion++
+	lastUpdatedTime = d.timeSource.Now()
+
+	// Mutate the domain config to perform the isolation-group update
+	currentDomainConfig.Config.IsolationGroups = updateRequest.IsolationGroups
+
+	updateReq := createUpdateRequest(
+		currentDomainConfig.Info,
+		currentDomainConfig.Config,
+		currentDomainConfig.ReplicationConfig,
+		configVersion,
+		currentDomainConfig.FailoverVersion,
+		currentDomainConfig.FailoverNotificationVersion,
+		currentDomainConfig.FailoverEndTime,
+		currentDomainConfig.PreviousFailoverVersion,
+		lastUpdatedTime,
+		notificationVersion,
+	)
+
+	err = d.domainManager.UpdateDomain(ctx, &updateReq)
+	if err != nil {
+		return err
+	}
+
+	if currentDomainConfig.IsGlobalDomain {
+		// One might reasonably wonder what value there is in replication of isolation-group information - info which is
+		// regional and therefore of no value to the other region?
+		// Probably not a lot, in and of itself, however, the isolation-group information is stored
+		// in the domain configuration fields in the domain tables. Access and updates to those records is
+		// done through a replicated mechanism with explicit versioning and conflict resolution.
+		// Therefore, in order to avoid making an already complex mechanisim much more difficult to understand,
+		// the data is replicated in the same way so as to try and make things less confusing when both codepaths
+		// are updating the table:
+		// - versions like the confiugration version are updated in the same manner
+		// - the last-updated timestamps are updated in the same manner
+		if err := d.domainReplicator.HandleTransmissionTask(
+			ctx,
+			types.DomainOperationUpdate,
+			currentDomainConfig.Info,
+			currentDomainConfig.Config,
+			currentDomainConfig.ReplicationConfig,
+			configVersion,
+			currentDomainConfig.FailoverVersion,
+			currentDomainConfig.PreviousFailoverVersion,
+			currentDomainConfig.IsGlobalDomain,
+		); err != nil {
+			return err
+		}
+	}
+
+	d.logger.Info("isolation group update succeeded",
+		tag.WorkflowDomainName(currentDomainConfig.Info.Name),
+		tag.WorkflowDomainID(currentDomainConfig.Info.ID),
+	)
+	return nil
+}
+
+func (d *handlerImpl) UpdateAsyncWorkflowConfiguraton(
+	ctx context.Context,
+	updateRequest types.UpdateDomainAsyncWorkflowConfiguratonRequest,
+) error {
+	// must get the metadata (notificationVersion) first
+	// this version can be regarded as the lock on the v2 domain table
+	// and since we do not know which table will return the domain afterwards
+	// this call has to be made
+	metadata, err := d.domainManager.GetMetadata(ctx)
+	if err != nil {
+		return err
+	}
+	notificationVersion := metadata.NotificationVersion
+
+	currentDomainConfig, err := d.domainManager.GetDomain(ctx, &persistence.GetDomainRequest{Name: updateRequest.Domain})
+	if err != nil {
+		return err
+	}
+	if currentDomainConfig.Config == nil {
+		return fmt.Errorf("unable to load config for domain as expected")
+	}
+
+	configVersion := currentDomainConfig.ConfigVersion
+	lastUpdatedTime := time.Unix(0, currentDomainConfig.LastUpdatedTime)
+
+	// Check the failover cool down time
+	if lastUpdatedTime.Add(d.config.FailoverCoolDown(currentDomainConfig.Info.Name)).After(d.timeSource.Now()) {
+		return errDomainUpdateTooFrequent
+	}
+
+	if !d.clusterMetadata.IsPrimaryCluster() && currentDomainConfig.IsGlobalDomain {
+		return errNotPrimaryCluster
+	}
+
+	configVersion++
+	lastUpdatedTime = d.timeSource.Now()
+
+	// Mutate the domain config to perform the async wf config update
+	if updateRequest.Configuration == nil {
+		// this is a delete request so empty all the fields
+		currentDomainConfig.Config.AsyncWorkflowConfig = types.AsyncWorkflowConfiguration{}
+	} else {
+		currentDomainConfig.Config.AsyncWorkflowConfig = *updateRequest.Configuration
+	}
+
+	d.logger.Debug("async workflow queue config update", tag.Dynamic("config", currentDomainConfig))
+
+	updateReq := createUpdateRequest(
+		currentDomainConfig.Info,
+		currentDomainConfig.Config,
+		currentDomainConfig.ReplicationConfig,
+		configVersion,
+		currentDomainConfig.FailoverVersion,
+		currentDomainConfig.FailoverNotificationVersion,
+		currentDomainConfig.FailoverEndTime,
+		currentDomainConfig.PreviousFailoverVersion,
+		lastUpdatedTime,
+		notificationVersion,
+	)
+
+	err = d.domainManager.UpdateDomain(ctx, &updateReq)
+	if err != nil {
+		return err
+	}
+
+	if currentDomainConfig.IsGlobalDomain {
+		// One might reasonably wonder what value there is in replication of isolation-group information - info which is
+		// regional and therefore of no value to the other region?
+		// Probably not a lot, in and of itself, however, the isolation-group information is stored
+		// in the domain configuration fields in the domain tables. Access and updates to those records is
+		// done through a replicated mechanism with explicit versioning and conflict resolution.
+		// Therefore, in order to avoid making an already complex mechanisim much more difficult to understand,
+		// the data is replicated in the same way so as to try and make things less confusing when both codepaths
+		// are updating the table:
+		// - versions like the confiugration version are updated in the same manner
+		// - the last-updated timestamps are updated in the same manner
+		if err := d.domainReplicator.HandleTransmissionTask(
+			ctx,
+			types.DomainOperationUpdate,
+			currentDomainConfig.Info,
+			currentDomainConfig.Config,
+			currentDomainConfig.ReplicationConfig,
+			configVersion,
+			currentDomainConfig.FailoverVersion,
+			currentDomainConfig.PreviousFailoverVersion,
+			currentDomainConfig.IsGlobalDomain,
+		); err != nil {
+			return err
+		}
+	}
+
+	d.logger.Info("async workflow queue config update succeeded",
+		tag.WorkflowDomainName(currentDomainConfig.Info.Name),
+		tag.WorkflowDomainID(currentDomainConfig.Info.ID),
+	)
+	return nil
+}
+
 func (d *handlerImpl) createResponse(
 	info *persistence.DomainInfo,
 	config *persistence.DomainConfig,
@@ -669,6 +879,8 @@ func (d *handlerImpl) createResponse(
 		VisibilityArchivalStatus:               config.VisibilityArchivalStatus.Ptr(),
 		VisibilityArchivalURI:                  config.VisibilityArchivalURI,
 		BadBinaries:                            &config.BadBinaries,
+		IsolationGroups:                        &config.IsolationGroups,
+		AsyncWorkflowConfig:                    &config.AsyncWorkflowConfig,
 	}
 
 	clusters := []*types.ClusterReplicationConfiguration{}
@@ -809,6 +1021,23 @@ func (d *handlerImpl) getHistoryArchivalState(
 	return currentHistoryArchivalState, false, nil
 }
 
+func (d *handlerImpl) updateHistoryArchivalState(
+	config *persistence.DomainConfig,
+	updateRequest *types.UpdateDomainRequest,
+) (bool, error) {
+	historyArchivalState, changed, err := d.getHistoryArchivalState(config, updateRequest)
+	if err != nil {
+		return false, err
+	}
+
+	if changed {
+		config.HistoryArchivalStatus = historyArchivalState.Status
+		config.HistoryArchivalURI = historyArchivalState.URI
+	}
+
+	return changed, nil
+}
+
 func (d *handlerImpl) getVisibilityArchivalState(
 	config *persistence.DomainConfig,
 	updateRequest *types.UpdateDomainRequest,
@@ -830,6 +1059,26 @@ func (d *handlerImpl) getVisibilityArchivalState(
 		return currentVisibilityArchivalState.getNextState(archivalEvent, d.validateVisibilityArchivalURI)
 	}
 	return currentVisibilityArchivalState, false, nil
+}
+
+func (d *handlerImpl) updateVisibilityArchivalState(
+	config *persistence.DomainConfig,
+	updateRequest *types.UpdateDomainRequest,
+) (bool, error) {
+	visibilityArchivalState, changed, err := d.getVisibilityArchivalState(
+		config,
+		updateRequest,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	if changed {
+		config.VisibilityArchivalStatus = visibilityArchivalState.Status
+		config.VisibilityArchivalURI = visibilityArchivalState.URI
+	}
+
+	return changed, nil
 }
 
 func (d *handlerImpl) updateDomainInfo(
@@ -872,7 +1121,7 @@ func (d *handlerImpl) updateDomainConfiguration(
 	if updateRequest.BadBinaries != nil {
 		maxLength := d.config.MaxBadBinaryCount(domainName)
 		// only do merging
-		config.BadBinaries = d.mergeBadBinaries(config.BadBinaries.Binaries, updateRequest.BadBinaries.Binaries, time.Now().UnixNano())
+		config.BadBinaries = d.mergeBadBinaries(config.BadBinaries.Binaries, updateRequest.BadBinaries.Binaries, d.timeSource.Now().UnixNano())
 		if len(config.BadBinaries.Binaries) > maxLength {
 			return config, isConfigChanged, &types.BadRequestError{
 				Message: fmt.Sprintf("Total resetBinaries cannot exceed the max limit: %v", maxLength),
@@ -932,6 +1181,69 @@ func (d *handlerImpl) updateReplicationConfig(
 	return config, clusterUpdated, activeClusterUpdated, nil
 }
 
+func (d *handlerImpl) handleGracefulFailover(
+	updateRequest *types.UpdateDomainRequest,
+	replicationConfig *persistence.DomainReplicationConfig,
+	currentActiveCluster string,
+	gracefulFailoverEndTime *int64,
+	failoverVersion int64,
+	activeClusterChanged bool,
+	isGlobalDomain bool,
+) (*int64, int64, error) {
+	// must update active cluster on a global domain
+	if !activeClusterChanged || !isGlobalDomain {
+		return nil, 0, errInvalidGracefulFailover
+	}
+	// must start with the passive -> active cluster
+	if replicationConfig.ActiveClusterName != d.clusterMetadata.GetCurrentClusterName() {
+		return nil, 0, errCannotDoGracefulFailoverFromCluster
+	}
+	if replicationConfig.ActiveClusterName == currentActiveCluster {
+		return nil, 0, errGracefulFailoverInActiveCluster
+	}
+	// cannot have concurrent failover
+	if gracefulFailoverEndTime != nil {
+		return nil, 0, errOngoingGracefulFailover
+	}
+	endTime := d.timeSource.Now().Add(time.Duration(updateRequest.GetFailoverTimeoutInSeconds()) * time.Second).UnixNano()
+	gracefulFailoverEndTime = &endTime
+	previousFailoverVersion := failoverVersion
+
+	return gracefulFailoverEndTime, previousFailoverVersion, nil
+}
+
+func (d *handlerImpl) validateDomainReplicationConfigForUpdateDomain(
+	replicationConfig *persistence.DomainReplicationConfig,
+	isGlobalDomain bool,
+	configurationChanged bool,
+	activeClusterChanged bool,
+) error {
+	var err error
+	if isGlobalDomain {
+		if err = d.domainAttrValidator.validateDomainReplicationConfigForGlobalDomain(
+			replicationConfig,
+		); err != nil {
+			return err
+		}
+
+		if configurationChanged && activeClusterChanged {
+			return errCannotDoDomainFailoverAndUpdate
+		}
+
+		if !activeClusterChanged && !d.clusterMetadata.IsPrimaryCluster() {
+			return errNotPrimaryCluster
+		}
+	} else {
+		if err = d.domainAttrValidator.validateDomainReplicationConfigForLocalDomain(
+			replicationConfig,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func getDomainStatus(info *persistence.DomainInfo) *types.DomainStatus {
 	switch info.Status {
 	case persistence.DomainStatusRegistered:
@@ -944,6 +1256,66 @@ func getDomainStatus(info *persistence.DomainInfo) *types.DomainStatus {
 		v := types.DomainStatusDeleted
 		return &v
 	}
+
+	return nil
+}
+
+// Maps fields onto an updateDomain Request
+// it's really important that this explicitly calls out each field to ensure no fields get missed or dropped
+func createUpdateRequest(
+	info *persistence.DomainInfo,
+	config *persistence.DomainConfig,
+	replicationConfig *persistence.DomainReplicationConfig,
+	configVersion int64,
+	failoverVersion int64,
+	failoverNotificationVersion int64,
+	failoverEndTime *int64,
+	previousFailoverVersion int64,
+	lastUpdatedTime time.Time,
+	notificationVersion int64,
+) persistence.UpdateDomainRequest {
+	return persistence.UpdateDomainRequest{
+		Info:                        info,
+		Config:                      config,
+		ReplicationConfig:           replicationConfig,
+		ConfigVersion:               configVersion,
+		FailoverVersion:             failoverVersion,
+		FailoverNotificationVersion: failoverNotificationVersion,
+		FailoverEndTime:             failoverEndTime,
+		PreviousFailoverVersion:     previousFailoverVersion,
+		LastUpdatedTime:             lastUpdatedTime.UnixNano(),
+		NotificationVersion:         notificationVersion,
+	}
+}
+
+func updateFailoverHistory(
+	info *persistence.DomainInfo,
+	config Config,
+	eventTime time.Time,
+	fromCluster string,
+	toCluster string,
+	failoverType common.FailoverType,
+) error {
+	data := info.Data
+	if info.Data == nil {
+		data = make(map[string]string)
+	}
+
+	newFailoverEvent := FailoverEvent{EventTime: eventTime, FromCluster: fromCluster, ToCluster: toCluster, FailoverType: failoverType.String()}
+
+	var failoverHistory []FailoverEvent
+	_ = json.Unmarshal([]byte(data[common.DomainDataKeyForFailoverHistory]), &failoverHistory)
+
+	failoverHistory = append([]FailoverEvent{newFailoverEvent}, failoverHistory...)
+
+	// Truncate the history to the max size
+	failoverHistoryJSON, err := json.Marshal(failoverHistory[:common.MinInt(config.FailoverHistoryMaxSize(info.Name), len(failoverHistory))])
+	if err != nil {
+		return err
+	}
+	data[common.DomainDataKeyForFailoverHistory] = string(failoverHistoryJSON)
+
+	info.Data = data
 
 	return nil
 }

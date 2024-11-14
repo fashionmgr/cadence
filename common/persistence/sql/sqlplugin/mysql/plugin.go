@@ -240,18 +240,22 @@ func sanitizeAttr(inkey string, invalue string) (string, string) {
 }
 
 const (
-	testSchemaDir = "schema/mysql/v57"
+	testSchemaDir = "schema/mysql/v8"
 )
 
 // GetTestClusterOption return test options
-func GetTestClusterOption() *pt.TestBaseOptions {
+func GetTestClusterOption() (*pt.TestBaseOptions, error) {
+	port, err := environment.GetMySQLPort()
+	if err != nil {
+		return nil, err
+	}
 	return &pt.TestBaseOptions{
 		DBPluginName: PluginName,
 		DBUsername:   environment.GetMySQLUser(),
 		DBPassword:   environment.GetMySQLPassword(),
 		DBHost:       environment.GetMySQLAddress(),
-		DBPort:       environment.GetMySQLPort(),
+		DBPort:       port,
 		SchemaDir:    testSchemaDir,
 		StoreType:    config.StoreTypeSQL,
-	}
+	}, nil
 }

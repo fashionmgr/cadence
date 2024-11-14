@@ -20,9 +20,7 @@
 
 package testing
 
-import (
-	"math/rand"
-)
+import "math/rand"
 
 const (
 	emptyCandidateIndex = -1
@@ -72,13 +70,6 @@ type (
 		endVertex   Vertex
 		condition   func(...interface{}) bool
 		action      func()
-	}
-
-	// RevokeFunc is the condition inside edge
-	// The function used to check if the edge is accessible at a certain state
-	RevokeFunc struct {
-		methodName string        //nolint
-		input      []interface{} //nolint
 	}
 )
 
@@ -356,12 +347,6 @@ func (g *EventGenerator) pickRandomVertex(
 	return endVertex.DeepCopy()
 }
 
-func (g *EventGenerator) shouldBumpVersion() bool {
-	// 1//1000 to bump the version
-	//return g.dice.Intn(1000) == 500
-	return false
-}
-
 // NewHistoryEventEdge initials a new edge between two HistoryEventVertexes
 func NewHistoryEventEdge(
 	start Vertex,
@@ -464,12 +449,12 @@ func (he *HistoryEventVertex) SetName(
 }
 
 // Equals compares two vertex
-//func (he *HistoryEventVertex) Equals(
+// func (he *HistoryEventVertex) Equals(
 //	v Vertex,
-//) bool {
+// ) bool {
 //
 //	return strings.EqualFold(he.name, v.GetName()) && he.data == v.GetData()
-//}
+// }
 
 // SetIsStrictOnNextVertex sets if a vertex can be added between the current vertex and its child Vertices
 func (he *HistoryEventVertex) SetIsStrictOnNextVertex(

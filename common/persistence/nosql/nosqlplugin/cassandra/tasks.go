@@ -27,7 +27,8 @@ import (
 	"strings"
 	"time"
 
-	p "github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
 	"github.com/uber/cadence/common/types"
@@ -42,113 +43,6 @@ const (
 const (
 	taskListTaskID = -12345
 	initialRangeID = 1 // Id of the first range of a new task list
-)
-
-const (
-	templateTaskListType = `{` +
-		`domain_id: ?, ` +
-		`name: ?, ` +
-		`type: ?, ` +
-		`ack_level: ?, ` +
-		`kind: ?, ` +
-		`last_updated: ? ` +
-		`}`
-
-	templateTaskType = `{` +
-		`domain_id: ?, ` +
-		`workflow_id: ?, ` +
-		`run_id: ?, ` +
-		`schedule_id: ?,` +
-		`created_time: ? ` +
-		`}`
-
-	templateCreateTaskQuery = `INSERT INTO tasks (` +
-		`domain_id, task_list_name, task_list_type, type, task_id, task) ` +
-		`VALUES(?, ?, ?, ?, ?, ` + templateTaskType + `)`
-
-	templateCreateTaskWithTTLQuery = `INSERT INTO tasks (` +
-		`domain_id, task_list_name, task_list_type, type, task_id, task) ` +
-		`VALUES(?, ?, ?, ?, ?, ` + templateTaskType + `) USING TTL ?`
-
-	templateGetTasksQuery = `SELECT task_id, task ` +
-		`FROM tasks ` +
-		`WHERE domain_id = ? ` +
-		`and task_list_name = ? ` +
-		`and task_list_type = ? ` +
-		`and type = ? ` +
-		`and task_id > ? ` +
-		`and task_id <= ?`
-
-	templateCompleteTaskQuery = `DELETE FROM tasks ` +
-		`WHERE domain_id = ? ` +
-		`and task_list_name = ? ` +
-		`and task_list_type = ? ` +
-		`and type = ? ` +
-		`and task_id = ?`
-
-	templateCompleteTasksLessThanQuery = `DELETE FROM tasks ` +
-		`WHERE domain_id = ? ` +
-		`AND task_list_name = ? ` +
-		`AND task_list_type = ? ` +
-		`AND type = ? ` +
-		`AND task_id > ? ` +
-		`AND task_id <= ? `
-
-	templateGetTaskList = `SELECT ` +
-		`range_id, ` +
-		`task_list ` +
-		`FROM tasks ` +
-		`WHERE domain_id = ? ` +
-		`and task_list_name = ? ` +
-		`and task_list_type = ? ` +
-		`and type = ? ` +
-		`and task_id = ?`
-
-	templateInsertTaskListQuery = `INSERT INTO tasks (` +
-		`domain_id, ` +
-		`task_list_name, ` +
-		`task_list_type, ` +
-		`type, ` +
-		`task_id, ` +
-		`range_id, ` +
-		`task_list ` +
-		`) VALUES (?, ?, ?, ?, ?, ?, ` + templateTaskListType + `) IF NOT EXISTS`
-
-	templateUpdateTaskListQuery = `UPDATE tasks SET ` +
-		`range_id = ?, ` +
-		`task_list = ` + templateTaskListType + " " +
-		`WHERE domain_id = ? ` +
-		`and task_list_name = ? ` +
-		`and task_list_type = ? ` +
-		`and type = ? ` +
-		`and task_id = ? ` +
-		`IF range_id = ?`
-
-	templateUpdateTaskListQueryWithTTLPart1 = ` INSERT INTO tasks (` +
-		`domain_id, ` +
-		`task_list_name, ` +
-		`task_list_type, ` +
-		`type, ` +
-		`task_id ` +
-		`) VALUES (?, ?, ?, ?, ?) USING TTL ?`
-
-	templateUpdateTaskListQueryWithTTLPart2 = `UPDATE tasks USING TTL ? SET ` +
-		`range_id = ?, ` +
-		`task_list = ` + templateTaskListType + " " +
-		`WHERE domain_id = ? ` +
-		`and task_list_name = ? ` +
-		`and task_list_type = ? ` +
-		`and type = ? ` +
-		`and task_id = ? ` +
-		`IF range_id = ?`
-
-	templateDeleteTaskListQuery = `DELETE FROM tasks ` +
-		`WHERE domain_id = ? ` +
-		`AND task_list_name = ? ` +
-		`AND task_list_type = ? ` +
-		`AND type = ? ` +
-		`AND task_id = ? ` +
-		`IF range_id = ?`
 )
 
 // SelectTaskList returns a single tasklist row.
@@ -176,11 +70,41 @@ func (db *cdb) SelectTaskList(ctx context.Context, filter *nosqlplugin.TaskListF
 		TaskListName: filter.TaskListName,
 		TaskListType: filter.TaskListType,
 
-		TaskListKind:    taskListKind,
-		LastUpdatedTime: lastUpdatedTime,
-		AckLevel:        ackLevel,
-		RangeID:         rangeID,
+		TaskListKind:            taskListKind,
+		LastUpdatedTime:         lastUpdatedTime,
+		AckLevel:                ackLevel,
+		RangeID:                 rangeID,
+		AdaptivePartitionConfig: toTaskListPartitionConfig(tlDB["adaptive_partition_config"]),
 	}, nil
+}
+
+func toTaskListPartitionConfig(v interface{}) *persistence.TaskListPartitionConfig {
+	if v == nil {
+		return nil
+	}
+	partition := v.(map[string]interface{})
+	if len(partition) == 0 {
+		return nil
+	}
+	version := partition["version"].(int64)
+	numRead := partition["num_read_partitions"].(int)
+	numWrite := partition["num_write_partitions"].(int)
+	return &persistence.TaskListPartitionConfig{
+		Version:            version,
+		NumReadPartitions:  numRead,
+		NumWritePartitions: numWrite,
+	}
+}
+
+func fromTaskListPartitionConfig(config *persistence.TaskListPartitionConfig) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"version":              config.Version,
+		"num_read_partitions":  config.NumReadPartitions,
+		"num_write_partitions": config.NumWritePartitions,
+	}
 }
 
 // InsertTaskList insert a single tasklist row
@@ -199,6 +123,7 @@ func (db *cdb) InsertTaskList(ctx context.Context, row *nosqlplugin.TaskListRow)
 		0,
 		row.TaskListKind,
 		row.LastUpdatedTime,
+		fromTaskListPartitionConfig(row.AdaptivePartitionConfig),
 	).WithContext(ctx)
 
 	previous := make(map[string]interface{})
@@ -225,6 +150,7 @@ func (db *cdb) UpdateTaskList(
 		row.AckLevel,
 		row.TaskListKind,
 		row.LastUpdatedTime,
+		fromTaskListPartitionConfig(row.AdaptivePartitionConfig),
 		row.DomainID,
 		row.TaskListName,
 		row.TaskListType,
@@ -287,7 +213,8 @@ func (db *cdb) UpdateTaskListWithTTL(
 		row.TaskListType,
 		row.AckLevel,
 		row.TaskListKind,
-		time.Now(),
+		db.timeSrc.Now(),
+		fromTaskListPartitionConfig(row.AdaptivePartitionConfig),
 		row.DomainID,
 		row.TaskListName,
 		row.TaskListType,
@@ -307,7 +234,7 @@ func (db *cdb) UpdateTaskListWithTTL(
 // Noop if TTL is already implemented in other methods
 func (db *cdb) ListTaskList(ctx context.Context, pageSize int, nextPageToken []byte) (*nosqlplugin.ListTaskListResult, error) {
 	return nil, &types.InternalServiceError{
-		Message: fmt.Sprintf("unsupported operation"),
+		Message: "unsupported operation",
 	}
 }
 
@@ -321,11 +248,18 @@ func (db *cdb) DeleteTaskList(ctx context.Context, filter *nosqlplugin.TaskListF
 		rowTypeTaskList,
 		taskListTaskID,
 		previousRangeID,
-	).WithContext(ctx)
+	).WithContext(ctx).Consistency(cassandraAllConslevel)
 	previous := make(map[string]interface{})
 	applied, err := query.MapScanCAS(previous)
 	if err != nil {
-		return err
+		if !db.isCassandraConsistencyError(err) {
+			return err
+		}
+		db.logger.Warn("unable to complete the delete operation due to consistency issue", tag.Error(err))
+		applied, err = query.Consistency(cassandraDefaultConsLevel).MapScanCAS(previous)
+		if err != nil {
+			return err
+		}
 	}
 	return handleTaskListAppliedError(applied, previous)
 }
@@ -341,8 +275,6 @@ func (db *cdb) InsertTasks(
 	domainID := tasklistCondition.DomainID
 	taskListName := tasklistCondition.TaskListName
 	taskListType := tasklistCondition.TaskListType
-	taskListKind := tasklistCondition.TaskListKind
-	ackLevel := tasklistCondition.AckLevel
 
 	for _, task := range tasksToInsert {
 		scheduleID := task.ScheduledID
@@ -358,7 +290,8 @@ func (db *cdb) InsertTasks(
 				task.WorkflowID,
 				task.RunID,
 				scheduleID,
-				task.CreatedTime)
+				task.CreatedTime,
+				task.PartitionConfig)
 		} else {
 			if ttl > maxCassandraTTL {
 				ttl = maxCassandraTTL
@@ -374,19 +307,14 @@ func (db *cdb) InsertTasks(
 				task.RunID,
 				scheduleID,
 				task.CreatedTime,
+				task.PartitionConfig,
 				ttl)
 		}
 	}
 
 	// The following query is used to ensure that range_id didn't change
-	batch.Query(templateUpdateTaskListQuery,
+	batch.Query(templateUpdateTaskListRangeIDQuery,
 		tasklistCondition.RangeID,
-		domainID,
-		taskListName,
-		taskListType,
-		ackLevel,
-		taskListKind,
-		time.Now(),
 		domainID,
 		taskListName,
 		taskListType,
@@ -401,6 +329,24 @@ func (db *cdb) InsertTasks(
 		return err
 	}
 	return handleTaskListAppliedError(applied, previous)
+}
+
+// GetTasksCount returns number of tasks from a tasklist
+func (db *cdb) GetTasksCount(ctx context.Context, filter *nosqlplugin.TasksFilter) (int64, error) {
+	query := db.session.Query(templateGetTasksCountQuery,
+		filter.DomainID,
+		filter.TaskListName,
+		filter.TaskListType,
+		rowTypeTask,
+		filter.MinTaskID,
+	).WithContext(ctx)
+	result := make(map[string]interface{})
+	if err := query.MapScan(result); err != nil {
+		return 0, err
+	}
+
+	queueSize := result["count"].(int64)
+	return queueSize, nil
 }
 
 // SelectTasks return tasks that associated to a tasklist
@@ -461,6 +407,8 @@ func createTaskInfo(
 			info.ScheduledID = v.(int64)
 		case "created_time":
 			info.CreatedTime = v.(time.Time)
+		case "partition_config":
+			info.PartitionConfig = v.(map[string]string)
 		}
 	}
 
@@ -480,6 +428,5 @@ func (db *cdb) RangeDeleteTasks(ctx context.Context, filter *nosqlplugin.TasksFi
 		filter.MinTaskID,
 		filter.MaxTaskID,
 	).WithContext(ctx)
-	err = query.Exec()
-	return p.UnknownNumRowsAffected, err
+	return persistence.UnknownNumRowsAffected, db.executeWithConsistencyAll(query)
 }

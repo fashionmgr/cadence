@@ -25,37 +25,9 @@ type DynamicConfigBlob struct {
 	Entries       []*DynamicConfigEntry `json:"entries,omitempty"`
 }
 
-func (v *DynamicConfigBlob) GetSchemaVersion() (o int64) {
-	if v != nil {
-		return v.SchemaVersion
-	}
-	return
-}
-
-func (v *DynamicConfigBlob) GetEntries() (o []*DynamicConfigEntry) {
-	if v != nil && v.Entries != nil {
-		return v.Entries
-	}
-	return
-}
-
 type DynamicConfigEntry struct {
 	Name   string                `json:"name,omitempty"`
 	Values []*DynamicConfigValue `json:"values,omitempty"`
-}
-
-func (v *DynamicConfigEntry) GetName() (o string) {
-	if v != nil {
-		return v.Name
-	}
-	return
-}
-
-func (v *DynamicConfigEntry) GetValues() (o []*DynamicConfigValue) {
-	if v != nil && v.Values != nil {
-		return v.Values
-	}
-	return
 }
 
 type DynamicConfigValue struct {
@@ -63,35 +35,55 @@ type DynamicConfigValue struct {
 	Filters []*DynamicConfigFilter `json:"filters,omitempty"`
 }
 
-func (v *DynamicConfigValue) GetValue() (o *DataBlob) {
-	if v != nil {
-		return v.Value
-	}
-	return
-}
-
-func (v *DynamicConfigValue) GetFilters() (o []*DynamicConfigFilter) {
-	if v != nil && v.Filters != nil {
-		return v.Filters
-	}
-	return
-}
-
 type DynamicConfigFilter struct {
 	Name  string    `json:"name,omitempty"`
 	Value *DataBlob `json:"value,omitempty"`
 }
 
-func (v *DynamicConfigFilter) GetName() (o string) {
-	if v != nil {
-		return v.Name
+func (dcf *DynamicConfigFilter) Copy() *DynamicConfigFilter {
+	if dcf == nil {
+		return nil
 	}
-	return
+	return &DynamicConfigFilter{
+		Name:  dcf.Name,
+		Value: dcf.Value.DeepCopy(),
+	}
 }
 
-func (v *DynamicConfigFilter) GetValue() (o *DataBlob) {
-	if v != nil {
-		return v.Value
+func (dcv *DynamicConfigValue) Copy() *DynamicConfigValue {
+	if dcv == nil {
+		return nil
 	}
-	return
+
+	var newFilters []*DynamicConfigFilter
+	if dcv.Filters != nil {
+		newFilters = make([]*DynamicConfigFilter, 0, len(dcv.Filters))
+		for _, filter := range dcv.Filters {
+			newFilters = append(newFilters, filter.Copy())
+		}
+	}
+
+	return &DynamicConfigValue{
+		Value:   dcv.Value.DeepCopy(),
+		Filters: newFilters,
+	}
+}
+
+func (dce *DynamicConfigEntry) Copy() *DynamicConfigEntry {
+	if dce == nil {
+		return nil
+	}
+
+	var newValues []*DynamicConfigValue
+	if dce.Values != nil {
+		newValues = make([]*DynamicConfigValue, 0, len(dce.Values))
+		for _, value := range dce.Values {
+			newValues = append(newValues, value.Copy())
+		}
+	}
+
+	return &DynamicConfigEntry{
+		Name:   dce.Name,
+		Values: newValues,
+	}
 }

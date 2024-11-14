@@ -22,12 +22,12 @@ package persistencetests
 
 import (
 	"context"
+	"log"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/pborman/uuid"
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 
 	"github.com/uber/cadence/common"
@@ -44,7 +44,7 @@ type (
 	// DBVisibilityPersistenceSuite tests visibility persistence
 	// It only tests against DB based visibility, AdvancedVisibility test is in ESVisibilitySuite
 	DBVisibilityPersistenceSuite struct {
-		TestBase
+		*TestBase
 		// override suite.Suite.Assertions with require.Assertions; this means that s.NotNil(nil) will stop the test,
 		// not merely log an error
 		*require.Assertions
@@ -63,7 +63,7 @@ func (s *DBVisibilityPersistenceSuite) SetupSuite() {
 	}
 	clusterName := s.ClusterMetadata.GetCurrentClusterName()
 	vCfg := s.VisibilityTestCluster.Config()
-	visibilityFactory := client.NewFactory(&vCfg, nil, clusterName, nil, s.Logger)
+	visibilityFactory := client.NewFactory(&vCfg, nil, clusterName, nil, s.Logger, &s.DynamicConfiguration)
 	// SQL currently doesn't have support for visibility manager
 	var err error
 	s.VisibilityMgr, err = visibilityFactory.NewVisibilityManager(
@@ -119,6 +119,8 @@ func (s *DBVisibilityPersistenceSuite) TestBasicVisibility() {
 		Execution:        workflowExecution,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
+		UpdateTimestamp:  0,
+		ShardID:          0,
 	}
 	err0 := s.VisibilityMgr.RecordWorkflowExecutionStarted(ctx, startReq)
 	s.Nil(err0)
@@ -139,7 +141,9 @@ func (s *DBVisibilityPersistenceSuite) TestBasicVisibility() {
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
 		CloseTimestamp:   time.Now().UnixNano(),
+		UpdateTimestamp:  time.Now().UnixNano(),
 		HistoryLength:    5,
+		ShardID:          1234,
 	}
 	err2 := s.VisibilityMgr.RecordWorkflowExecutionClosed(ctx, closeReq)
 	s.Nil(err2)
@@ -162,6 +166,16 @@ func (s *DBVisibilityPersistenceSuite) TestBasicVisibility() {
 	s.Nil(err4)
 	s.Equal(1, len(resp.Executions))
 	s.assertClosedExecutionEquals(closeReq, resp.Executions[0])
+
+	uninitializedReq := &p.RecordWorkflowExecutionUninitializedRequest{
+		DomainUUID:       testDomainUUID,
+		Execution:        workflowExecution,
+		WorkflowTypeName: "visibility-workflow",
+		UpdateTimestamp:  time.Now().UnixNano(),
+		ShardID:          1234,
+	}
+	err5 := s.VisibilityMgr.RecordWorkflowExecutionUninitialized(ctx, uninitializedReq)
+	s.Nil(err5)
 }
 
 // TestCronVisibility test
@@ -183,6 +197,7 @@ func (s *DBVisibilityPersistenceSuite) TestCronVisibility() {
 		WorkflowTypeName: "visibility-cron-workflow",
 		StartTimestamp:   startTime,
 		IsCron:           true,
+		ShardID:          1234,
 	}
 	err0 := s.VisibilityMgr.RecordWorkflowExecutionStarted(ctx, startReq)
 	s.Nil(err0)
@@ -205,6 +220,7 @@ func (s *DBVisibilityPersistenceSuite) TestCronVisibility() {
 		CloseTimestamp:   time.Now().UnixNano(),
 		HistoryLength:    5,
 		IsCron:           true,
+		ShardID:          1234,
 	}
 	err2 := s.VisibilityMgr.RecordWorkflowExecutionClosed(ctx, closeReq)
 	s.Nil(err2)
@@ -238,6 +254,7 @@ func (s *DBVisibilityPersistenceSuite) TestBasicVisibilityTimeSkew() {
 		Execution:        workflowExecution,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
+		ShardID:          1234,
 	})
 	s.Nil(err0)
 
@@ -257,6 +274,7 @@ func (s *DBVisibilityPersistenceSuite) TestBasicVisibilityTimeSkew() {
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
 		CloseTimestamp:   startTime - (10 * time.Second).Nanoseconds(),
+		ShardID:          1234,
 	})
 	s.Nil(err2)
 
@@ -298,6 +316,7 @@ func (s *DBVisibilityPersistenceSuite) TestVisibilityPagination() {
 		Execution:        workflowExecution1,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime1.UnixNano(),
+		ShardID:          1234,
 	}
 
 	err0 := s.VisibilityMgr.RecordWorkflowExecutionStarted(ctx, startReq1)
@@ -314,6 +333,7 @@ func (s *DBVisibilityPersistenceSuite) TestVisibilityPagination() {
 		Execution:        workflowExecution2,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime2.UnixNano(),
+		ShardID:          1234,
 	}
 	err1 := s.VisibilityMgr.RecordWorkflowExecutionStarted(ctx, startReq2)
 	s.Nil(err1)
@@ -374,6 +394,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByType() {
 		Execution:        workflowExecution1,
 		WorkflowTypeName: "visibility-workflow-1",
 		StartTimestamp:   startTime,
+		ShardID:          1234,
 	})
 	s.Nil(err0)
 
@@ -386,6 +407,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByType() {
 		Execution:        workflowExecution2,
 		WorkflowTypeName: "visibility-workflow-2",
 		StartTimestamp:   startTime,
+		ShardID:          1234,
 	})
 	s.Nil(err1)
 
@@ -410,6 +432,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByType() {
 		WorkflowTypeName: "visibility-workflow-1",
 		StartTimestamp:   startTime,
 		CloseTimestamp:   time.Now().UnixNano(),
+		ShardID:          1234,
 	})
 	s.Nil(err3)
 
@@ -420,6 +443,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByType() {
 		StartTimestamp:   startTime,
 		CloseTimestamp:   time.Now().UnixNano(),
 		HistoryLength:    3,
+		ShardID:          1234,
 	}
 	err4 := s.VisibilityMgr.RecordWorkflowExecutionClosed(ctx, closeReq)
 	s.Nil(err4)
@@ -457,6 +481,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByWorkflowID() {
 		Execution:        workflowExecution1,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
+		ShardID:          1234,
 	})
 	s.Nil(err0)
 
@@ -469,6 +494,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByWorkflowID() {
 		Execution:        workflowExecution2,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
+		ShardID:          1234,
 	})
 	s.Nil(err1)
 
@@ -503,6 +529,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByWorkflowID() {
 		StartTimestamp:   startTime,
 		CloseTimestamp:   time.Now().UnixNano(),
 		HistoryLength:    3,
+		ShardID:          1234,
 	}
 	err4 := s.VisibilityMgr.RecordWorkflowExecutionClosed(ctx, closeReq)
 	s.Nil(err4)
@@ -540,6 +567,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByCloseStatus() {
 		Execution:        workflowExecution1,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
+		ShardID:          1234,
 	})
 	s.Nil(err0)
 
@@ -552,6 +580,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByCloseStatus() {
 		Execution:        workflowExecution2,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
+		ShardID:          1234,
 	})
 	s.Nil(err1)
 
@@ -563,6 +592,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByCloseStatus() {
 		StartTimestamp:   startTime,
 		CloseTimestamp:   time.Now().UnixNano(),
 		Status:           types.WorkflowExecutionCloseStatusCompleted,
+		ShardID:          1234,
 	})
 	s.Nil(err2)
 
@@ -574,6 +604,7 @@ func (s *DBVisibilityPersistenceSuite) TestFilteringByCloseStatus() {
 		Status:           types.WorkflowExecutionCloseStatusFailed,
 		CloseTimestamp:   time.Now().UnixNano(),
 		HistoryLength:    3,
+		ShardID:          1234,
 	}
 	err3 := s.VisibilityMgr.RecordWorkflowExecutionClosed(ctx, closeReq)
 	s.Nil(err3)
@@ -611,6 +642,7 @@ func (s *DBVisibilityPersistenceSuite) TestGetClosedExecution() {
 		Execution:        workflowExecution,
 		WorkflowTypeName: "visibility-workflow",
 		StartTimestamp:   startTime,
+		ShardID:          1234,
 	})
 	s.Nil(err0)
 
@@ -631,6 +663,7 @@ func (s *DBVisibilityPersistenceSuite) TestGetClosedExecution() {
 		Status:           types.WorkflowExecutionCloseStatusFailed,
 		CloseTimestamp:   time.Now().UnixNano(),
 		HistoryLength:    3,
+		ShardID:          1234,
 	}
 	err2 := s.VisibilityMgr.RecordWorkflowExecutionClosed(ctx, closeReq)
 	s.Nil(err2)
@@ -671,6 +704,7 @@ func (s *DBVisibilityPersistenceSuite) TestClosedWithoutStarted() {
 		Status:           types.WorkflowExecutionCloseStatusFailed,
 		CloseTimestamp:   time.Now().UnixNano(),
 		HistoryLength:    3,
+		ShardID:          1234,
 	}
 	err1 := s.VisibilityMgr.RecordWorkflowExecutionClosed(ctx, closeReq)
 	s.Nil(err1)
@@ -704,6 +738,7 @@ func (s *DBVisibilityPersistenceSuite) TestMultipleUpserts() {
 		Status:           types.WorkflowExecutionCloseStatusFailed,
 		CloseTimestamp:   time.Now().UnixNano(),
 		HistoryLength:    3,
+		ShardID:          1234,
 	}
 
 	count := 3
@@ -713,6 +748,7 @@ func (s *DBVisibilityPersistenceSuite) TestMultipleUpserts() {
 			Execution:        workflowExecution,
 			WorkflowTypeName: "visibility-workflow",
 			StartTimestamp:   startTime,
+			ShardID:          1234,
 		})
 		s.Nil(err0)
 		if i < count-1 {
@@ -762,6 +798,7 @@ func (s *DBVisibilityPersistenceSuite) TestDelete() {
 			Status:           types.WorkflowExecutionCloseStatusFailed,
 			CloseTimestamp:   time.Now().UnixNano(),
 			HistoryLength:    3,
+			ShardID:          1234,
 		}
 		err1 := s.VisibilityMgr.RecordWorkflowExecutionClosed(ctx, closeReq)
 		s.Nil(err1)
@@ -818,6 +855,7 @@ func (s *DBVisibilityPersistenceSuite) TestUpsertWorkflowExecution() {
 				SearchAttributes: map[string][]byte{
 					definition.CadenceChangeVersion: []byte("dummy"),
 				},
+				ShardID: 1234,
 			},
 			expected: nil,
 		},
@@ -833,8 +871,9 @@ func (s *DBVisibilityPersistenceSuite) TestUpsertWorkflowExecution() {
 				TaskID:             0,
 				Memo:               nil,
 				SearchAttributes:   nil,
+				ShardID:            1234,
 			},
-			expected: p.NewOperationNotSupportErrorForVis(),
+			expected: p.ErrVisibilityOperationNotSupported,
 		},
 	}
 

@@ -24,8 +24,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
 	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
+
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/testdata"
@@ -233,6 +233,16 @@ func TestDescribeWorkflowExecutionRequest(t *testing.T) {
 func TestDescribeWorkflowExecutionResponse(t *testing.T) {
 	for _, item := range []*types.DescribeWorkflowExecutionResponse{nil, {}, &testdata.DescribeWorkflowExecutionResponse} {
 		assert.Equal(t, item, ToDescribeWorkflowExecutionResponse(FromDescribeWorkflowExecutionResponse(item)))
+	}
+}
+func TestDiagnoseWorkflowExecutionRequest(t *testing.T) {
+	for _, item := range []*types.DiagnoseWorkflowExecutionRequest{nil, {}, &testdata.DiagnoseWorkflowExecutionRequest} {
+		assert.Equal(t, item, ToDiagnoseWorkflowExecutionRequest(FromDiagnoseWorkflowExecutionRequest(item)))
+	}
+}
+func TestDiagnoseWorkflowExecutionResponse(t *testing.T) {
+	for _, item := range []*types.DiagnoseWorkflowExecutionResponse{nil, {}, &testdata.DiagnoseWorkflowExecutionResponse} {
+		assert.Equal(t, item, ToDiagnoseWorkflowExecutionResponse(FromDiagnoseWorkflowExecutionResponse(item)))
 	}
 }
 func TestExternalWorkflowExecutionCancelRequestedEventAttributes(t *testing.T) {
@@ -625,6 +635,26 @@ func TestStartWorkflowExecutionResponse(t *testing.T) {
 		assert.Equal(t, item, ToStartWorkflowExecutionResponse(FromStartWorkflowExecutionResponse(item)))
 	}
 }
+func TestStartWorkflowExecutionAsyncRequest(t *testing.T) {
+	for _, item := range []*types.StartWorkflowExecutionAsyncRequest{nil, {}, &testdata.StartWorkflowExecutionAsyncRequest} {
+		assert.Equal(t, item, ToStartWorkflowExecutionAsyncRequest(FromStartWorkflowExecutionAsyncRequest(item)))
+	}
+}
+func TestStartWorkflowExecutionAsyncResponse(t *testing.T) {
+	for _, item := range []*types.StartWorkflowExecutionAsyncResponse{nil, {}, &testdata.StartWorkflowExecutionAsyncResponse} {
+		assert.Equal(t, item, ToStartWorkflowExecutionAsyncResponse(FromStartWorkflowExecutionAsyncResponse(item)))
+	}
+}
+func TestSignalWithStartWorkflowExecutionAsyncRequest(t *testing.T) {
+	for _, item := range []*types.SignalWithStartWorkflowExecutionAsyncRequest{nil, {}, &testdata.SignalWithStartWorkflowExecutionAsyncRequest} {
+		assert.Equal(t, item, ToSignalWithStartWorkflowExecutionAsyncRequest(FromSignalWithStartWorkflowExecutionAsyncRequest(item)))
+	}
+}
+func TestSignalWithStartWorkflowExecutionAsyncResponse(t *testing.T) {
+	for _, item := range []*types.SignalWithStartWorkflowExecutionAsyncResponse{nil, {}, &testdata.SignalWithStartWorkflowExecutionAsyncResponse} {
+		assert.Equal(t, item, ToSignalWithStartWorkflowExecutionAsyncResponse(FromSignalWithStartWorkflowExecutionAsyncResponse(item)))
+	}
+}
 func TestStatusFilter(t *testing.T) {
 	for _, item := range []*types.WorkflowExecutionCloseStatus{nil, &testdata.WorkflowExecutionCloseStatus} {
 		assert.Equal(t, item, ToStatusFilter(FromStatusFilter(item)))
@@ -721,9 +751,16 @@ func TestExternalExecutionInfo(t *testing.T) {
 	assert.Nil(t, FromExternalExecutionInfoFields(nil, nil))
 	assert.Nil(t, ToExternalWorkflowExecution(nil))
 	assert.Nil(t, ToExternalInitiatedID(nil))
-	assert.Panics(t, func() { FromExternalExecutionInfoFields(nil, common.Int64Ptr(testdata.EventID1)) })
-	assert.Panics(t, func() { FromExternalExecutionInfoFields(&testdata.WorkflowExecution, nil) })
-	info := FromExternalExecutionInfoFields(&testdata.WorkflowExecution, common.Int64Ptr(testdata.EventID1))
+
+	info := FromExternalExecutionInfoFields(nil, common.Int64Ptr(testdata.EventID1))
+	assert.Nil(t, ToExternalWorkflowExecution(nil))
+	assert.Equal(t, testdata.EventID1, *ToExternalInitiatedID(info))
+
+	info = FromExternalExecutionInfoFields(&testdata.WorkflowExecution, nil)
+	assert.Equal(t, testdata.WorkflowExecution, *ToExternalWorkflowExecution(info))
+	assert.Equal(t, int64(0), *ToExternalInitiatedID(info))
+
+	info = FromExternalExecutionInfoFields(&testdata.WorkflowExecution, common.Int64Ptr(testdata.EventID1))
 	assert.Equal(t, testdata.WorkflowExecution, *ToExternalWorkflowExecution(info))
 	assert.Equal(t, testdata.EventID1, *ToExternalInitiatedID(info))
 }
@@ -785,7 +822,7 @@ func TestParentExecutionInfoFields(t *testing.T) {
 	assert.Equal(t, testdata.ParentExecutionInfo.InitiatedID, *ToParentInitiatedID(info))
 }
 func TestWorkflowExecutionInfo(t *testing.T) {
-	for _, item := range []*types.WorkflowExecutionInfo{nil, {}, &testdata.WorkflowExecutionInfo} {
+	for _, item := range []*types.WorkflowExecutionInfo{nil, {}, &testdata.WorkflowExecutionInfo, &testdata.CronWorkflowExecutionInfo} {
 		assert.Equal(t, item, ToWorkflowExecutionInfo(FromWorkflowExecutionInfo(item)))
 	}
 }
@@ -1044,5 +1081,11 @@ func TestFailoverInfo(t *testing.T) {
 func TestDescribeTaskListResponseMap(t *testing.T) {
 	for _, item := range []map[string]*types.DescribeTaskListResponse{nil, {}, testdata.DescribeTaskListResponseMap} {
 		assert.Equal(t, item, ToDescribeTaskListResponseMap(FromDescribeTaskListResponseMap(item)))
+	}
+}
+
+func TestAPITaskListPartitionConfig(t *testing.T) {
+	for _, item := range []*types.TaskListPartitionConfig{nil, {}, &testdata.TaskListPartitionConfig} {
+		assert.Equal(t, item, ToAPITaskListPartitionConfig(FromAPITaskListPartitionConfig(item)))
 	}
 }

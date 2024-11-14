@@ -61,7 +61,7 @@ type (
 		shard           shard.Context
 		timeSource      clock.TimeSource
 		domainCache     cache.DomainCache
-		executionCache  *execution.Cache
+		executionCache  execution.Cache
 		tokenSerializer common.TaskTokenSerializer
 		metricsClient   metrics.Client
 		logger          log.Logger
@@ -74,7 +74,7 @@ type (
 // NewHandler creates a new Handler for handling decision business logic
 func NewHandler(
 	shard shard.Context,
-	executionCache *execution.Cache,
+	executionCache execution.Cache,
 	tokenSerializer common.TaskTokenSerializer,
 ) Handler {
 	config := shard.GetConfig()
@@ -104,7 +104,7 @@ func (handler *handlerImpl) HandleDecisionTaskScheduled(
 	req *types.ScheduleDecisionTaskRequest,
 ) error {
 
-	domainEntry, err := handler.shard.GetDomainCache().GetActiveDomainByID(req.DomainUUID)
+	domainEntry, err := handler.getActiveDomainByID(req.DomainUUID)
 	if err != nil {
 		return err
 	}
@@ -152,7 +152,7 @@ func (handler *handlerImpl) HandleDecisionTaskStarted(
 	req *types.RecordDecisionTaskStartedRequest,
 ) (*types.RecordDecisionTaskStartedResponse, error) {
 
-	domainEntry, err := handler.shard.GetDomainCache().GetActiveDomainByID(req.DomainUUID)
+	domainEntry, err := handler.getActiveDomainByID(req.DomainUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func (handler *handlerImpl) HandleDecisionTaskFailed(
 	req *types.HistoryRespondDecisionTaskFailedRequest,
 ) (retError error) {
 
-	domainEntry, err := handler.shard.GetDomainCache().GetActiveDomainByID(req.DomainUUID)
+	domainEntry, err := handler.getActiveDomainByID(req.DomainUUID)
 	if err != nil {
 		return err
 	}
@@ -277,7 +277,7 @@ func (handler *handlerImpl) HandleDecisionTaskFailed(
 			}
 
 			_, err := mutableState.AddDecisionTaskFailedEvent(decision.ScheduleID, decision.StartedID, request.GetCause(), request.Details,
-				request.GetIdentity(), "", request.GetBinaryChecksum(), "", "", 0)
+				request.GetIdentity(), "", request.GetBinaryChecksum(), "", "", 0, "")
 			return err
 		})
 }
@@ -286,8 +286,7 @@ func (handler *handlerImpl) HandleDecisionTaskCompleted(
 	ctx context.Context,
 	req *types.HistoryRespondDecisionTaskCompletedRequest,
 ) (resp *types.HistoryRespondDecisionTaskCompletedResponse, retError error) {
-
-	domainEntry, err := handler.shard.GetDomainCache().GetActiveDomainByID(req.DomainUUID)
+	domainEntry, err := handler.getActiveDomainByID(req.DomainUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -304,6 +303,18 @@ func (handler *handlerImpl) HandleDecisionTaskCompleted(
 		RunID:      token.RunID,
 	}
 
+	domainName := domainEntry.GetInfo().Name
+	logger := handler.logger.WithTags(
+		tag.WorkflowDomainName(domainName),
+		tag.WorkflowDomainID(domainEntry.GetInfo().ID),
+		tag.WorkflowID(workflowExecution.GetWorkflowID()),
+		tag.WorkflowRunID(workflowExecution.GetRunID()),
+		tag.WorkflowScheduleID(token.ScheduleID),
+	)
+	scope := handler.metricsClient.Scope(metrics.HistoryRespondDecisionTaskCompletedScope,
+		metrics.DomainTag(domainName),
+		metrics.WorkflowTypeTag(token.WorkflowType))
+
 	call := yarpc.CallFromContext(ctx)
 	clientLibVersion := call.Header(common.LibraryVersionHeaderName)
 	clientFeatureVersion := call.Header(common.FeatureVersionHeaderName)
@@ -317,6 +328,7 @@ func (handler *handlerImpl) HandleDecisionTaskCompleted(
 
 Update_History_Loop:
 	for attempt := 0; attempt < workflow.ConditionalRetryCount; attempt++ {
+		logger.Debug("Update_History_Loop attempt", tag.Attempt(int32(attempt)))
 		msBuilder, err := wfContext.LoadWorkflowExecution(ctx)
 		if err != nil {
 			return nil, err
@@ -330,46 +342,38 @@ Update_History_Loop:
 		}
 
 		executionInfo := msBuilder.GetExecutionInfo()
-
-		scheduleID := token.ScheduleID
-		currentDecision, isRunning := msBuilder.GetDecisionInfo(scheduleID)
+		currentDecision, isRunning := msBuilder.GetDecisionInfo(token.ScheduleID)
 
 		// First check to see if cache needs to be refreshed as we could potentially have stale workflow execution in
 		// some extreme cassandra failure cases.
-		if !isRunning && scheduleID >= msBuilder.GetNextEventID() {
-			handler.metricsClient.IncCounter(metrics.HistoryRespondDecisionTaskCompletedScope, metrics.StaleMutableStateCounter)
-			handler.logger.Error("Encounter stale mutable state in RespondDecisionTaskCompleted",
-				tag.WorkflowDomainName(domainEntry.GetInfo().Name),
-				tag.WorkflowID(workflowExecution.GetWorkflowID()),
-				tag.WorkflowRunID(workflowExecution.GetRunID()),
-				tag.WorkflowScheduleID(scheduleID),
-				tag.WorkflowNextEventID(msBuilder.GetNextEventID()),
-			)
+		if !isRunning && token.ScheduleID >= msBuilder.GetNextEventID() {
+			scope.IncCounter(metrics.StaleMutableStateCounter)
+			logger.Error("Encounter stale mutable state in RespondDecisionTaskCompleted", tag.WorkflowNextEventID(msBuilder.GetNextEventID()))
 			// Reload workflow execution history
 			wfContext.Clear()
 			continue Update_History_Loop
 		}
 
-		if !msBuilder.IsWorkflowExecutionRunning() || !isRunning || currentDecision.Attempt != token.ScheduleAttempt ||
-			currentDecision.StartedID == common.EmptyEventID {
+		if !msBuilder.IsWorkflowExecutionRunning() || !isRunning || currentDecision.Attempt != token.ScheduleAttempt || currentDecision.StartedID == common.EmptyEventID {
+			logger.Debugf("Decision task not found. IsWorkflowExecutionRunning: %v, isRunning: %v, currentDecision.Attempt: %v, token.ScheduleAttempt: %v, currentDecision.StartID: %v",
+				msBuilder.IsWorkflowExecutionRunning(), isRunning, getDecisionInfoAttempt(currentDecision), token.ScheduleAttempt, getDecisionInfoStartedID(currentDecision))
 			return nil, &types.EntityNotExistsError{Message: "Decision task not found."}
 		}
 
 		startedID := currentDecision.StartedID
 		maxResetPoints := handler.config.MaxAutoResetPoints(domainEntry.GetInfo().Name)
 		if msBuilder.GetExecutionInfo().AutoResetPoints != nil && maxResetPoints == len(msBuilder.GetExecutionInfo().AutoResetPoints.Points) {
-			handler.metricsClient.IncCounter(metrics.HistoryRespondDecisionTaskCompletedScope, metrics.AutoResetPointsLimitExceededCounter)
+			logger.Debugf("Max reset points %d is exceeded", maxResetPoints)
+			scope.IncCounter(metrics.AutoResetPointsLimitExceededCounter)
 		}
 
 		decisionHeartbeating := request.GetForceCreateNewDecisionTask() && len(request.Decisions) == 0
 		var decisionHeartbeatTimeout bool
 		var completedEvent *types.HistoryEvent
 		if decisionHeartbeating {
-			domainName := domainEntry.GetInfo().Name
 			timeout := handler.config.DecisionHeartbeatTimeout(domainName)
 			if currentDecision.OriginalScheduledTimestamp > 0 && handler.timeSource.Now().After(time.Unix(0, currentDecision.OriginalScheduledTimestamp).Add(timeout)) {
 				decisionHeartbeatTimeout = true
-				scope := handler.metricsClient.Scope(metrics.HistoryRespondDecisionTaskCompletedScope, metrics.DomainTag(domainName))
 				scope.IncCounter(metrics.DecisionHeartbeatTimeoutCounter)
 				completedEvent, err = msBuilder.AddDecisionTaskTimedOutEvent(currentDecision.ScheduleID, currentDecision.StartedID)
 				if err != nil {
@@ -377,13 +381,14 @@ Update_History_Loop:
 				}
 				msBuilder.ClearStickyness()
 			} else {
-				completedEvent, err = msBuilder.AddDecisionTaskCompletedEvent(scheduleID, startedID, request, maxResetPoints)
+				logger.Debug("Adding DecisionTaskCompletedEvent to mutable state for heartbeat")
+				completedEvent, err = msBuilder.AddDecisionTaskCompletedEvent(token.ScheduleID, startedID, request, maxResetPoints)
 				if err != nil {
 					return nil, &types.InternalServiceError{Message: "Unable to add DecisionTaskCompleted event to history."}
 				}
 			}
 		} else {
-			completedEvent, err = msBuilder.AddDecisionTaskCompletedEvent(scheduleID, startedID, request, maxResetPoints)
+			completedEvent, err = msBuilder.AddDecisionTaskCompletedEvent(token.ScheduleID, startedID, request, maxResetPoints)
 			if err != nil {
 				return nil, &types.InternalServiceError{Message: "Unable to add DecisionTaskCompleted event to history."}
 			}
@@ -401,11 +406,11 @@ Update_History_Loop:
 		hasUnhandledEvents = msBuilder.HasBufferedEvents()
 
 		if request.StickyAttributes == nil || request.StickyAttributes.WorkerTaskList == nil {
-			handler.metricsClient.IncCounter(metrics.HistoryRespondDecisionTaskCompletedScope, metrics.CompleteDecisionWithStickyDisabledCounter)
+			scope.IncCounter(metrics.CompleteDecisionWithStickyDisabledCounter)
 			executionInfo.StickyTaskList = ""
 			executionInfo.StickyScheduleToStartTimeout = 0
 		} else {
-			handler.metricsClient.IncCounter(metrics.HistoryRespondDecisionTaskCompletedScope, metrics.CompleteDecisionWithStickyEnabledCounter)
+			scope.IncCounter(metrics.CompleteDecisionWithStickyEnabledCounter)
 			executionInfo.StickyTaskList = request.StickyAttributes.WorkerTaskList.GetName()
 			executionInfo.StickyScheduleToStartTimeout = request.StickyAttributes.GetScheduleToStartTimeoutSeconds()
 		}
@@ -419,25 +424,24 @@ Update_History_Loop:
 			failCause = types.DecisionTaskFailedCauseBadBinary
 			failMessage = fmt.Sprintf("binary %v is already marked as bad deployment", binChecksum)
 		} else {
-
-			domainName := domainEntry.GetInfo().Name
 			workflowSizeChecker := newWorkflowSizeChecker(
+				domainName,
 				handler.config.BlobSizeLimitWarn(domainName),
 				handler.config.BlobSizeLimitError(domainName),
 				handler.config.HistorySizeLimitWarn(domainName),
 				handler.config.HistorySizeLimitError(domainName),
 				handler.config.HistoryCountLimitWarn(domainName),
 				handler.config.HistoryCountLimitError(domainName),
-				completedEvent.GetEventID(),
+				completedEvent.ID,
 				msBuilder,
 				executionStats,
 				handler.metricsClient.Scope(metrics.HistoryRespondDecisionTaskCompletedScope, metrics.DomainTag(domainName)),
-				handler.throttledLogger,
+				handler.logger,
 			)
 
 			decisionTaskHandler := newDecisionTaskHandler(
 				request.GetIdentity(),
-				completedEvent.GetEventID(),
+				completedEvent.ID,
 				domainEntry,
 				msBuilder,
 				handler.attrValidator,
@@ -468,20 +472,15 @@ Update_History_Loop:
 			// failMessage is not used by decisionTaskHandler
 			activityNotStartedCancelled = decisionTaskHandler.activityNotStartedCancelled
 			// continueAsNewTimerTasks is not used by decisionTaskHandler
-
 			continueAsNewBuilder = decisionTaskHandler.continueAsNewBuilder
-
 			hasUnhandledEvents = decisionTaskHandler.hasUnhandledEventsBeforeDecisions
 		}
 
 		if failDecision {
-			handler.metricsClient.IncCounter(metrics.HistoryRespondDecisionTaskCompletedScope, metrics.FailedDecisionsCounter)
-			handler.logger.Info("Failing the decision.", tag.WorkflowDecisionFailCause(int64(failCause)),
-				tag.WorkflowID(token.WorkflowID),
-				tag.WorkflowRunID(token.RunID),
-				tag.WorkflowDomainID(domainID))
+			scope.IncCounter(metrics.FailedDecisionsCounter)
+			logger.Info("Failing the decision.", tag.WorkflowDecisionFailCause(int64(failCause)))
 			msBuilder, err = handler.failDecisionHelper(
-				ctx, wfContext, scheduleID, startedID, failCause, []byte(failMessage), request, domainEntry)
+				ctx, wfContext, token.ScheduleID, startedID, failCause, []byte(failMessage), request, domainEntry)
 			if err != nil {
 				return nil, err
 			}
@@ -490,6 +489,8 @@ Update_History_Loop:
 		}
 
 		createNewDecisionTask := msBuilder.IsWorkflowExecutionRunning() && (hasUnhandledEvents || request.GetForceCreateNewDecisionTask() || activityNotStartedCancelled)
+		logger.Debugf("createNewDecisionTask: %v, msBuilder.IsWorkflowExecutionRunning: %v, hasUnhandledEvents: %v, request.GetForceCreateNewDecisionTask: %v, activityNotStartedCancelled: %v",
+			createNewDecisionTask, msBuilder.IsWorkflowExecutionRunning(), hasUnhandledEvents, request.GetForceCreateNewDecisionTask(), activityNotStartedCancelled)
 		var newDecisionTaskScheduledID int64
 		if createNewDecisionTask {
 			var newDecision *execution.DecisionInfo
@@ -511,6 +512,7 @@ Update_History_Loop:
 			newDecisionTaskScheduledID = newDecision.ScheduleID
 			// skip transfer task for decision if request asking to return new decision task
 			if request.GetReturnNewDecisionTask() {
+				logger.Debugf("Adding DecisionTaskStartedEvent to mutable state. new decision's ScheduleID: %d, TaskList: %s", newDecisionTaskScheduledID, newDecision.TaskList)
 				// start the new decision task if request asked to do so
 				// TODO: replace the poll request
 				_, _, err := msBuilder.AddDecisionTaskStartedEvent(newDecision.ScheduleID, "request-from-RespondDecisionTaskCompleted", &types.PollForDecisionTaskRequest{
@@ -528,6 +530,7 @@ Update_History_Loop:
 		var updateErr error
 		if continueAsNewBuilder != nil {
 			continueAsNewExecutionInfo := continueAsNewBuilder.GetExecutionInfo()
+			logger.Debugf("Updating execution with continue as new info. new wfid: %s, runid: %s", continueAsNewExecutionInfo.WorkflowID, continueAsNewExecutionInfo.RunID)
 			updateErr = wfContext.UpdateWorkflowExecutionWithNewAsActive(
 				ctx,
 				handler.shard.GetTimeSource().Now(),
@@ -548,8 +551,8 @@ Update_History_Loop:
 		}
 
 		if updateErr != nil {
-			if updateErr == execution.ErrConflict {
-				handler.metricsClient.IncCounter(metrics.HistoryRespondDecisionTaskCompletedScope, metrics.ConcurrencyUpdateFailureCounter)
+			if execution.IsConflictError(updateErr) {
+				scope.IncCounter(metrics.ConcurrencyUpdateFailureCounter)
 				continue Update_History_Loop
 			}
 
@@ -596,7 +599,7 @@ Update_History_Loop:
 		if decisionHeartbeatTimeout {
 			// at this point, update is successful, but we still return an error to client so that the worker will give up this workflow
 			return nil, &types.EntityNotExistsError{
-				Message: fmt.Sprintf("decision heartbeat timeout"),
+				Message: "decision heartbeat timeout",
 			}
 		}
 
@@ -612,6 +615,7 @@ Update_History_Loop:
 				activitiesToDispatchLocally[dr.activityDispatchInfo.ActivityID] = dr.activityDispatchInfo
 			}
 		}
+		logger.Debugf("%d activities will be dispatched locally on the client side")
 		resp.ActivitiesToDispatchLocally = activitiesToDispatchLocally
 
 		if request.GetReturnNewDecisionTask() && createNewDecisionTask {
@@ -692,6 +696,7 @@ func (handler *handlerImpl) createRecordDecisionTaskStartedResponse(
 		queries[id] = input
 	}
 	response.Queries = queries
+	response.HistorySize = msBuilder.GetHistorySize()
 	return response, nil
 }
 
@@ -721,7 +726,15 @@ func (handler *handlerImpl) handleBufferedQueries(
 
 	// Consistent query requires both server and client worker support. If a consistent query was requested (meaning there are
 	// buffered queries) but worker does not support consistent query then all buffered queries should be failed.
-	if versionErr := handler.versionChecker.SupportsConsistentQuery(clientImpl, clientFeatureVersion); versionErr != nil {
+	versionErr := handler.versionChecker.SupportsConsistentQuery(clientImpl, clientFeatureVersion)
+	// todo (David.Porter) remove the skip on version check for
+	// clientImpl and clientFeatureVersion where they're nil
+	// There's a bug, probably in matching somewhere which isn't
+	// forwarding the client headers for version
+	// info correctly making this call erroneously fail sometimes.
+	// https://t3.uberinternal.com/browse/CDNC-8641
+	// So defaulting just this flow to fail-open in the absence of headers.
+	if versionErr != nil && clientImpl != "" && clientFeatureVersion != "" {
 		scope.IncCounter(metrics.WorkerNotSupportsConsistentQueryCount)
 		failedTerminationState := &query.TerminationState{
 			TerminationType: query.TerminationTypeFailed,
@@ -730,6 +743,8 @@ func (handler *handlerImpl) handleBufferedQueries(
 		buffered := queryRegistry.GetBufferedIDs()
 		handler.logger.Info(
 			"failing query because worker does not support consistent query",
+			tag.ClientImpl(clientImpl),
+			tag.ClientFeatureVersion(clientFeatureVersion),
 			tag.WorkflowDomainName(domain),
 			tag.WorkflowID(workflowID),
 			tag.WorkflowRunID(runID),
@@ -765,10 +780,11 @@ func (handler *handlerImpl) handleBufferedQueries(
 			sizeLimitWarn,
 			sizeLimitError,
 			domainID,
+			domain,
 			workflowID,
 			runID,
 			scope,
-			handler.throttledLogger,
+			handler.logger,
 			tag.BlobSizeViolationOperation("ConsistentQuery"),
 		); err != nil {
 			handler.logger.Info("failing query because query result size is too large",
@@ -852,7 +868,7 @@ func (handler *handlerImpl) failDecisionHelper(
 	}
 
 	if _, err = mutableState.AddDecisionTaskFailedEvent(
-		scheduleID, startedID, cause, details, request.GetIdentity(), "", request.GetBinaryChecksum(), "", "", 0,
+		scheduleID, startedID, cause, details, request.GetIdentity(), "", request.GetBinaryChecksum(), "", "", 0, "",
 	); err != nil {
 		return nil, err
 	}
@@ -883,4 +899,22 @@ func (handler *handlerImpl) failDecisionHelper(
 
 	// Return new builder back to the caller for further updates
 	return mutableState, nil
+}
+
+func (handler *handlerImpl) getActiveDomainByID(id string) (*cache.DomainCacheEntry, error) {
+	return cache.GetActiveDomainByID(handler.shard.GetDomainCache(), handler.shard.GetClusterMetadata().GetCurrentClusterName(), id)
+}
+
+func getDecisionInfoAttempt(di *execution.DecisionInfo) int64 {
+	if di == nil {
+		return 0
+	}
+	return di.Attempt
+}
+
+func getDecisionInfoStartedID(di *execution.DecisionInfo) int64 {
+	if di == nil {
+		return 0
+	}
+	return di.StartedID
 }

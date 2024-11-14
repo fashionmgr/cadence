@@ -28,11 +28,10 @@ import (
 	"go.uber.org/cadence/testsuite"
 	"go.uber.org/cadence/worker"
 	"go.uber.org/cadence/workflow"
-	"go.uber.org/zap"
 
 	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/metrics"
 	mmocks "github.com/uber/cadence/common/metrics/mocks"
 )
@@ -60,7 +59,7 @@ func TestWorkflowSuite(t *testing.T) {
 
 func (s *workflowSuite) SetupTest() {
 	workflowTestMetrics = &mmocks.Client{}
-	workflowTestLogger = loggerimpl.NewLogger(zap.NewNop())
+	workflowTestLogger = testlogger.New(s.T())
 	workflowTestHandler = &MockHandler{}
 	workflowTestPump = &PumpMock{}
 	workflowTestConfig = &Config{
@@ -136,7 +135,7 @@ func (s *workflowSuite) TestArchivalWorkflow_Success() {
 }
 
 func (s *workflowSuite) TestReplayArchiveHistoryWorkflow() {
-	logger, _ := zap.NewDevelopment()
+	logger := testlogger.NewZap(s.T())
 	globalLogger = workflowTestLogger
 	globalMetricsClient = metrics.NewClient(tally.NewTestScope("replay", nil), metrics.Worker)
 	globalConfig = &Config{

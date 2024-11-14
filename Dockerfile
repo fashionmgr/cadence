@@ -3,42 +3,37 @@ ARG TARGET=server
 # Can be used in case a proxy is necessary
 ARG GOPROXY
 
-# Build tcheck binary
-FROM golang:1.17-alpine3.15 AS tcheck
-
-WORKDIR /go/src/github.com/uber/tcheck
-
-COPY go.* ./
-RUN go build -mod=readonly -o /go/bin/tcheck github.com/uber/tcheck
-
 # Build Cadence binaries
-FROM golang:1.17-alpine3.13 AS builder
+FROM golang:1.22.3-alpine3.18 AS builder
 
 ARG RELEASE_VERSION
 
-RUN apk add --update --no-cache ca-certificates make git curl mercurial unzip
+RUN apk add --update --no-cache ca-certificates make git curl mercurial unzip bash
 
 WORKDIR /cadence
 
 # Making sure that dependency is not touched
 ENV GOFLAGS="-mod=readonly"
 
-# Copy go mod dependencies and build cache
+# Copy go mod dependencies and try to share the module download cache
 COPY go.* ./
+COPY cmd/server/go.* ./cmd/server/
+COPY common/archiver/gcloud/go.* ./common/archiver/gcloud/
+# go.work means this downloads everything, not just the top module
 RUN go mod download
 
 COPY . .
-RUN rm -fr .bin .build
+RUN rm -fr .bin .build idls
 
 ENV CADENCE_RELEASE_VERSION=$RELEASE_VERSION
 
-# bypass codegen, use committed files.  must be run separately, before building things.
-RUN make .fake-codegen
-RUN CGO_ENABLED=0 make copyright cadence-cassandra-tool cadence-sql-tool cadence cadence-server cadence-bench cadence-canary
+# don't do anything fancy, just build.  must be run separately, before building things.
+RUN make .just-build
+RUN CGO_ENABLED=0 make cadence-cassandra-tool cadence-sql-tool cadence cadence-server cadence-bench cadence-canary
 
 
 # Download dockerize
-FROM alpine:3.15 AS dockerize
+FROM alpine:3.18 AS dockerize
 
 RUN apk add --no-cache openssl
 
@@ -51,13 +46,13 @@ RUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSI
 
 
 # Alpine base image
-FROM alpine:3.11 AS alpine
+FROM alpine:3.18 AS alpine
 
 RUN apk add --update --no-cache ca-certificates tzdata bash curl
 
 # set up nsswitch.conf for Go's "netgo" implementation
 # https://github.com/gliderlabs/docker-alpine/issues/367#issuecomment-424546457
-RUN test ! -e /etc/nsswitch.conf && echo 'hosts: files dns' > /etc/nsswitch.conf
+RUN [ -e /etc/nsswitch.conf ] && grep '^hosts: files dns' /etc/nsswitch.conf
 
 SHELL ["/bin/bash", "-c"]
 
@@ -68,7 +63,6 @@ FROM alpine AS cadence-server
 ENV CADENCE_HOME /etc/cadence
 RUN mkdir -p /etc/cadence
 
-COPY --from=tcheck /go/bin/tcheck /usr/local/bin
 COPY --from=dockerize /usr/local/bin/dockerize /usr/local/bin
 COPY --from=builder /cadence/cadence-cassandra-tool /usr/local/bin
 COPY --from=builder /cadence/cadence-sql-tool /usr/local/bin
@@ -91,7 +85,7 @@ ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD /start-cadence.sh
 
 
-# All-in-one Cadence server
+# All-in-one Cadence server (~450mb)
 FROM cadence-server AS cadence-auto-setup
 
 RUN apk add --update --no-cache ca-certificates py3-pip mysql-client
@@ -101,11 +95,9 @@ COPY docker/start.sh /start.sh
 
 CMD /start.sh
 
-
 # Cadence CLI
 FROM alpine AS cadence-cli
 
-COPY --from=tcheck /go/bin/tcheck /usr/local/bin
 COPY --from=builder /cadence/cadence /usr/local/bin
 
 ENTRYPOINT ["cadence"]

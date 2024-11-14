@@ -85,7 +85,17 @@ const (
 
 const (
 	// VisibilityAppName is used to find kafka topics and ES indexName for visibility
-	VisibilityAppName = "visibility"
+	VisibilityAppName      = "visibility"
+	PinotVisibilityAppName = "pinot-visibility"
+)
+
+const (
+	// ESVisibilityStoreName is used to find es advanced visibility store
+	ESVisibilityStoreName = "es-visibility"
+	// PinotVisibilityStoreName is used to find pinot advanced visibility store
+	PinotVisibilityStoreName = "pinot-visibility"
+	// OSVisibilityStoreName is used to find opensearch advanced visibility store
+	OSVisibilityStoreName = "os-visibility"
 )
 
 // This was flagged by salus as potentially hardcoded credentials. This is a false positive by the scanner and should be
@@ -100,8 +110,6 @@ const (
 	SystemLocalDomainName = "cadence-system"
 	// SystemDomainRetentionDays is retention config for all cadence system workflows
 	SystemDomainRetentionDays = 7
-	// DefaultAdminOperationToken is the default dynamic config value for AdminOperationToken
-	DefaultAdminOperationToken = "CadenceTeamONLY"
 	// BatcherDomainID is domain id for batcher local domain
 	BatcherDomainID = "3116607e-419b-4783-85fc-47726a4c3fe9"
 	// BatcherLocalDomainName is domain name for batcher workflows running in local cluster
@@ -153,11 +161,27 @@ const (
 	AdvancedVisibilityWritingModeDual = "dual"
 )
 
+// enum for dynamic config AdvancedVisibilityMigrationWritingMode
+const (
+	// AdvancedVisibilityMigrationWritingModeOff means do not write to advanced visibility store
+	AdvancedVisibilityMigrationWritingModeOff = "off"
+	// AdvancedVisibilityMigrationWritingModeTriple means write to normal visibility and advanced visibility store
+	AdvancedVisibilityMigrationWritingModeTriple = "triple"
+	// AdvancedVisibilityMigrationWritingModeDual means write to both advanced visibility stores
+	AdvancedVisibilityMigrationWritingModeDual = "dual"
+	// AdvancedVisibilityMigrationWritingModeTriple means write to source visibility store during migration
+	AdvancedVisibilityMigrationWritingModeSource = "source"
+	// AdvancedVisibilityMigrationWritingModeDestination means write to destination visibility store during migration
+	AdvancedVisibilityMigrationWritingModeDestination = "destination"
+)
+
 const (
 	// DomainDataKeyForManagedFailover is key of DomainData for managed failover
 	DomainDataKeyForManagedFailover = "IsManagedByCadence"
 	// DomainDataKeyForPreferredCluster is the key of DomainData for domain rebalance
 	DomainDataKeyForPreferredCluster = "PreferredCluster"
+	// DomainDataKeyForFailoverHistory is the key of DomainData for failover history
+	DomainDataKeyForFailoverHistory = "FailoverHistory"
 	// DomainDataKeyForReadGroups stores which groups have read permission of the domain API
 	DomainDataKeyForReadGroups = "READ_GROUPS"
 	// DomainDataKeyForWriteGroups stores which groups have write permission of the domain API
@@ -180,7 +204,9 @@ const (
 	TaskTypeTimer
 	// TaskTypeReplication is the task type for replication task
 	TaskTypeReplication
-	// TaskTypeCrossCluster is the task type for cross cluster task
+	// Deprecated: TaskTypeCrossCluster is the task type for cross cluster task
+	// as of June 2024, this feature is no longer supported. Keeping the enum here
+	// to avoid future reuse of the ID and/or confusion
 	TaskTypeCrossCluster TaskType = 6
 )
 
@@ -201,6 +227,8 @@ const (
 	DefaultESAnalyzerMinNumWorkflowsForAvg = 100
 	// DefaultESAnalyzerLimitToTypes controls if we want to limit ESAnalyzer only to some workflow types
 	DefaultESAnalyzerLimitToTypes = ""
+	// DefaultESAnalyzerEnableAvgDurationBasedChecks controls if we want to enable avg duration based refreshes
+	DefaultESAnalyzerEnableAvgDurationBasedChecks = false
 	// DefaultESAnalyzerLimitToDomains controls if we want to limit ESAnalyzer only to some domains
 	DefaultESAnalyzerLimitToDomains = ""
 	// DefaultESAnalyzerWorkflowDurationWarnThreshold defines warning threshold for a workflow duration
@@ -215,3 +243,68 @@ const MemoKeyForOperator = "operator"
 
 // ReservedTaskListPrefix is the required naming prefix for any task list partition other than partition 0
 const ReservedTaskListPrefix = "/__cadence_sys/"
+
+type (
+	// VisibilityOperation is an enum that represents visibility message types
+	VisibilityOperation string
+)
+
+// Enum for visibility message type
+const (
+	RecordStarted          VisibilityOperation = "RecordStarted"
+	RecordClosed           VisibilityOperation = "RecordClosed"
+	UpsertSearchAttributes VisibilityOperation = "UpsertSearchAttributes"
+)
+
+const (
+	numBitsPerLevel = 3
+)
+
+const (
+	// HighPriorityClass is the priority class for high priority tasks
+	HighPriorityClass = iota << numBitsPerLevel
+	// DefaultPriorityClass is the priority class for default priority tasks
+	DefaultPriorityClass
+	// LowPriorityClass is the priority class for low priority tasks
+	LowPriorityClass
+)
+
+const (
+	// HighPrioritySubclass is the priority subclass for high priority tasks
+	HighPrioritySubclass = iota
+	// DefaultPrioritySubclass is the priority subclass for high priority tasks
+	DefaultPrioritySubclass
+	// LowPrioritySubclass is the priority subclass for high priority tasks
+	LowPrioritySubclass
+)
+
+const (
+	// DefaultHistoryMaxAutoResetPoints is the default maximum number for auto reset points
+	DefaultHistoryMaxAutoResetPoints = 20
+)
+
+const (
+	// WorkflowIDRateLimitReason is the reason set in ServiceBusyError when workflow ID rate limit is exceeded
+	WorkflowIDRateLimitReason = "external-workflow-id-rate-limit"
+)
+
+type (
+	// FailoverType is the enum for representing different failover types
+	FailoverType int
+)
+
+const (
+	FailoverTypeForce = iota + 1
+	FailoverTypeGrace
+)
+
+func (v FailoverType) String() string {
+	switch v {
+	case FailoverTypeForce:
+		return "Force"
+	case FailoverTypeGrace:
+		return "Grace"
+	default:
+		return "Unknown"
+	}
+}

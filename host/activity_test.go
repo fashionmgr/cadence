@@ -34,7 +34,7 @@ import (
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/types"
-	"github.com/uber/cadence/service/matching"
+	"github.com/uber/cadence/service/matching/tasklist"
 )
 
 func (s *IntegrationSuite) TestActivityHeartBeatWorkflow_Success() {
@@ -67,7 +67,9 @@ func (s *IntegrationSuite) TestActivityHeartBeatWorkflow_Success() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -117,8 +119,10 @@ func (s *IntegrationSuite) TestActivityHeartBeatWorkflow_Success() {
 		s.Equal(activityName, activityType.Name)
 		for i := 0; i < 10; i++ {
 			s.Logger.Info("Heartbeating for activity", tag.WorkflowActivityID(activityID), tag.Counter(i))
-			_, err := s.engine.RecordActivityTaskHeartbeat(createContext(), &types.RecordActivityTaskHeartbeatRequest{
+			ctx, cancel := createContext()
+			_, err := s.engine.RecordActivityTaskHeartbeat(ctx, &types.RecordActivityTaskHeartbeatRequest{
 				TaskToken: taskToken, Details: []byte("details")})
+			cancel()
 			s.Nil(err)
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -138,10 +142,10 @@ func (s *IntegrationSuite) TestActivityHeartBeatWorkflow_Success() {
 	}
 
 	_, err := poller.PollAndProcessDecisionTask(false, false)
-	s.True(err == nil || err == matching.ErrNoTasks)
+	s.True(err == nil || err == tasklist.ErrNoTasks)
 
 	err = poller.PollAndProcessActivityTask(false)
-	s.True(err == nil || err == matching.ErrNoTasks)
+	s.True(err == nil || err == tasklist.ErrNoTasks)
 
 	s.Logger.Info("Waiting for workflow to complete", tag.WorkflowRunID(we.RunID))
 
@@ -188,7 +192,9 @@ func (s *IntegrationSuite) TestActivityHeartbeatDetailsDuringRetry() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -244,8 +250,10 @@ func (s *IntegrationSuite) TestActivityHeartbeatDetailsDuringRetry() {
 		var err error
 		if activityExecutedCount == 0 {
 			s.Logger.Info("Heartbeating for activity:", tag.WorkflowActivityID(activityID))
-			_, err = s.engine.RecordActivityTaskHeartbeat(createContext(), &types.RecordActivityTaskHeartbeatRequest{
+			ctx, cancel := createContext()
+			_, err = s.engine.RecordActivityTaskHeartbeat(ctx, &types.RecordActivityTaskHeartbeatRequest{
 				TaskToken: taskToken, Details: heartbeatDetails})
+			cancel()
 			s.Nil(err)
 			// Trigger heartbeat timeout and retry
 			time.Sleep(time.Second * 2)
@@ -270,7 +278,9 @@ func (s *IntegrationSuite) TestActivityHeartbeatDetailsDuringRetry() {
 	}
 
 	describeWorkflowExecution := func() (*types.DescribeWorkflowExecutionResponse, error) {
-		return s.engine.DescribeWorkflowExecution(createContext(), &types.DescribeWorkflowExecutionRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		return s.engine.DescribeWorkflowExecution(ctx, &types.DescribeWorkflowExecutionRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -364,7 +374,9 @@ func (s *IntegrationSuite) TestActivityRetry() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -425,12 +437,12 @@ func (s *IntegrationSuite) TestActivityRetry() {
 					}
 
 				case types.EventTypeActivityTaskFailed:
-					if event.ActivityTaskFailedEventAttributes.GetScheduledEventID() == activityAScheduled.GetEventID() {
+					if event.ActivityTaskFailedEventAttributes.GetScheduledEventID() == activityAScheduled.ID {
 						activityAFailed = event
 					}
 
 				case types.EventTypeActivityTaskTimedOut:
-					if event.ActivityTaskTimedOutEventAttributes.GetScheduledEventID() == activityBScheduled.GetEventID() {
+					if event.ActivityTaskTimedOutEventAttributes.GetScheduledEventID() == activityBScheduled.ID {
 						activityBTimeout = event
 					}
 				}
@@ -489,7 +501,9 @@ func (s *IntegrationSuite) TestActivityRetry() {
 	}
 
 	describeWorkflowExecution := func() (*types.DescribeWorkflowExecutionResponse, error) {
-		return s.engine.DescribeWorkflowExecution(createContext(), &types.DescribeWorkflowExecutionRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		return s.engine.DescribeWorkflowExecution(ctx, &types.DescribeWorkflowExecutionRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -502,7 +516,7 @@ func (s *IntegrationSuite) TestActivityRetry() {
 	s.True(err == nil, err)
 
 	err = poller.PollAndProcessActivityTask(false)
-	s.True(err == nil || err == matching.ErrNoTasks, err)
+	s.True(err == nil || err == tasklist.ErrNoTasks, err)
 
 	descResp, err := describeWorkflowExecution()
 	s.Nil(err)
@@ -516,7 +530,7 @@ func (s *IntegrationSuite) TestActivityRetry() {
 	}
 
 	err = poller2.PollAndProcessActivityTask(false)
-	s.True(err == nil || err == matching.ErrNoTasks, err)
+	s.True(err == nil || err == tasklist.ErrNoTasks, err)
 
 	descResp, err = describeWorkflowExecution()
 	s.Nil(err)
@@ -577,7 +591,9 @@ func (s *IntegrationSuite) TestActivityHeartBeatWorkflow_Timeout() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -643,9 +659,10 @@ func (s *IntegrationSuite) TestActivityHeartBeatWorkflow_Timeout() {
 	}
 
 	_, err := poller.PollAndProcessDecisionTask(false, false)
-	s.True(err == nil || err == matching.ErrNoTasks)
+	s.True(err == nil || err == tasklist.ErrNoTasks)
 
 	err = poller.PollAndProcessActivityTask(false)
+	s.Error(err)
 
 	s.Logger.Info("Waiting for workflow to complete", tag.WorkflowRunID(we.RunID))
 
@@ -680,7 +697,9 @@ func (s *IntegrationSuite) TestActivityTimeouts() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -754,7 +773,7 @@ func (s *IntegrationSuite) TestActivityTimeouts() {
 		} else if previousStartedEventID > 0 {
 			for _, event := range history.Events[previousStartedEventID:] {
 				if event.GetEventType() == types.EventTypeActivityTaskScheduled {
-					activitiesMap[event.GetEventID()] = event
+					activitiesMap[event.ID] = event
 				}
 
 				if event.GetEventType() == types.EventTypeActivityTaskTimedOut {
@@ -847,8 +866,10 @@ func (s *IntegrationSuite) TestActivityTimeouts() {
 			go func() {
 				for i := 0; i < 6; i++ {
 					s.Logger.Info("Heartbeating for activity", tag.WorkflowActivityID(activityID), tag.Counter(i))
-					_, err := s.engine.RecordActivityTaskHeartbeat(createContext(), &types.RecordActivityTaskHeartbeatRequest{
+					ctx, cancel := createContext()
+					_, err := s.engine.RecordActivityTaskHeartbeat(ctx, &types.RecordActivityTaskHeartbeatRequest{
 						TaskToken: taskToken, Details: []byte(strconv.Itoa(i))})
+					cancel()
 					s.Nil(err)
 					time.Sleep(1 * time.Second)
 				}
@@ -873,7 +894,7 @@ func (s *IntegrationSuite) TestActivityTimeouts() {
 	}
 
 	_, err := poller.PollAndProcessDecisionTask(false, false)
-	s.True(err == nil || err == matching.ErrNoTasks)
+	s.True(err == nil || err == tasklist.ErrNoTasks)
 
 	for i := 0; i < 3; i++ {
 		go func() {
@@ -922,7 +943,9 @@ func (s *IntegrationSuite) TestActivityHeartbeatTimeouts() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -963,7 +986,7 @@ func (s *IntegrationSuite) TestActivityHeartbeatTimeouts() {
 		ProcessLoop:
 			for _, event := range history.Events[previousStartedEventID:] {
 				if event.GetEventType() == types.EventTypeActivityTaskScheduled {
-					lastHeartbeatMap[event.GetEventID()] = 0
+					lastHeartbeatMap[event.ID] = 0
 				}
 
 				if event.GetEventType() == types.EventTypeActivityTaskCompleted ||
@@ -1027,8 +1050,10 @@ func (s *IntegrationSuite) TestActivityHeartbeatTimeouts() {
 		for i := 0; i < 10; i++ {
 			if !workflowComplete {
 				s.Logger.Info("Heartbeating for activity", tag.WorkflowActivityID(activityID), tag.Counter(i))
-				_, err := s.engine.RecordActivityTaskHeartbeat(createContext(), &types.RecordActivityTaskHeartbeatRequest{
+				ctx, cancel := createContext()
+				_, err := s.engine.RecordActivityTaskHeartbeat(ctx, &types.RecordActivityTaskHeartbeatRequest{
 					TaskToken: taskToken, Details: []byte(strconv.Itoa(i))})
+				cancel()
 				if err != nil {
 					s.Logger.Error("Activity heartbeat failed", tag.WorkflowActivityID(activityID), tag.Counter(i), tag.Error(err))
 				}
@@ -1058,7 +1083,7 @@ func (s *IntegrationSuite) TestActivityHeartbeatTimeouts() {
 	}
 
 	_, err := poller.PollAndProcessDecisionTask(false, false)
-	s.True(err == nil || err == matching.ErrNoTasks)
+	s.True(err == nil || err == tasklist.ErrNoTasks)
 
 	for i := 0; i < activityCount; i++ {
 		go func() {
@@ -1113,7 +1138,9 @@ func (s *IntegrationSuite) TestActivityCancellation() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution: response", tag.WorkflowRunID(we.GetRunID()))
@@ -1170,9 +1197,11 @@ func (s *IntegrationSuite) TestActivityCancellation() {
 		s.Equal(activityName, activityType.GetName())
 		for i := 0; i < 10; i++ {
 			s.Logger.Info("Heartbeating for activity", tag.WorkflowActivityID(activityID), tag.Counter(i))
-			response, err := s.engine.RecordActivityTaskHeartbeat(createContext(),
+			ctx, cancel := createContext()
+			response, err := s.engine.RecordActivityTaskHeartbeat(ctx,
 				&types.RecordActivityTaskHeartbeatRequest{
 					TaskToken: taskToken, Details: []byte("details")})
+			cancel()
 			if response.CancelRequested {
 				return []byte("Activity Cancelled."), true, nil
 			}
@@ -1195,7 +1224,7 @@ func (s *IntegrationSuite) TestActivityCancellation() {
 	}
 
 	_, err := poller.PollAndProcessDecisionTask(false, false)
-	s.True(err == nil || err == matching.ErrNoTasks, err)
+	s.True(err == nil || err == tasklist.ErrNoTasks, err)
 
 	cancelCh := make(chan struct{})
 
@@ -1204,12 +1233,12 @@ func (s *IntegrationSuite) TestActivityCancellation() {
 		scheduleActivity = false
 		requestCancellation = true
 		_, err := poller.PollAndProcessDecisionTask(false, false)
-		s.True(err == nil || err == matching.ErrNoTasks, err)
+		s.True(err == nil || err == tasklist.ErrNoTasks, err)
 		cancelCh <- struct{}{}
 	}()
 
 	err = poller.PollAndProcessActivityTask(false)
-	s.True(err == nil || err == matching.ErrNoTasks, err)
+	s.True(err == nil || err == tasklist.ErrNoTasks, err)
 
 	<-cancelCh
 	s.Logger.Info("Waiting for workflow to complete", tag.WorkflowRunID(we.RunID))
@@ -1240,7 +1269,9 @@ func (s *IntegrationSuite) TestActivityCancellationNotStarted() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecutionn", tag.WorkflowRunID(we.GetRunID()))
@@ -1309,12 +1340,14 @@ func (s *IntegrationSuite) TestActivityCancellationNotStarted() {
 	}
 
 	_, err := poller.PollAndProcessDecisionTask(false, false)
-	s.True(err == nil || err == matching.ErrNoTasks)
+	s.True(err == nil || err == tasklist.ErrNoTasks)
 
 	// Send signal so that worker can send an activity cancel
 	signalName := "my signal"
 	signalInput := []byte("my signal input.")
-	err = s.engine.SignalWorkflowExecution(createContext(), &types.SignalWorkflowExecutionRequest{
+	ctx, cancel = createContext()
+	defer cancel()
+	err = s.engine.SignalWorkflowExecution(ctx, &types.SignalWorkflowExecutionRequest{
 		Domain: s.domainName,
 		WorkflowExecution: &types.WorkflowExecution{
 			WorkflowID: id,
@@ -1335,5 +1368,5 @@ func (s *IntegrationSuite) TestActivityCancellationNotStarted() {
 	scheduleActivity = false
 	requestCancellation = false
 	_, err = poller.PollAndProcessDecisionTask(false, false)
-	s.True(err == nil || err == matching.ErrNoTasks)
+	s.True(err == nil || err == tasklist.ErrNoTasks)
 }

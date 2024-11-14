@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
@@ -71,8 +72,17 @@ func TestUpdateHelper(t *testing.T) {
 		{
 			msg: "update workflow conflict",
 			mockSetupFn: func(mockContext *execution.MockContext, mockMutableState *execution.MockMutableState) {
-				mockContext.EXPECT().UpdateWorkflowExecutionAsActive(gomock.Any(), gomock.Any()).Return(execution.ErrConflict).Times(ConditionalRetryCount - 1)
+				mockContext.EXPECT().UpdateWorkflowExecutionAsActive(gomock.Any(), gomock.Any()).Return(execution.NewConflictError(t, assert.AnError)).Times(ConditionalRetryCount - 1)
 				mockContext.EXPECT().UpdateWorkflowExecutionAsActive(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+			},
+			actionFn: func(context execution.Context, mutableState execution.MutableState) (*UpdateAction, error) {
+				return UpdateWithoutDecision, nil
+			},
+		},
+		{
+			msg: "duplicate request",
+			mockSetupFn: func(mockContext *execution.MockContext, mockMutableState *execution.MockMutableState) {
+				mockContext.EXPECT().UpdateWorkflowExecutionAsActive(gomock.Any(), gomock.Any()).Return(&persistence.DuplicateRequestError{})
 			},
 			actionFn: func(context execution.Context, mutableState execution.MutableState) (*UpdateAction, error) {
 				return UpdateWithoutDecision, nil
@@ -91,8 +101,6 @@ func TestUpdateHelper(t *testing.T) {
 			tc.mockSetupFn(mockContext, mockMutableState)
 			err := updateHelper(context.Background(), workflowContext, time.Now(), tc.actionFn)
 			require.NoError(t, err)
-
-			controller.Finish()
 		})
 	}
 
@@ -151,6 +159,7 @@ func TestWorkflowLoad(t *testing.T) {
 		t.Run(tc.msg, func(t *testing.T) {
 			controller := gomock.NewController(t)
 			mockShard := shard.NewTestContext(
+				t,
 				controller,
 				&persistence.ShardInfo{
 					ShardID: 10,
@@ -161,7 +170,7 @@ func TestWorkflowLoad(t *testing.T) {
 
 			mockDomainCache := mockShard.Resource.DomainCache
 			mockDomainCache.EXPECT().GetDomainByID(constants.TestLocalDomainEntry.GetInfo().ID).Return(constants.TestLocalDomainEntry, nil)
-			mockDomainCache.EXPECT().GetDomainName(constants.TestLocalDomainEntry.GetInfo().ID).Return(constants.TestLocalDomainEntry.GetInfo().Name, nil)
+			mockDomainCache.EXPECT().GetDomainName(constants.TestLocalDomainEntry.GetInfo().ID).Return(constants.TestLocalDomainEntry.GetInfo().Name, nil).AnyTimes()
 
 			tc.mockSetupFn(mockShard)
 
@@ -170,6 +179,7 @@ func TestWorkflowLoad(t *testing.T) {
 				execution.NewCache(mockShard),
 				mockShard.Resource.ExecutionMgr,
 				constants.TestDomainID,
+				constants.TestDomainName,
 				constants.TestWorkflowID,
 				tc.runID,
 			)
@@ -177,8 +187,6 @@ func TestWorkflowLoad(t *testing.T) {
 			require.Equal(t, constants.TestWorkflowID, workflowContext.GetWorkflowID())
 			require.Equal(t, constants.TestRunID, workflowContext.GetRunID())
 			workflowContext.GetReleaseFn()(nil)
-
-			controller.Finish()
 		})
 	}
 }

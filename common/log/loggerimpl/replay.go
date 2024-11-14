@@ -21,6 +21,9 @@
 package loggerimpl
 
 import (
+	"fmt"
+	"math/rand"
+
 	"go.uber.org/cadence/workflow"
 
 	"github.com/uber/cadence/common/log"
@@ -42,8 +45,9 @@ func NewReplayLogger(logger log.Logger, ctx workflow.Context, enableLogInReplay 
 	lg, ok := logger.(*loggerImpl)
 	if ok {
 		logger = &loggerImpl{
-			zapLogger: lg.zapLogger,
-			skip:      skipForReplayLogger,
+			zapLogger:     lg.zapLogger,
+			skip:          skipForReplayLogger,
+			sampleLocalFn: lg.sampleLocalFn,
 		}
 	} else {
 		logger.Warn("ReplayLogger may not emit callat tag correctly because the logger passed in is not loggerImpl")
@@ -53,6 +57,14 @@ func NewReplayLogger(logger log.Logger, ctx workflow.Context, enableLogInReplay 
 		ctx:               ctx,
 		enableLogInReplay: enableLogInReplay,
 	}
+}
+
+func (r *replayLogger) Debugf(msg string, args ...any) {
+	if workflow.IsReplaying(r.ctx) && !r.enableLogInReplay {
+		return
+	}
+
+	r.logger.Debugf(fmt.Sprintf(msg, args...))
 }
 
 func (r *replayLogger) Debug(msg string, tags ...tag.Tag) {
@@ -88,6 +100,15 @@ func (r *replayLogger) Fatal(msg string, tags ...tag.Tag) {
 		return
 	}
 	r.logger.Fatal(msg, tags...)
+}
+
+func (r *replayLogger) SampleInfo(msg string, sampleRate int, tags ...tag.Tag) {
+	if rand.Intn(sampleRate) == 0 {
+		if workflow.IsReplaying(r.ctx) && !r.enableLogInReplay {
+			return
+		}
+		r.logger.Info(msg, tags...)
+	}
 }
 
 func (r *replayLogger) WithTags(tags ...tag.Tag) log.Logger {

@@ -65,6 +65,11 @@ type Interface interface {
 		DescribeRequest *shared.DescribeWorkflowExecutionRequest,
 	) (*shared.DescribeWorkflowExecutionResponse, error)
 
+	DiagnoseWorkflowExecution(
+		ctx context.Context,
+		DiagnoseRequest *shared.DiagnoseWorkflowExecutionRequest,
+	) (*shared.DiagnoseWorkflowExecutionResponse, error)
+
 	GetClusterInfo(
 		ctx context.Context,
 	) (*shared.ClusterInfo, error)
@@ -138,6 +143,11 @@ type Interface interface {
 		HeartbeatRequest *shared.RecordActivityTaskHeartbeatByIDRequest,
 	) (*shared.RecordActivityTaskHeartbeatResponse, error)
 
+	RefreshWorkflowTasks(
+		ctx context.Context,
+		Request *shared.RefreshWorkflowTasksRequest,
+	) error
+
 	RegisterDomain(
 		ctx context.Context,
 		RegisterRequest *shared.RegisterDomainRequest,
@@ -203,6 +213,11 @@ type Interface interface {
 		CompleteRequest *shared.RespondQueryTaskCompletedRequest,
 	) error
 
+	RestartWorkflowExecution(
+		ctx context.Context,
+		RestartRequest *shared.RestartWorkflowExecutionRequest,
+	) (*shared.RestartWorkflowExecutionResponse, error)
+
 	ScanWorkflowExecutions(
 		ctx context.Context,
 		ListRequest *shared.ListWorkflowExecutionsRequest,
@@ -213,6 +228,11 @@ type Interface interface {
 		SignalWithStartRequest *shared.SignalWithStartWorkflowExecutionRequest,
 	) (*shared.StartWorkflowExecutionResponse, error)
 
+	SignalWithStartWorkflowExecutionAsync(
+		ctx context.Context,
+		SignalWithStartRequest *shared.SignalWithStartWorkflowExecutionAsyncRequest,
+	) (*shared.SignalWithStartWorkflowExecutionAsyncResponse, error)
+
 	SignalWorkflowExecution(
 		ctx context.Context,
 		SignalRequest *shared.SignalWorkflowExecutionRequest,
@@ -222,6 +242,11 @@ type Interface interface {
 		ctx context.Context,
 		StartRequest *shared.StartWorkflowExecutionRequest,
 	) (*shared.StartWorkflowExecutionResponse, error)
+
+	StartWorkflowExecutionAsync(
+		ctx context.Context,
+		StartRequest *shared.StartWorkflowExecutionAsyncRequest,
+	) (*shared.StartWorkflowExecutionAsyncResponse, error)
 
 	TerminateWorkflowExecution(
 		ctx context.Context,
@@ -237,8 +262,8 @@ type Interface interface {
 // New prepares an implementation of the WorkflowService service for
 // registration.
 //
-// 	handler := WorkflowServiceHandler{}
-// 	dispatcher.Register(workflowserviceserver.New(handler))
+//	handler := WorkflowServiceHandler{}
+//	dispatcher.Register(workflowserviceserver.New(handler))
 func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 	h := handler{impl}
 	service := thrift.Service{
@@ -302,6 +327,18 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 					NoWire: describeworkflowexecution_NoWireHandler{impl},
 				},
 				Signature:    "DescribeWorkflowExecution(DescribeRequest *shared.DescribeWorkflowExecutionRequest) (*shared.DescribeWorkflowExecutionResponse)",
+				ThriftModule: cadence.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "DiagnoseWorkflowExecution",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.DiagnoseWorkflowExecution),
+					NoWire: diagnoseworkflowexecution_NoWireHandler{impl},
+				},
+				Signature:    "DiagnoseWorkflowExecution(DiagnoseRequest *shared.DiagnoseWorkflowExecutionRequest) (*shared.DiagnoseWorkflowExecutionResponse)",
 				ThriftModule: cadence.ThriftModule,
 			},
 
@@ -486,6 +523,18 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
+				Name: "RefreshWorkflowTasks",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.RefreshWorkflowTasks),
+					NoWire: refreshworkflowtasks_NoWireHandler{impl},
+				},
+				Signature:    "RefreshWorkflowTasks(Request *shared.RefreshWorkflowTasksRequest)",
+				ThriftModule: cadence.ThriftModule,
+			},
+
+			thrift.Method{
 				Name: "RegisterDomain",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -642,6 +691,18 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
+				Name: "RestartWorkflowExecution",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.RestartWorkflowExecution),
+					NoWire: restartworkflowexecution_NoWireHandler{impl},
+				},
+				Signature:    "RestartWorkflowExecution(RestartRequest *shared.RestartWorkflowExecutionRequest) (*shared.RestartWorkflowExecutionResponse)",
+				ThriftModule: cadence.ThriftModule,
+			},
+
+			thrift.Method{
 				Name: "ScanWorkflowExecutions",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -666,6 +727,18 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
+				Name: "SignalWithStartWorkflowExecutionAsync",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.SignalWithStartWorkflowExecutionAsync),
+					NoWire: signalwithstartworkflowexecutionasync_NoWireHandler{impl},
+				},
+				Signature:    "SignalWithStartWorkflowExecutionAsync(SignalWithStartRequest *shared.SignalWithStartWorkflowExecutionAsyncRequest) (*shared.SignalWithStartWorkflowExecutionAsyncResponse)",
+				ThriftModule: cadence.ThriftModule,
+			},
+
+			thrift.Method{
 				Name: "SignalWorkflowExecution",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -686,6 +759,18 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 					NoWire: startworkflowexecution_NoWireHandler{impl},
 				},
 				Signature:    "StartWorkflowExecution(StartRequest *shared.StartWorkflowExecutionRequest) (*shared.StartWorkflowExecutionResponse)",
+				ThriftModule: cadence.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "StartWorkflowExecutionAsync",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.StartWorkflowExecutionAsync),
+					NoWire: startworkflowexecutionasync_NoWireHandler{impl},
+				},
+				Signature:    "StartWorkflowExecutionAsync(StartRequest *shared.StartWorkflowExecutionAsyncRequest) (*shared.StartWorkflowExecutionAsyncResponse)",
 				ThriftModule: cadence.ThriftModule,
 			},
 
@@ -715,7 +800,7 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 		},
 	}
 
-	procedures := make([]transport.Procedure, 0, 39)
+	procedures := make([]transport.Procedure, 0, 44)
 	procedures = append(procedures, thrift.BuildProcedures(service, opts...)...)
 	return procedures
 }
@@ -857,6 +942,36 @@ func (h handler) DescribeWorkflowExecution(ctx context.Context, body wire.Value)
 
 	hadError := appErr != nil
 	result, err := cadence.WorkflowService_DescribeWorkflowExecution_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
+func (h handler) DiagnoseWorkflowExecution(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args cadence.WorkflowService_DiagnoseWorkflowExecution_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'WorkflowService' procedure 'DiagnoseWorkflowExecution': %w", err)
+	}
+
+	success, appErr := h.impl.DiagnoseWorkflowExecution(ctx, args.DiagnoseRequest)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_DiagnoseWorkflowExecution_Helper.WrapResponse(success, appErr)
 
 	var response thrift.Response
 	if err == nil {
@@ -1326,6 +1441,36 @@ func (h handler) RecordActivityTaskHeartbeatByID(ctx context.Context, body wire.
 	return response, err
 }
 
+func (h handler) RefreshWorkflowTasks(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args cadence.WorkflowService_RefreshWorkflowTasks_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'WorkflowService' procedure 'RefreshWorkflowTasks': %w", err)
+	}
+
+	appErr := h.impl.RefreshWorkflowTasks(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_RefreshWorkflowTasks_Helper.WrapResponse(appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
 func (h handler) RegisterDomain(ctx context.Context, body wire.Value) (thrift.Response, error) {
 	var args cadence.WorkflowService_RegisterDomain_Args
 	if err := args.FromWire(body); err != nil {
@@ -1716,6 +1861,36 @@ func (h handler) RespondQueryTaskCompleted(ctx context.Context, body wire.Value)
 	return response, err
 }
 
+func (h handler) RestartWorkflowExecution(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args cadence.WorkflowService_RestartWorkflowExecution_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'WorkflowService' procedure 'RestartWorkflowExecution': %w", err)
+	}
+
+	success, appErr := h.impl.RestartWorkflowExecution(ctx, args.RestartRequest)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_RestartWorkflowExecution_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
 func (h handler) ScanWorkflowExecutions(ctx context.Context, body wire.Value) (thrift.Response, error) {
 	var args cadence.WorkflowService_ScanWorkflowExecutions_Args
 	if err := args.FromWire(body); err != nil {
@@ -1776,6 +1951,36 @@ func (h handler) SignalWithStartWorkflowExecution(ctx context.Context, body wire
 	return response, err
 }
 
+func (h handler) SignalWithStartWorkflowExecutionAsync(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args cadence.WorkflowService_SignalWithStartWorkflowExecutionAsync_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'WorkflowService' procedure 'SignalWithStartWorkflowExecutionAsync': %w", err)
+	}
+
+	success, appErr := h.impl.SignalWithStartWorkflowExecutionAsync(ctx, args.SignalWithStartRequest)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_SignalWithStartWorkflowExecutionAsync_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
 func (h handler) SignalWorkflowExecution(ctx context.Context, body wire.Value) (thrift.Response, error) {
 	var args cadence.WorkflowService_SignalWorkflowExecution_Args
 	if err := args.FromWire(body); err != nil {
@@ -1817,6 +2022,36 @@ func (h handler) StartWorkflowExecution(ctx context.Context, body wire.Value) (t
 
 	hadError := appErr != nil
 	result, err := cadence.WorkflowService_StartWorkflowExecution_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
+func (h handler) StartWorkflowExecutionAsync(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args cadence.WorkflowService_StartWorkflowExecutionAsync_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'WorkflowService' procedure 'StartWorkflowExecutionAsync': %w", err)
+	}
+
+	success, appErr := h.impl.StartWorkflowExecutionAsync(ctx, args.StartRequest)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_StartWorkflowExecutionAsync_Helper.WrapResponse(success, appErr)
 
 	var response thrift.Response
 	if err == nil {
@@ -2063,6 +2298,43 @@ func (h describeworkflowexecution_NoWireHandler) HandleNoWire(ctx context.Contex
 
 	hadError := appErr != nil
 	result, err := cadence.WorkflowService_DescribeWorkflowExecution_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
+type diagnoseworkflowexecution_NoWireHandler struct{ impl Interface }
+
+func (h diagnoseworkflowexecution_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args cadence.WorkflowService_DiagnoseWorkflowExecution_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'WorkflowService' procedure 'DiagnoseWorkflowExecution': %w", err)
+	}
+
+	success, appErr := h.impl.DiagnoseWorkflowExecution(ctx, args.DiagnoseRequest)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_DiagnoseWorkflowExecution_Helper.WrapResponse(success, appErr)
 	response := thrift.NoWireResponse{ResponseWriter: rw}
 	if err == nil {
 		response.IsApplicationError = hadError
@@ -2636,6 +2908,43 @@ func (h recordactivitytaskheartbeatbyid_NoWireHandler) HandleNoWire(ctx context.
 
 }
 
+type refreshworkflowtasks_NoWireHandler struct{ impl Interface }
+
+func (h refreshworkflowtasks_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args cadence.WorkflowService_RefreshWorkflowTasks_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'WorkflowService' procedure 'RefreshWorkflowTasks': %w", err)
+	}
+
+	appErr := h.impl.RefreshWorkflowTasks(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_RefreshWorkflowTasks_Helper.WrapResponse(appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
 type registerdomain_NoWireHandler struct{ impl Interface }
 
 func (h registerdomain_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
@@ -3117,6 +3426,43 @@ func (h respondquerytaskcompleted_NoWireHandler) HandleNoWire(ctx context.Contex
 
 }
 
+type restartworkflowexecution_NoWireHandler struct{ impl Interface }
+
+func (h restartworkflowexecution_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args cadence.WorkflowService_RestartWorkflowExecution_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'WorkflowService' procedure 'RestartWorkflowExecution': %w", err)
+	}
+
+	success, appErr := h.impl.RestartWorkflowExecution(ctx, args.RestartRequest)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_RestartWorkflowExecution_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
 type scanworkflowexecutions_NoWireHandler struct{ impl Interface }
 
 func (h scanworkflowexecutions_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
@@ -3191,6 +3537,43 @@ func (h signalwithstartworkflowexecution_NoWireHandler) HandleNoWire(ctx context
 
 }
 
+type signalwithstartworkflowexecutionasync_NoWireHandler struct{ impl Interface }
+
+func (h signalwithstartworkflowexecutionasync_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args cadence.WorkflowService_SignalWithStartWorkflowExecutionAsync_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'WorkflowService' procedure 'SignalWithStartWorkflowExecutionAsync': %w", err)
+	}
+
+	success, appErr := h.impl.SignalWithStartWorkflowExecutionAsync(ctx, args.SignalWithStartRequest)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_SignalWithStartWorkflowExecutionAsync_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
 type signalworkflowexecution_NoWireHandler struct{ impl Interface }
 
 func (h signalworkflowexecution_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
@@ -3247,6 +3630,43 @@ func (h startworkflowexecution_NoWireHandler) HandleNoWire(ctx context.Context, 
 
 	hadError := appErr != nil
 	result, err := cadence.WorkflowService_StartWorkflowExecution_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
+type startworkflowexecutionasync_NoWireHandler struct{ impl Interface }
+
+func (h startworkflowexecutionasync_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args cadence.WorkflowService_StartWorkflowExecutionAsync_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'WorkflowService' procedure 'StartWorkflowExecutionAsync': %w", err)
+	}
+
+	success, appErr := h.impl.StartWorkflowExecutionAsync(ctx, args.StartRequest)
+
+	hadError := appErr != nil
+	result, err := cadence.WorkflowService_StartWorkflowExecutionAsync_Helper.WrapResponse(success, appErr)
 	response := thrift.NoWireResponse{ResponseWriter: rw}
 	if err == nil {
 		response.IsApplicationError = hadError

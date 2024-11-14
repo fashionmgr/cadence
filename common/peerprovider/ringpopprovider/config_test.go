@@ -32,7 +32,7 @@ import (
 	"github.com/uber/ringpop-go/discovery/statichosts"
 	"gopkg.in/yaml.v2"
 
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 )
 
 type RingpopSuite struct {
@@ -105,8 +105,7 @@ func (resolver *mockResolver) LookupSRV(ctx context.Context, service string, pro
 	}
 
 	for _, record := range srvs {
-		var srvRecord net.SRV
-		srvRecord = record
+		srvRecord := record
 		records = append(records, &srvRecord)
 	}
 
@@ -119,8 +118,9 @@ func (s *RingpopSuite) TestDNSMode() {
 	s.Nil(err)
 	s.Equal("test", cfg.Name)
 	s.Equal(BootstrapModeDNS, cfg.BootstrapMode)
+	s.Equal("10.66.1.71", cfg.BroadcastAddress)
 	s.Nil(cfg.validate())
-	logger := loggerimpl.NewNopLogger()
+	logger := testlogger.New(s.T())
 
 	s.ElementsMatch(
 		[]string{
@@ -179,7 +179,7 @@ func (s *RingpopSuite) TestDNSSRVMode() {
 	s.Equal("test", cfg.Name)
 	s.Equal(BootstrapModeDNSSRV, cfg.BootstrapMode)
 	s.Nil(cfg.validate())
-	logger := loggerimpl.NewNopLogger()
+	logger := testlogger.New(s.T())
 
 	s.ElementsMatch(
 		[]string{
@@ -221,22 +221,22 @@ func (s *RingpopSuite) TestDNSSRVMode() {
 		"duplicate entries should be removed",
 	)
 
-	//Expect unknown-duplicate.example.net to not resolve
+	// Expect unknown-duplicate.example.net to not resolve
 	_, err = cfg.DiscoveryProvider.Hosts()
 	s.NotNil(err)
 
-	//Remove known bad hosts from Unresolved list
+	// Remove known bad hosts from Unresolved list
 	provider.UnresolvedHosts = []string{
 		"service-a.example.net",
 		"service-b.example.net",
 		"badhostport",
 	}
 
-	//Expect badhostport to not seperate service name
+	// Expect badhostport to not seperate service name
 	_, err = cfg.DiscoveryProvider.Hosts()
 	s.NotNil(err)
 
-	//Remove known bad hosts from Unresolved list
+	// Remove known bad hosts from Unresolved list
 	provider.UnresolvedHosts = []string{
 		"service-a.example.net",
 		"service-b.example.net",
@@ -298,6 +298,7 @@ maxJoinDuration: 30s`
 func getDNSConfig() string {
 	return `name: "test"
 bootstrapMode: "dns"
+broadcastAddress: "10.66.1.71"
 bootstrapHosts:
 - example.net:1111
 - example.net:1112

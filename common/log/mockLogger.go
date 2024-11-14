@@ -31,6 +31,11 @@ type MockLogger struct {
 	mock.Mock
 }
 
+// Debugf provides a mock function with given fields: msg, args
+func (_m *MockLogger) Debugf(msg string, args ...any) {
+	_m.Called(msg, args)
+}
+
 // Debug provides a mock function with given fields: msg, tags
 func (_m *MockLogger) Debug(msg string, tags ...tag.Tag) {
 	_m.Called(msg, tags)
@@ -53,6 +58,11 @@ func (_m *MockLogger) Error(msg string, tags ...tag.Tag) {
 
 // Fatal provides a mock function with given fields: msg, tags
 func (_m *MockLogger) Fatal(msg string, tags ...tag.Tag) {
+	_m.Called(msg, tags)
+}
+
+// SampleInfo provides a mock function with given fields: msg, sampleRate, tags
+func (_m *MockLogger) SampleInfo(msg string, sampleRate int, tags ...tag.Tag) {
 	_m.Called(msg, tags)
 }
 

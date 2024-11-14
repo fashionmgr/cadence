@@ -28,19 +28,18 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/yarpc"
-
 	"github.com/golang/mock/gomock"
 	"github.com/pborman/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"go.uber.org/zap"
+	"go.uber.org/yarpc"
 
 	adminClient "github.com/uber/cadence/client/admin"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/persistence"
 	pt "github.com/uber/cadence/common/persistence/persistence-tests"
 	test "github.com/uber/cadence/common/testing"
@@ -66,7 +65,7 @@ func TestNDCIntegrationTestSuite(t *testing.T) {
 	}
 	clusterConfigs[0].WorkerConfig = &host.WorkerConfig{}
 	clusterConfigs[1].WorkerConfig = &host.WorkerConfig{}
-	testCluster := host.NewPersistenceTestCluster(clusterConfigs[0])
+	testCluster := host.NewPersistenceTestCluster(t, clusterConfigs[0])
 	params := NDCIntegrationTestSuiteParams{
 		ClusterConfigs:        clusterConfigs,
 		DefaultTestCluster:    testCluster,
@@ -77,11 +76,8 @@ func TestNDCIntegrationTestSuite(t *testing.T) {
 }
 
 func (s *NDCIntegrationTestSuite) SetupSuite() {
-	zapLogger, err := zap.NewDevelopment()
-	// cannot use s.Nil since it is not initialized
-	s.Require().NoError(err)
 	s.serializer = persistence.NewPayloadSerializer()
-	s.logger = loggerimpl.NewLogger(zapLogger)
+	s.logger = testlogger.New(s.T())
 
 	s.standByReplicationTasksChan = make(chan *types.ReplicationTask, 100)
 
@@ -90,36 +86,27 @@ func (s *NDCIntegrationTestSuite) SetupSuite() {
 	controller := gomock.NewController(s.T())
 	mockStandbyClient := adminClient.NewMockClient(controller)
 	mockStandbyClient.EXPECT().GetReplicationMessages(gomock.Any(), gomock.Any()).DoAndReturn(s.GetReplicationMessagesMock).AnyTimes()
-	mockStandbyClient.EXPECT().GetCrossClusterTasks(gomock.Any(), gomock.Any()).Return(
-		&types.GetCrossClusterTasksResponse{
-			TasksByShard:       make(map[int32][]*types.CrossClusterTaskRequest),
-			FailedCauseByShard: make(map[int32]types.GetTaskFailedCause),
-		},
-		nil,
-	).AnyTimes()
 	mockOtherClient := adminClient.NewMockClient(controller)
 	mockOtherClient.EXPECT().GetReplicationMessages(gomock.Any(), gomock.Any()).Return(
 		&types.GetReplicationMessagesResponse{
 			MessagesByShard: make(map[int32]*types.ReplicationMessages),
 		}, nil).AnyTimes()
-	mockOtherClient.EXPECT().GetCrossClusterTasks(gomock.Any(), gomock.Any()).Return(
-		&types.GetCrossClusterTasksResponse{
-			TasksByShard:       make(map[int32][]*types.CrossClusterTaskRequest),
-			FailedCauseByShard: make(map[int32]types.GetTaskFailedCause),
-		},
-		nil,
-	).AnyTimes()
 	s.mockAdminClient["standby"] = mockStandbyClient
 	s.mockAdminClient["other"] = mockOtherClient
 	s.clusterConfigs[0].MockAdminClient = s.mockAdminClient
 
-	clusterMetadata := host.NewClusterMetadata(s.clusterConfigs[0], s.logger.WithTags(tag.ClusterName(clusterName[0])))
+	clusterMetadata := host.NewClusterMetadata(s.T(), s.clusterConfigs[0])
+	dc := persistence.DynamicConfiguration{
+		EnableSQLAsyncTransaction:                dynamicconfig.GetBoolPropertyFn(false),
+		EnableCassandraAllConsistencyLevelDelete: dynamicconfig.GetBoolPropertyFn(true),
+	}
 	params := pt.TestBaseParams{
 		DefaultTestCluster:    s.defaultTestCluster,
 		VisibilityTestCluster: s.visibilityTestCluster,
 		ClusterMetadata:       clusterMetadata,
+		DynamicConfiguration:  dc,
 	}
-	cluster, err := host.NewCluster(s.clusterConfigs[0], s.logger.WithTags(tag.ClusterName(clusterName[0])), params)
+	cluster, err := host.NewCluster(s.T(), s.clusterConfigs[0], s.logger.WithTags(tag.ClusterName(clusterName[0])), params)
 	s.Require().NoError(err)
 	s.active = cluster
 
@@ -225,8 +212,10 @@ func (s *NDCIntegrationTestSuite) verifyEventHistory(
 ) error {
 	// get replicated history events from passive side
 	passiveClient := s.active.GetFrontendClient()
+	ctx, cancel := s.createContext()
+	defer cancel()
 	replicatedHistory, err := passiveClient.GetWorkflowExecutionHistory(
-		s.createContext(),
+		ctx,
 		&types.GetWorkflowExecutionHistoryRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
@@ -367,7 +356,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 	eventsBatch1 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   1,
+				ID:        1,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionStarted.Ptr(),
 				WorkflowExecutionStartedEventAttributes: &types.WorkflowExecutionStartedEventAttributes{
@@ -380,7 +369,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   2,
+				ID:        2,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -392,7 +381,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   3,
+				ID:        3,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -404,7 +393,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   4,
+				ID:        4,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -414,7 +403,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   5,
+				ID:        5,
 				Version:   21,
 				EventType: types.EventTypeMarkerRecorded.Ptr(),
 				MarkerRecordedEventAttributes: &types.MarkerRecordedEventAttributes{
@@ -424,7 +413,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   6,
+				ID:        6,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskScheduled.Ptr(),
 				ActivityTaskScheduledEventAttributes: &types.ActivityTaskScheduledEventAttributes{
@@ -442,7 +431,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   7,
+				ID:        7,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskStarted.Ptr(),
 				ActivityTaskStartedEventAttributes: &types.ActivityTaskStartedEventAttributes{
@@ -455,7 +444,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   8,
+				ID:        8,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -465,7 +454,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   9,
+				ID:        9,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -477,7 +466,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   10,
+				ID:        10,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -489,7 +478,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   11,
+				ID:        11,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -499,7 +488,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   12,
+				ID:        12,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -509,7 +498,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   13,
+				ID:        13,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -519,7 +508,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   14,
+				ID:        14,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -534,7 +523,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 	eventsBatch2 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   15,
+				ID:        15,
 				Version:   31,
 				EventType: types.EventTypeWorkflowExecutionTimedOut.Ptr(),
 				WorkflowExecutionTimedOutEventAttributes: &types.WorkflowExecutionTimedOutEventAttributes{
@@ -547,7 +536,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 	eventsBatch3 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   15,
+				ID:        15,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskTimedOut.Ptr(),
 				DecisionTaskTimedOutEventAttributes: &types.DecisionTaskTimedOutEventAttributes{
@@ -557,7 +546,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   16,
+				ID:        16,
 				Version:   30,
 				EventType: types.EventTypeActivityTaskTimedOut.Ptr(),
 				ActivityTaskTimedOutEventAttributes: &types.ActivityTaskTimedOutEventAttributes{
@@ -567,7 +556,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   17,
+				ID:        17,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -579,7 +568,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   18,
+				ID:        18,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -591,7 +580,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   19,
+				ID:        19,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -601,7 +590,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranches() {
 				},
 			},
 			{
-				EventID:   20,
+				ID:        20,
 				Version:   30,
 				EventType: types.EventTypeWorkflowExecutionFailed.Ptr(),
 				WorkflowExecutionFailedEventAttributes: &types.WorkflowExecutionFailedEventAttributes{
@@ -673,7 +662,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 	eventsBatch1 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   1,
+				ID:        1,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionStarted.Ptr(),
 				WorkflowExecutionStartedEventAttributes: &types.WorkflowExecutionStartedEventAttributes{
@@ -686,7 +675,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   2,
+				ID:        2,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -698,7 +687,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   3,
+				ID:        3,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -710,7 +699,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   4,
+				ID:        4,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -720,7 +709,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   5,
+				ID:        5,
 				Version:   21,
 				EventType: types.EventTypeMarkerRecorded.Ptr(),
 				MarkerRecordedEventAttributes: &types.MarkerRecordedEventAttributes{
@@ -730,7 +719,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   6,
+				ID:        6,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskScheduled.Ptr(),
 				ActivityTaskScheduledEventAttributes: &types.ActivityTaskScheduledEventAttributes{
@@ -748,7 +737,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   7,
+				ID:        7,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskStarted.Ptr(),
 				ActivityTaskStartedEventAttributes: &types.ActivityTaskStartedEventAttributes{
@@ -761,7 +750,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   8,
+				ID:        8,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -771,7 +760,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   9,
+				ID:        9,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -783,7 +772,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   10,
+				ID:        10,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -795,7 +784,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   11,
+				ID:        11,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -805,7 +794,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   12,
+				ID:        12,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -815,7 +804,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   13,
+				ID:        13,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -825,7 +814,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   14,
+				ID:        14,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -840,7 +829,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 	eventsBatch2 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   15,
+				ID:        15,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskTimedOut.Ptr(),
 				DecisionTaskTimedOutEventAttributes: &types.DecisionTaskTimedOutEventAttributes{
@@ -850,7 +839,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   16,
+				ID:        16,
 				Version:   30,
 				EventType: types.EventTypeActivityTaskTimedOut.Ptr(),
 				ActivityTaskTimedOutEventAttributes: &types.ActivityTaskTimedOutEventAttributes{
@@ -860,7 +849,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 				},
 			},
 			{
-				EventID:   17,
+				ID:        17,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -872,7 +861,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   18,
+				ID:        18,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -889,7 +878,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow_Zombie() {
 	eventsBatch3 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   11,
+				ID:        11,
 				Version:   22,
 				EventType: types.EventTypeDecisionTaskFailed.Ptr(),
 				DecisionTaskFailedEventAttributes: &types.DecisionTaskFailedEventAttributes{
@@ -965,7 +954,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 	eventsBatch1 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   1,
+				ID:        1,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionStarted.Ptr(),
 				WorkflowExecutionStartedEventAttributes: &types.WorkflowExecutionStartedEventAttributes{
@@ -978,7 +967,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   2,
+				ID:        2,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -990,7 +979,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   3,
+				ID:        3,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1002,7 +991,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   4,
+				ID:        4,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1012,7 +1001,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   5,
+				ID:        5,
 				Version:   21,
 				EventType: types.EventTypeMarkerRecorded.Ptr(),
 				MarkerRecordedEventAttributes: &types.MarkerRecordedEventAttributes{
@@ -1022,7 +1011,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   6,
+				ID:        6,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskScheduled.Ptr(),
 				ActivityTaskScheduledEventAttributes: &types.ActivityTaskScheduledEventAttributes{
@@ -1040,7 +1029,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   7,
+				ID:        7,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskStarted.Ptr(),
 				ActivityTaskStartedEventAttributes: &types.ActivityTaskStartedEventAttributes{
@@ -1053,7 +1042,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   8,
+				ID:        8,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -1063,7 +1052,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   9,
+				ID:        9,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1075,7 +1064,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   10,
+				ID:        10,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1087,7 +1076,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   11,
+				ID:        11,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1097,7 +1086,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   12,
+				ID:        12,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -1107,7 +1096,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   13,
+				ID:        13,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1117,7 +1106,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   14,
+				ID:        14,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1132,7 +1121,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 	eventsBatch2 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   15,
+				ID:        15,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskTimedOut.Ptr(),
 				DecisionTaskTimedOutEventAttributes: &types.DecisionTaskTimedOutEventAttributes{
@@ -1142,7 +1131,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   16,
+				ID:        16,
 				Version:   30,
 				EventType: types.EventTypeActivityTaskTimedOut.Ptr(),
 				ActivityTaskTimedOutEventAttributes: &types.ActivityTaskTimedOutEventAttributes{
@@ -1152,7 +1141,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   17,
+				ID:        17,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1164,7 +1153,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   18,
+				ID:        18,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1176,7 +1165,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   19,
+				ID:        19,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1186,7 +1175,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 				},
 			},
 			{
-				EventID:   20,
+				ID:        20,
 				Version:   30,
 				EventType: types.EventTypeWorkflowExecutionFailed.Ptr(),
 				WorkflowExecutionFailedEventAttributes: &types.WorkflowExecutionFailedEventAttributes{
@@ -1203,7 +1192,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedResetWorkflow() {
 	eventsBatch3 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   11,
+				ID:        11,
 				Version:   22,
 				EventType: types.EventTypeDecisionTaskFailed.Ptr(),
 				DecisionTaskFailedEventAttributes: &types.DecisionTaskFailedEventAttributes{
@@ -1279,7 +1268,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 	eventsBatch1 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   1,
+				ID:        1,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionStarted.Ptr(),
 				WorkflowExecutionStartedEventAttributes: &types.WorkflowExecutionStartedEventAttributes{
@@ -1292,7 +1281,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 				},
 			},
 			{
-				EventID:   2,
+				ID:        2,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1304,7 +1293,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   3,
+				ID:        3,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1316,7 +1305,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   4,
+				ID:        4,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1326,7 +1315,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 				},
 			},
 			{
-				EventID:   5,
+				ID:        5,
 				Version:   21,
 				EventType: types.EventTypeMarkerRecorded.Ptr(),
 				MarkerRecordedEventAttributes: &types.MarkerRecordedEventAttributes{
@@ -1336,7 +1325,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 				},
 			},
 			{
-				EventID:   6,
+				ID:        6,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskScheduled.Ptr(),
 				ActivityTaskScheduledEventAttributes: &types.ActivityTaskScheduledEventAttributes{
@@ -1354,7 +1343,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   7,
+				ID:        7,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskStarted.Ptr(),
 				ActivityTaskStartedEventAttributes: &types.ActivityTaskStartedEventAttributes{
@@ -1367,7 +1356,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   8,
+				ID:        8,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -1377,7 +1366,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 				},
 			},
 			{
-				EventID:   9,
+				ID:        9,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1389,7 +1378,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   10,
+				ID:        10,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1401,7 +1390,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   11,
+				ID:        11,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1411,7 +1400,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 				},
 			},
 			{
-				EventID:   12,
+				ID:        12,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -1421,7 +1410,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 				},
 			},
 			{
-				EventID:   13,
+				ID:        13,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1431,7 +1420,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 				},
 			},
 			{
-				EventID:   14,
+				ID:        14,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1446,7 +1435,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 	eventsBatch2 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   15,
+				ID:        15,
 				Version:   32,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1462,7 +1451,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 	eventsBatch3 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   15,
+				ID:        15,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1472,7 +1461,7 @@ func (s *NDCIntegrationTestSuite) TestHandcraftedMultipleBranchesWithZombieConti
 				},
 			},
 			{
-				EventID:   16,
+				ID:        16,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionContinuedAsNew.Ptr(),
 				WorkflowExecutionContinuedAsNewEventAttributes: &types.WorkflowExecutionContinuedAsNewEventAttributes{
@@ -1614,7 +1603,7 @@ func (s *NDCIntegrationTestSuite) TestEventsReapply_UpdateNonCurrentBranch() {
 		historyEvents := &types.History{}
 		for _, event := range events {
 			historyEvent := event.GetData().(*types.HistoryEvent)
-			taskID = historyEvent.GetTaskID()
+			taskID = historyEvent.TaskID
 			historyEvents.Events = append(historyEvents.Events, historyEvent)
 			switch historyEvent.GetEventType() {
 			case types.EventTypeWorkflowExecutionCompleted,
@@ -1655,7 +1644,7 @@ func (s *NDCIntegrationTestSuite) TestEventsReapply_UpdateNonCurrentBranch() {
 		historyEvents := &types.History{}
 		for _, event := range events {
 			history := event.GetData().(*types.HistoryEvent)
-			taskID = history.GetTaskID()
+			taskID = history.TaskID
 			historyEvents.Events = append(historyEvents.Events, history)
 		}
 		newBranch = append(newBranch, historyEvents)
@@ -1679,10 +1668,10 @@ func (s *NDCIntegrationTestSuite) TestEventsReapply_UpdateNonCurrentBranch() {
 		{
 			Events: []*types.HistoryEvent{
 				{
-					EventID:   baseBranchLastEvent.GetEventID() + 1,
+					ID:        baseBranchLastEvent.ID + 1,
 					EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 					Timestamp: common.Int64Ptr(time.Now().UnixNano()),
-					Version:   baseBranchLastEvent.GetVersion(), // dummy event from other cluster
+					Version:   baseBranchLastEvent.Version, // dummy event from other cluster
 					TaskID:    taskID,
 					WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
 						SignalName: "signal",
@@ -1731,7 +1720,9 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 			WorkflowID: workflowID,
 			RunID:      runID,
 		}
-		return adminClient.GetWorkflowExecutionRawHistoryV2(s.createContext(), &types.GetWorkflowExecutionRawHistoryV2Request{
+		ctx, cancel := s.createContext()
+		defer cancel()
+		return adminClient.GetWorkflowExecutionRawHistoryV2(ctx, &types.GetWorkflowExecutionRawHistoryV2Request{
 			Domain:            domain,
 			Execution:         execution,
 			StartEventID:      startEventID,
@@ -1746,7 +1737,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 	eventsBatch1 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   1,
+				ID:        1,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionStarted.Ptr(),
 				WorkflowExecutionStartedEventAttributes: &types.WorkflowExecutionStartedEventAttributes{
@@ -1759,7 +1750,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   2,
+				ID:        2,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1771,7 +1762,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   3,
+				ID:        3,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1783,7 +1774,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   4,
+				ID:        4,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1793,7 +1784,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   5,
+				ID:        5,
 				Version:   21,
 				EventType: types.EventTypeMarkerRecorded.Ptr(),
 				MarkerRecordedEventAttributes: &types.MarkerRecordedEventAttributes{
@@ -1803,7 +1794,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   6,
+				ID:        6,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskScheduled.Ptr(),
 				ActivityTaskScheduledEventAttributes: &types.ActivityTaskScheduledEventAttributes{
@@ -1821,7 +1812,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   7,
+				ID:        7,
 				Version:   21,
 				EventType: types.EventTypeActivityTaskStarted.Ptr(),
 				ActivityTaskStartedEventAttributes: &types.ActivityTaskStartedEventAttributes{
@@ -1834,7 +1825,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   8,
+				ID:        8,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -1844,7 +1835,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   9,
+				ID:        9,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1856,7 +1847,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   10,
+				ID:        10,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1868,7 +1859,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   11,
+				ID:        11,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1878,7 +1869,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   12,
+				ID:        12,
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionSignaled.Ptr(),
 				WorkflowExecutionSignaledEventAttributes: &types.WorkflowExecutionSignaledEventAttributes{
@@ -1888,7 +1879,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   13,
+				ID:        13,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1898,7 +1889,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   14,
+				ID:        14,
 				Version:   21,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1913,7 +1904,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 	eventsBatch2 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   15,
+				ID:        15,
 				Version:   31,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1923,7 +1914,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   16,
+				ID:        16,
 				Version:   31,
 				EventType: types.EventTypeActivityTaskScheduled.Ptr(),
 				ActivityTaskScheduledEventAttributes: &types.ActivityTaskScheduledEventAttributes{
@@ -1944,7 +1935,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 	eventsBatch3 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   15,
+				ID:        15,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskTimedOut.Ptr(),
 				DecisionTaskTimedOutEventAttributes: &types.DecisionTaskTimedOutEventAttributes{
@@ -1954,7 +1945,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   16,
+				ID:        16,
 				Version:   30,
 				EventType: types.EventTypeActivityTaskTimedOut.Ptr(),
 				ActivityTaskTimedOutEventAttributes: &types.ActivityTaskTimedOutEventAttributes{
@@ -1964,7 +1955,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   17,
+				ID:        17,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskScheduled.Ptr(),
 				DecisionTaskScheduledEventAttributes: &types.DecisionTaskScheduledEventAttributes{
@@ -1976,7 +1967,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   18,
+				ID:        18,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskStarted.Ptr(),
 				DecisionTaskStartedEventAttributes: &types.DecisionTaskStartedEventAttributes{
@@ -1988,7 +1979,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 		}},
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   19,
+				ID:        19,
 				Version:   30,
 				EventType: types.EventTypeDecisionTaskCompleted.Ptr(),
 				DecisionTaskCompletedEventAttributes: &types.DecisionTaskCompletedEventAttributes{
@@ -1998,7 +1989,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 				},
 			},
 			{
-				EventID:   20,
+				ID:        20,
 				Version:   30,
 				EventType: types.EventTypeWorkflowExecutionFailed.Ptr(),
 				WorkflowExecutionFailedEventAttributes: &types.WorkflowExecutionFailedEventAttributes{
@@ -2013,7 +2004,7 @@ func (s *NDCIntegrationTestSuite) TestAdminGetWorkflowExecutionRawHistoryV2() {
 	eventsBatch4 := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   17,
+				ID:        17,
 				Version:   32,
 				EventType: types.EventTypeWorkflowExecutionTimedOut.Ptr(),
 				WorkflowExecutionTimedOutEventAttributes: &types.WorkflowExecutionTimedOutEventAttributes{
@@ -2182,7 +2173,7 @@ func (s *NDCIntegrationTestSuite) TestWorkflowStartTime() {
 	historyBatch := []*types.History{
 		{Events: []*types.HistoryEvent{
 			{
-				EventID:   1,
+				ID:        1,
 				Timestamp: common.Int64Ptr(startTime.UnixNano()),
 				Version:   21,
 				EventType: types.EventTypeWorkflowExecutionStarted.Ptr(),
@@ -2215,8 +2206,10 @@ func (s *NDCIntegrationTestSuite) TestWorkflowStartTime() {
 
 	// we are replicating to the `active` cluster, check the comments in
 	// registerDomain() method below
+	ctx, cancel := s.createContext()
+	defer cancel()
 	descResp, err := s.active.GetFrontendClient().DescribeWorkflowExecution(
-		s.createContext(),
+		ctx,
 		&types.DescribeWorkflowExecutionRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
@@ -2236,7 +2229,9 @@ func (s *NDCIntegrationTestSuite) TestWorkflowStartTime() {
 func (s *NDCIntegrationTestSuite) registerDomain() {
 	s.domainName = "test-simple-workflow-ndc-" + common.GenerateRandomString(5)
 	client1 := s.active.GetFrontendClient() // active
-	err := client1.RegisterDomain(s.createContext(), &types.RegisterDomainRequest{
+	ctx, cancel := s.createContext()
+	defer cancel()
+	err := client1.RegisterDomain(ctx, &types.RegisterDomainRequest{
 		Name:           s.domainName,
 		IsGlobalDomain: true,
 		Clusters:       clusterReplicationConfig,
@@ -2249,7 +2244,9 @@ func (s *NDCIntegrationTestSuite) registerDomain() {
 	descReq := &types.DescribeDomainRequest{
 		Name: common.StringPtr(s.domainName),
 	}
-	resp, err := client1.DescribeDomain(s.createContext(), descReq)
+	ctx, cancel = s.createContext()
+	defer cancel()
+	resp, err := client1.DescribeDomain(ctx, descReq)
 	s.Require().NoError(err)
 	s.Require().NotNil(resp)
 	s.domainID = resp.GetDomainInfo().GetUUID()
@@ -2278,8 +2275,9 @@ func (s *NDCIntegrationTestSuite) generateNewRunHistory(
 
 	event.WorkflowExecutionContinuedAsNewEventAttributes.NewExecutionRunID = uuid.New()
 
+	firstScheduleTime := time.Unix(0, 100)
 	newRunFirstEvent := &types.HistoryEvent{
-		EventID:   common.FirstEventID,
+		ID:        common.FirstEventID,
 		Timestamp: common.Int64Ptr(time.Now().UnixNano()),
 		EventType: types.EventTypeWorkflowExecutionStarted.Ptr(),
 		Version:   version,
@@ -2291,7 +2289,7 @@ func (s *NDCIntegrationTestSuite) generateNewRunHistory(
 				WorkflowID: uuid.New(),
 				RunID:      uuid.New(),
 			},
-			ParentInitiatedEventID: common.Int64Ptr(event.GetEventID()),
+			ParentInitiatedEventID: common.Int64Ptr(event.ID),
 			TaskList: &types.TaskList{
 				Name: taskList,
 				Kind: types.TaskListKindNormal.Ptr(),
@@ -2303,6 +2301,7 @@ func (s *NDCIntegrationTestSuite) generateNewRunHistory(
 			OriginalExecutionRunID:              runID,
 			Identity:                            "NDC-test",
 			FirstExecutionRunID:                 runID,
+			FirstScheduleTime:                   &firstScheduleTime,
 			Attempt:                             0,
 			ExpirationTimestamp:                 common.Int64Ptr(time.Now().Add(time.Minute).UnixNano()),
 		},
@@ -2352,7 +2351,7 @@ func (s *NDCIntegrationTestSuite) generateEventBlobs(
 	//  we should generate these as part of modeled based testing
 	lastEvent := batch.Events[len(batch.Events)-1]
 	newRunEventBlob := s.generateNewRunHistory(
-		lastEvent, s.domainName, workflowID, runID, lastEvent.GetVersion(), workflowType, tasklist,
+		lastEvent, s.domainName, workflowID, runID, lastEvent.Version, workflowType, tasklist,
 	)
 	// must serialize events batch after attempt on continue as new as generateNewRunHistory will
 	// modify the NewExecutionRunID attr
@@ -2383,9 +2382,13 @@ func (s *NDCIntegrationTestSuite) applyEvents(
 			NewRunEvents:        s.toInternalDataBlob(newRunEventBlob),
 		}
 
-		err := historyClient.ReplicateEventsV2(s.createContext(), req)
+		ctx, cancel := s.createContext()
+		err := historyClient.ReplicateEventsV2(ctx, req)
+		cancel()
 		s.Nil(err, "Failed to replicate history event")
-		err = historyClient.ReplicateEventsV2(s.createContext(), req)
+		ctx, cancel = s.createContext()
+		err = historyClient.ReplicateEventsV2(ctx, req)
+		cancel()
 		s.Nil(err, "Failed to dedup replicate history event")
 	}
 }
@@ -2406,7 +2409,6 @@ func (s *NDCIntegrationTestSuite) applyEventsThroughFetcher(
 			TaskType:     &taskType,
 			SourceTaskID: 1,
 			HistoryTaskV2Attributes: &types.HistoryTaskV2Attributes{
-				TaskID:              1,
 				DomainID:            s.domainID,
 				WorkflowID:          workflowID,
 				RunID:               runID,
@@ -2436,8 +2438,8 @@ func (s *NDCIntegrationTestSuite) eventBatchesToVersionHistory(
 		for _, event := range batch.Events {
 			err := versionHistory.AddOrUpdateItem(
 				persistence.NewVersionHistoryItem(
-					event.GetEventID(),
-					event.GetVersion(),
+					event.ID,
+					event.Version,
 				))
 			s.NoError(err)
 		}
@@ -2456,9 +2458,9 @@ func (s *NDCIntegrationTestSuite) toInternalVersionHistoryItems(
 	return versionHistory.ToInternalType().Items
 }
 
-func (s *NDCIntegrationTestSuite) createContext() context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), 90*time.Second)
-	return ctx
+func (s *NDCIntegrationTestSuite) createContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	return ctx, cancel
 }
 
 func (s *NDCIntegrationTestSuite) setupRemoteFrontendClients() {

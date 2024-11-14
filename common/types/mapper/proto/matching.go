@@ -31,14 +31,16 @@ func FromMatchingAddActivityTaskRequest(t *types.AddActivityTaskRequest) *matchi
 		return nil
 	}
 	return &matchingv1.AddActivityTaskRequest{
-		DomainId:               t.DomainUUID,
-		WorkflowExecution:      FromWorkflowExecution(t.Execution),
-		SourceDomainId:         t.SourceDomainUUID,
-		TaskList:               FromTaskList(t.TaskList),
-		ScheduleId:             t.ScheduleID,
-		ScheduleToStartTimeout: secondsToDuration(t.ScheduleToStartTimeoutSeconds),
-		Source:                 FromTaskSource(t.Source),
-		ForwardedFrom:          t.ForwardedFrom,
+		DomainId:                 t.DomainUUID,
+		WorkflowExecution:        FromWorkflowExecution(t.Execution),
+		SourceDomainId:           t.SourceDomainUUID,
+		TaskList:                 FromTaskList(t.TaskList),
+		ScheduleId:               t.ScheduleID,
+		ScheduleToStartTimeout:   secondsToDuration(t.ScheduleToStartTimeoutSeconds),
+		Source:                   FromTaskSource(t.Source),
+		ForwardedFrom:            t.ForwardedFrom,
+		ActivityTaskDispatchInfo: FromActivityTaskDispatchInfo(t.ActivityTaskDispatchInfo),
+		PartitionConfig:          t.PartitionConfig,
 	}
 }
 
@@ -55,6 +57,8 @@ func ToMatchingAddActivityTaskRequest(t *matchingv1.AddActivityTaskRequest) *typ
 		ScheduleToStartTimeoutSeconds: durationToSeconds(t.ScheduleToStartTimeout),
 		Source:                        ToTaskSource(t.Source),
 		ForwardedFrom:                 t.ForwardedFrom,
+		ActivityTaskDispatchInfo:      ToActivityTaskDispatchInfo(t.ActivityTaskDispatchInfo),
+		PartitionConfig:               t.PartitionConfig,
 	}
 }
 
@@ -70,6 +74,7 @@ func FromMatchingAddDecisionTaskRequest(t *types.AddDecisionTaskRequest) *matchi
 		ScheduleToStartTimeout: secondsToDuration(t.ScheduleToStartTimeoutSeconds),
 		Source:                 FromTaskSource(t.Source),
 		ForwardedFrom:          t.ForwardedFrom,
+		PartitionConfig:        t.PartitionConfig,
 	}
 }
 
@@ -85,6 +90,73 @@ func ToMatchingAddDecisionTaskRequest(t *matchingv1.AddDecisionTaskRequest) *typ
 		ScheduleToStartTimeoutSeconds: durationToSeconds(t.ScheduleToStartTimeout),
 		Source:                        ToTaskSource(t.Source),
 		ForwardedFrom:                 t.ForwardedFrom,
+		PartitionConfig:               t.PartitionConfig,
+	}
+}
+
+func FromMatchingAddActivityTaskResponse(t *types.AddActivityTaskResponse) *matchingv1.AddActivityTaskResponse {
+	if t == nil {
+		return nil
+	}
+	return &matchingv1.AddActivityTaskResponse{
+		PartitionConfig: FromTaskListPartitionConfig(t.PartitionConfig),
+	}
+}
+
+func ToMatchingAddActivityTaskResponse(t *matchingv1.AddActivityTaskResponse) *types.AddActivityTaskResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.AddActivityTaskResponse{
+		PartitionConfig: ToTaskListPartitionConfig(t.PartitionConfig),
+	}
+}
+
+func FromMatchingAddDecisionTaskResponse(t *types.AddDecisionTaskResponse) *matchingv1.AddDecisionTaskResponse {
+	if t == nil {
+		return nil
+	}
+	return &matchingv1.AddDecisionTaskResponse{
+		PartitionConfig: FromTaskListPartitionConfig(t.PartitionConfig),
+	}
+}
+
+func ToMatchingAddDecisionTaskResponse(t *matchingv1.AddDecisionTaskResponse) *types.AddDecisionTaskResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.AddDecisionTaskResponse{
+		PartitionConfig: ToTaskListPartitionConfig(t.PartitionConfig),
+	}
+}
+
+func FromActivityTaskDispatchInfo(t *types.ActivityTaskDispatchInfo) *matchingv1.ActivityTaskDispatchInfo {
+	if t == nil {
+		return nil
+	}
+	return &matchingv1.ActivityTaskDispatchInfo{
+		ScheduledEvent:             FromHistoryEvent(t.ScheduledEvent),
+		StartedTime:                unixNanoToTime(t.StartedTimestamp),
+		Attempt:                    int32(common.Int64Default(t.Attempt)),
+		ScheduledTimeOfThisAttempt: unixNanoToTime(t.ScheduledTimestampOfThisAttempt),
+		HeartbeatDetails:           FromPayload(t.HeartbeatDetails),
+		WorkflowType:               FromWorkflowType(t.WorkflowType),
+		WorkflowDomain:             t.WorkflowDomain,
+	}
+}
+
+func ToActivityTaskDispatchInfo(t *matchingv1.ActivityTaskDispatchInfo) *types.ActivityTaskDispatchInfo {
+	if t == nil {
+		return nil
+	}
+	return &types.ActivityTaskDispatchInfo{
+		ScheduledEvent:                  ToHistoryEvent(t.ScheduledEvent),
+		StartedTimestamp:                timeToUnixNano(t.StartedTime),
+		Attempt:                         common.Int64Ptr(int64(t.Attempt)),
+		ScheduledTimestampOfThisAttempt: timeToUnixNano(t.ScheduledTimeOfThisAttempt),
+		HeartbeatDetails:                ToPayload(t.HeartbeatDetails),
+		WorkflowType:                    ToWorkflowType(t.WorkflowType),
+		WorkflowDomain:                  t.WorkflowDomain,
 	}
 }
 
@@ -267,10 +339,11 @@ func FromMatchingPollForActivityTaskRequest(t *types.MatchingPollForActivityTask
 		return nil
 	}
 	return &matchingv1.PollForActivityTaskRequest{
-		Request:       FromPollForActivityTaskRequest(t.PollRequest),
-		DomainId:      t.DomainUUID,
-		PollerId:      t.PollerID,
-		ForwardedFrom: t.ForwardedFrom,
+		Request:        FromPollForActivityTaskRequest(t.PollRequest),
+		DomainId:       t.DomainUUID,
+		PollerId:       t.PollerID,
+		ForwardedFrom:  t.ForwardedFrom,
+		IsolationGroup: t.IsolationGroup,
 	}
 }
 
@@ -279,14 +352,37 @@ func ToMatchingPollForActivityTaskRequest(t *matchingv1.PollForActivityTaskReque
 		return nil
 	}
 	return &types.MatchingPollForActivityTaskRequest{
-		PollRequest:   ToPollForActivityTaskRequest(t.Request),
-		DomainUUID:    t.DomainId,
-		PollerID:      t.PollerId,
-		ForwardedFrom: t.ForwardedFrom,
+		PollRequest:    ToPollForActivityTaskRequest(t.Request),
+		DomainUUID:     t.DomainId,
+		PollerID:       t.PollerId,
+		ForwardedFrom:  t.ForwardedFrom,
+		IsolationGroup: t.IsolationGroup,
 	}
 }
 
-func FromMatchingPollForActivityTaskResponse(t *types.PollForActivityTaskResponse) *matchingv1.PollForActivityTaskResponse {
+func FromTaskListPartitionConfig(t *types.TaskListPartitionConfig) *matchingv1.TaskListPartitionConfig {
+	if t == nil {
+		return nil
+	}
+	return &matchingv1.TaskListPartitionConfig{
+		Version:            t.Version,
+		NumReadPartitions:  t.NumReadPartitions,
+		NumWritePartitions: t.NumWritePartitions,
+	}
+}
+
+func ToTaskListPartitionConfig(t *matchingv1.TaskListPartitionConfig) *types.TaskListPartitionConfig {
+	if t == nil {
+		return nil
+	}
+	return &types.TaskListPartitionConfig{
+		Version:            t.Version,
+		NumReadPartitions:  t.NumReadPartitions,
+		NumWritePartitions: t.NumWritePartitions,
+	}
+}
+
+func FromMatchingPollForActivityTaskResponse(t *types.MatchingPollForActivityTaskResponse) *matchingv1.PollForActivityTaskResponse {
 	if t == nil {
 		return nil
 	}
@@ -307,14 +403,15 @@ func FromMatchingPollForActivityTaskResponse(t *types.PollForActivityTaskRespons
 		WorkflowType:               FromWorkflowType(t.WorkflowType),
 		WorkflowDomain:             t.WorkflowDomain,
 		Header:                     FromHeader(t.Header),
+		PartitionConfig:            FromTaskListPartitionConfig(t.PartitionConfig),
 	}
 }
 
-func ToMatchingPollForActivityTaskResponse(t *matchingv1.PollForActivityTaskResponse) *types.PollForActivityTaskResponse {
+func ToMatchingPollForActivityTaskResponse(t *matchingv1.PollForActivityTaskResponse) *types.MatchingPollForActivityTaskResponse {
 	if t == nil {
 		return nil
 	}
-	return &types.PollForActivityTaskResponse{
+	return &types.MatchingPollForActivityTaskResponse{
 		TaskToken:                       t.TaskToken,
 		WorkflowExecution:               ToWorkflowExecution(t.WorkflowExecution),
 		ActivityID:                      t.ActivityId,
@@ -331,6 +428,7 @@ func ToMatchingPollForActivityTaskResponse(t *matchingv1.PollForActivityTaskResp
 		WorkflowType:                    ToWorkflowType(t.WorkflowType),
 		WorkflowDomain:                  t.WorkflowDomain,
 		Header:                          ToHeader(t.Header),
+		PartitionConfig:                 ToTaskListPartitionConfig(t.PartitionConfig),
 	}
 }
 
@@ -339,10 +437,11 @@ func FromMatchingPollForDecisionTaskRequest(t *types.MatchingPollForDecisionTask
 		return nil
 	}
 	return &matchingv1.PollForDecisionTaskRequest{
-		Request:       FromPollForDecisionTaskRequest(t.PollRequest),
-		DomainId:      t.DomainUUID,
-		PollerId:      t.PollerID,
-		ForwardedFrom: t.ForwardedFrom,
+		Request:        FromPollForDecisionTaskRequest(t.PollRequest),
+		DomainId:       t.DomainUUID,
+		PollerId:       t.PollerID,
+		ForwardedFrom:  t.ForwardedFrom,
+		IsolationGroup: t.IsolationGroup,
 	}
 }
 
@@ -351,10 +450,11 @@ func ToMatchingPollForDecisionTaskRequest(t *matchingv1.PollForDecisionTaskReque
 		return nil
 	}
 	return &types.MatchingPollForDecisionTaskRequest{
-		PollRequest:   ToPollForDecisionTaskRequest(t.Request),
-		DomainUUID:    t.DomainId,
-		PollerID:      t.PollerId,
-		ForwardedFrom: t.ForwardedFrom,
+		PollRequest:    ToPollForDecisionTaskRequest(t.Request),
+		DomainUUID:     t.DomainId,
+		PollerID:       t.PollerId,
+		ForwardedFrom:  t.ForwardedFrom,
+		IsolationGroup: t.IsolationGroup,
 	}
 }
 
@@ -380,6 +480,8 @@ func FromMatchingPollForDecisionTaskResponse(t *types.MatchingPollForDecisionTas
 		ScheduledTime:             unixNanoToTime(t.ScheduledTimestamp),
 		StartedTime:               unixNanoToTime(t.StartedTimestamp),
 		Queries:                   FromWorkflowQueryMap(t.Queries),
+		TotalHistoryBytes:         t.TotalHistoryBytes,
+		PartitionConfig:           FromTaskListPartitionConfig(t.PartitionConfig),
 	}
 }
 
@@ -405,6 +507,8 @@ func ToMatchingPollForDecisionTaskResponse(t *matchingv1.PollForDecisionTaskResp
 		ScheduledTimestamp:        timeToUnixNano(t.ScheduledTime),
 		StartedTimestamp:          timeToUnixNano(t.StartedTime),
 		Queries:                   ToWorkflowQueryMap(t.Queries),
+		TotalHistoryBytes:         t.TotalHistoryBytes,
+		PartitionConfig:           ToTaskListPartitionConfig(t.PartitionConfig),
 	}
 }
 

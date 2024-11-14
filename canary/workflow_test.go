@@ -31,7 +31,8 @@ import (
 	"go.uber.org/cadence/mocks"
 	"go.uber.org/cadence/testsuite"
 	"go.uber.org/cadence/worker"
-	"go.uber.org/zap/zaptest"
+
+	"github.com/uber/cadence/common/log/testlogger"
 )
 
 type (
@@ -52,7 +53,7 @@ func TestWorkflowTestSuite(t *testing.T) {
 }
 
 func (s *workflowTestSuite) SetupTest() {
-	s.SetLogger(zaptest.NewLogger(s.T()))
+	s.SetLogger(testlogger.NewZap(s.T()))
 	s.env = s.NewTestWorkflowEnvironment()
 	s.env.Test(s.T())
 }
@@ -132,7 +133,7 @@ func (s *workflowTestSuite) TestSanityWorkflow() {
 
 func (s *workflowTestSuite) TestLocalActivityWorkflow() {
 	s.env.OnActivity(getConditionData).Return(int32(20), nil).Once()
-	s.env.ExecuteWorkflow(localActivityWorkfow)
+	s.env.ExecuteWorkflow(localActivityWorkfow, time.Now().UnixNano())
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 

@@ -58,10 +58,9 @@ const (
 //
 // The hierarchy is as follows from lowest to highest
 //
-//   base.yaml
-//       env.yaml   -- environment is one of the input params ex-development
-//         env_az.yaml -- zone is another input param
-//
+//	base.yaml
+//	    env.yaml   -- environment is one of the input params ex-development
+//	      env_az.yaml -- zone is another input param
 func Load(env string, configDir string, zone string, config interface{}) error {
 
 	if len(env) == 0 {
@@ -74,7 +73,7 @@ func Load(env string, configDir string, zone string, config interface{}) error {
 
 	files, err := getConfigFiles(env, configDir, zone)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to get config files: %w", err)
 	}
 
 	log.Printf("Loading configFiles=%v\n", files)
@@ -83,17 +82,25 @@ func Load(env string, configDir string, zone string, config interface{}) error {
 	for _, f := range files {
 		options = append(options, uconfig.File(f))
 	}
+
+	// expand env variables declared in .yaml files
+	options = append(options, uconfig.Expand(os.LookupEnv))
+
 	yaml, err := uconfig.NewYAML(options...)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to create yaml parser: %w", err)
 	}
 
 	err = yaml.Get(uconfig.Root).Populate(config)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to populate config: %w", err)
 	}
 
-	return validator.Validate(config)
+	err = validator.Validate(config)
+	if err != nil {
+		return fmt.Errorf("failed to validate config: %w", err)
+	}
+	return nil
 }
 
 // getConfigFiles returns the list of config files to

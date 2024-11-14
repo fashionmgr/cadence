@@ -23,22 +23,22 @@ package host
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
+	"testing"
 	"time"
 
 	"github.com/pborman/uuid"
 	"github.com/stretchr/testify/suite"
 	"go.uber.org/yarpc"
 	"go.uber.org/yarpc/transport/tchannel"
-	"go.uber.org/zap"
 	"gopkg.in/yaml.v2"
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
+	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/persistence"
 	pt "github.com/uber/cadence/common/persistence/persistence-tests"
 	"github.com/uber/cadence/common/persistence/persistence-tests/testcluster"
@@ -57,6 +57,7 @@ type (
 		adminClient              AdminClient
 		Logger                   log.Logger
 		domainName               string
+		secondaryDomainName      string
 		testRawHistoryDomainName string
 		foreignDomainName        string
 		archivalDomainName       string
@@ -65,14 +66,15 @@ type (
 	}
 
 	IntegrationBaseParams struct {
+		T                     *testing.T
 		DefaultTestCluster    testcluster.PersistenceTestCluster
 		VisibilityTestCluster testcluster.PersistenceTestCluster
 		TestClusterConfig     *TestClusterConfig
 	}
 )
 
-func NewIntegrationBase(params IntegrationBaseParams) IntegrationBase {
-	return IntegrationBase{
+func NewIntegrationBase(params IntegrationBaseParams) *IntegrationBase {
+	return &IntegrationBase{
 		defaultTestCluster:    params.DefaultTestCluster,
 		visibilityTestCluster: params.VisibilityTestCluster,
 		testClusterConfig:     params.TestClusterConfig,
@@ -103,13 +105,20 @@ func (s *IntegrationBase) setupSuite() {
 		s.adminClient = NewAdminClient(dispatcher)
 	} else {
 		s.Logger.Info("Running integration test against test cluster")
-		clusterMetadata := NewClusterMetadata(s.testClusterConfig, s.Logger)
+		clusterMetadata := NewClusterMetadata(s.T(), s.testClusterConfig)
+		dc := persistence.DynamicConfiguration{
+			EnableSQLAsyncTransaction:                dynamicconfig.GetBoolPropertyFn(false),
+			EnableCassandraAllConsistencyLevelDelete: dynamicconfig.GetBoolPropertyFn(true),
+			PersistenceSampleLoggingRate:             dynamicconfig.GetIntPropertyFn(100),
+			EnableShardIDMetrics:                     dynamicconfig.GetBoolPropertyFn(true),
+		}
 		params := pt.TestBaseParams{
 			DefaultTestCluster:    s.defaultTestCluster,
 			VisibilityTestCluster: s.visibilityTestCluster,
 			ClusterMetadata:       clusterMetadata,
+			DynamicConfiguration:  dc,
 		}
-		cluster, err := NewCluster(s.testClusterConfig, s.Logger, params)
+		cluster, err := NewCluster(s.T(), s.testClusterConfig, s.Logger, params)
 		s.Require().NoError(err)
 		s.testCluster = cluster
 		s.engine = s.testCluster.GetFrontendClient()
@@ -133,14 +142,14 @@ func (s *IntegrationBase) setupSuite() {
 }
 
 func (s *IntegrationBase) setupLogger() {
-	zapLogger, err := zap.NewDevelopment()
-	s.Require().NoError(err)
-	s.Logger = loggerimpl.NewLogger(zapLogger)
+	s.Logger = testlogger.New(s.T())
 }
 
 // GetTestClusterConfig return test cluster config
 func GetTestClusterConfig(configFile string) (*TestClusterConfig, error) {
-	environment.SetupEnv()
+	if err := environment.SetupEnv(); err != nil {
+		return nil, err
+	}
 
 	configLocation := configFile
 	if TestFlags.TestClusterConfigFile != "" {
@@ -148,7 +157,7 @@ func GetTestClusterConfig(configFile string) (*TestClusterConfig, error) {
 	}
 	// This is just reading a config so it's less of a security concern
 	// #nosec
-	confContent, err := ioutil.ReadFile(configLocation)
+	confContent, err := os.ReadFile(configLocation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read test cluster config file %v: %v", configLocation, err)
 	}
@@ -170,14 +179,16 @@ func GetTestClusterConfig(configFile string) (*TestClusterConfig, error) {
 
 // GetTestClusterConfigs return test cluster configs
 func GetTestClusterConfigs(configFile string) ([]*TestClusterConfig, error) {
-	environment.SetupEnv()
+	if err := environment.SetupEnv(); err != nil {
+		return nil, err
+	}
 
 	fileName := configFile
 	if TestFlags.TestClusterConfigFile != "" {
 		fileName = TestFlags.TestClusterConfigFile
 	}
 
-	confContent, err := ioutil.ReadFile(fileName)
+	confContent, err := os.ReadFile(fileName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read test cluster config file %v: %v", fileName, err)
 	}
@@ -220,6 +231,12 @@ func (s *IntegrationBase) registerDomain(
 	})
 }
 
+func (s *IntegrationBase) domainCacheRefresh() {
+	s.testClusterConfig.TimeSource.Advance(cache.DomainCacheRefreshInterval + time.Second)
+	// this sleep is necessary to yield execution to other goroutines. not 100% guaranteed to work
+	time.Sleep(2 * time.Second)
+}
+
 func (s *IntegrationBase) randomizeStr(id string) string {
 	return fmt.Sprintf("%v-%v", id, uuid.New())
 }
@@ -232,7 +249,9 @@ func (s *IntegrationBase) printWorkflowHistory(domain string, execution *types.W
 }
 
 func (s *IntegrationBase) getHistory(domain string, execution *types.WorkflowExecution) []*types.HistoryEvent {
-	historyResponse, err := s.engine.GetWorkflowExecutionHistory(createContext(), &types.GetWorkflowExecutionHistoryRequest{
+	ctx, cancel := createContext()
+	defer cancel()
+	historyResponse, err := s.engine.GetWorkflowExecutionHistory(ctx, &types.GetWorkflowExecutionHistoryRequest{
 		Domain:          domain,
 		Execution:       execution,
 		MaximumPageSize: 5, // Use small page size to force pagination code path
@@ -241,11 +260,13 @@ func (s *IntegrationBase) getHistory(domain string, execution *types.WorkflowExe
 
 	events := historyResponse.History.Events
 	for historyResponse.NextPageToken != nil {
-		historyResponse, err = s.engine.GetWorkflowExecutionHistory(createContext(), &types.GetWorkflowExecutionHistoryRequest{
+		ctx, cancel := createContext()
+		historyResponse, err = s.engine.GetWorkflowExecutionHistory(ctx, &types.GetWorkflowExecutionHistoryRequest{
 			Domain:        domain,
 			Execution:     execution,
 			NextPageToken: historyResponse.NextPageToken,
 		})
+		cancel()
 		s.Require().NoError(err)
 		events = append(events, historyResponse.History.Events...)
 	}

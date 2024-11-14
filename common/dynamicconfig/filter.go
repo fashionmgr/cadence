@@ -20,14 +20,21 @@
 
 package dynamicconfig
 
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/uber/cadence/common/types"
+)
+
 // Filter represents a filter on the dynamic config key
 type Filter int
 
 func (f Filter) String() string {
-	if f <= UnknownFilter || f > WorkflowID {
-		return filters[UnknownFilter]
+	if f > UnknownFilter && int(f) < len(filters) {
+		return filters[f]
 	}
-	return filters[f]
+	return filters[UnknownFilter]
 }
 
 func ParseFilter(filterName string) Filter {
@@ -48,6 +55,8 @@ func ParseFilter(filterName string) Filter {
 		return WorkflowID
 	case "workflowType":
 		return WorkflowType
+	case "ratelimitKey":
+		return RatelimitKey
 	default:
 		return UnknownFilter
 	}
@@ -63,6 +72,7 @@ var filters = []string{
 	"clusterName",
 	"workflowID",
 	"workflowType",
+	"ratelimitKey",
 }
 
 const (
@@ -83,6 +93,8 @@ const (
 	WorkflowID
 	// WorkflowType is the workflow type name
 	WorkflowType
+	// RatelimitKey is the global ratelimit key (not a local key name)
+	RatelimitKey
 
 	// LastFilterTypeForTest must be the last one in this const group for testing purpose
 	LastFilterTypeForTest
@@ -145,4 +157,46 @@ func WorkflowTypeFilter(name string) FilterOption {
 	return func(filterMap map[Filter]interface{}) {
 		filterMap[WorkflowType] = name
 	}
+}
+
+// RatelimitKeyFilter filters on global ratelimiter keys (via the global name, not local names)
+func RatelimitKeyFilter(key string) FilterOption {
+	return func(filterMap map[Filter]interface{}) {
+		filterMap[RatelimitKey] = key
+	}
+}
+
+// ToGetDynamicConfigFilterRequest generates a GetDynamicConfigRequest object
+// by converting filters to DynamicConfigFilter objects and setting values
+func ToGetDynamicConfigFilterRequest(configName string, filters []FilterOption) *types.GetDynamicConfigRequest {
+	filterMap := make(map[Filter]interface{}, len(filters))
+	for _, opt := range filters {
+		opt(filterMap)
+	}
+	var dcFilters []*types.DynamicConfigFilter
+	for f, entity := range filterMap {
+		filter := &types.DynamicConfigFilter{
+			Name: f.String(),
+		}
+
+		data, err := json.Marshal(entity)
+		if err != nil {
+			fmt.Errorf("could not marshall entity: %s", err)
+		}
+
+		encodingType := types.EncodingTypeJSON
+		filter.Value = &types.DataBlob{
+			EncodingType: &encodingType,
+			Data:         data,
+		}
+
+		dcFilters = append(dcFilters, filter)
+	}
+
+	request := &types.GetDynamicConfigRequest{
+		ConfigName: configName,
+		Filters:    dcFilters,
+	}
+
+	return request
 }

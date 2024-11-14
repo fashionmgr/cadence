@@ -21,6 +21,7 @@
 package tests
 
 import (
+	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
 	"github.com/uber/cadence/environment"
 	"github.com/uber/cadence/tools/cassandra"
 )
@@ -28,7 +29,11 @@ import (
 // NOTE: change this when moving the test files around during refactoring
 const rootRelativePath = "../../../../../../"
 
-func NewTestCQLClient(keyspace string) (*cassandra.CqlClient, error) {
+func NewTestCQLClient(keyspace string) (cassandra.CqlClient, error) {
+	protoVersion, err := environment.GetCassandraProtoVersion()
+	if err != nil {
+		return nil, err
+	}
 	return cassandra.NewCQLClient(&cassandra.CQLClientConfig{
 		Hosts:                 environment.GetCassandraAddress(),
 		Port:                  cassandra.DefaultCassandraPort,
@@ -38,8 +43,8 @@ func NewTestCQLClient(keyspace string) (*cassandra.CqlClient, error) {
 		Password:              environment.GetCassandraPassword(),
 		AllowedAuthenticators: environment.GetCassandraAllowedAuthenticators(),
 		NumReplicas:           1,
-		ProtoVersion:          environment.GetCassandraProtoVersion(),
-	})
+		ProtoVersion:          protoVersion,
+	}, gocql.All)
 }
 
 func CreateTestCQLFileContent() string {

@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 //go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination mocks.go -self_package github.com/uber/cadence/common/reconciliation/invariant
-//go:generate enumer -type=Collection
+//go:generate enumer -type=Collection -output collection_enumer_generated.go
 
 package invariant
 
@@ -44,15 +44,27 @@ const (
 
 	// HistoryExists asserts that history must exist if concrete execution exists
 	HistoryExists Name = "history_exists"
+
+	// InactiveDomainExists asserts that if domain status is not registered that it's inactive
+	InactiveDomainExists Name = "inactive_domain_exists"
+
 	// OpenCurrentExecution asserts that an open concrete execution must have a valid current execution
 	OpenCurrentExecution Name = "open_current_execution"
 	// ConcreteExecutionExists asserts that an open current execution must have a valid concrete execution
 	ConcreteExecutionExists Name = "concrete_execution_exists"
 
+	// StaleWorkflow checks for workflows that exist beyond their retention window,
+	// implying a failed cleanup / lost timers / etc of some kind.
+	StaleWorkflow Name = "stale_workflow"
+
 	// CollectionMutableState is the collection of invariants relating to mutable state
 	CollectionMutableState Collection = 0
 	// CollectionHistory is the collection  of invariants relating to history
 	CollectionHistory Collection = 1
+	// CollectionDomain is the collection  of invariants relating to domain status
+	CollectionDomain Collection = 2
+	// CollectionStale contains the stale workflow scanner
+	CollectionStale Collection = 3
 )
 
 type (

@@ -18,6 +18,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interface_mock.go -self_package github.com/uber/cadence/common/persistence/sql/sqlplugin
+
 package sqlplugin
 
 import (
@@ -413,11 +415,11 @@ type (
 	// ActivityInfoMapsFilter contains the column names within activity_info_maps table that
 	// can be used to filter results through a WHERE clause
 	ActivityInfoMapsFilter struct {
-		ShardID    int64
-		DomainID   serialization.UUID
-		WorkflowID string
-		RunID      serialization.UUID
-		ScheduleID *int64
+		ShardID     int64
+		DomainID    serialization.UUID
+		WorkflowID  string
+		RunID       serialization.UUID
+		ScheduleIDs []int64
 	}
 
 	// TimerInfoMapsRow represents a row in timer_info_maps table
@@ -438,7 +440,7 @@ type (
 		DomainID   serialization.UUID
 		WorkflowID string
 		RunID      serialization.UUID
-		TimerID    *string
+		TimerIDs   []string
 	}
 
 	// ChildExecutionInfoMapsRow represents a row in child_execution_info_maps table
@@ -455,11 +457,11 @@ type (
 	// ChildExecutionInfoMapsFilter contains the column names within child_execution_info_maps table that
 	// can be used to filter results through a WHERE clause
 	ChildExecutionInfoMapsFilter struct {
-		ShardID     int64
-		DomainID    serialization.UUID
-		WorkflowID  string
-		RunID       serialization.UUID
-		InitiatedID *int64
+		ShardID      int64
+		DomainID     serialization.UUID
+		WorkflowID   string
+		RunID        serialization.UUID
+		InitiatedIDs []int64
 	}
 
 	// RequestCancelInfoMapsRow represents a row in request_cancel_info_maps table
@@ -476,11 +478,11 @@ type (
 	// RequestCancelInfoMapsFilter contains the column names within request_cancel_info_maps table that
 	// can be used to filter results through a WHERE clause
 	RequestCancelInfoMapsFilter struct {
-		ShardID     int64
-		DomainID    serialization.UUID
-		WorkflowID  string
-		RunID       serialization.UUID
-		InitiatedID *int64
+		ShardID      int64
+		DomainID     serialization.UUID
+		WorkflowID   string
+		RunID        serialization.UUID
+		InitiatedIDs []int64
 	}
 
 	// SignalInfoMapsRow represents a row in signal_info_maps table
@@ -497,11 +499,11 @@ type (
 	// SignalInfoMapsFilter contains the column names within signal_info_maps table that
 	// can be used to filter results through a WHERE clause
 	SignalInfoMapsFilter struct {
-		ShardID     int64
-		DomainID    serialization.UUID
-		WorkflowID  string
-		RunID       serialization.UUID
-		InitiatedID *int64
+		ShardID      int64
+		DomainID     serialization.UUID
+		WorkflowID   string
+		RunID        serialization.UUID
+		InitiatedIDs []int64
 	}
 
 	// SignalsRequestedSetsRow represents a row in signals_requested_sets table
@@ -520,7 +522,7 @@ type (
 		DomainID   serialization.UUID
 		WorkflowID string
 		RunID      serialization.UUID
-		SignalID   *string
+		SignalIDs  []string
 	}
 
 	// VisibilityRow represents a row in executions_visibility table
@@ -538,6 +540,8 @@ type (
 		Encoding         string
 		IsCron           bool
 		NumClusters      int16
+		UpdateTime       time.Time
+		ShardID          int16
 	}
 
 	// VisibilityFilter contains the column names within executions_visibility table that
@@ -565,6 +569,15 @@ type (
 	QueueMetadataRow struct {
 		QueueType persistence.QueueType
 		Data      []byte
+	}
+
+	// ClusterConfigRow represents a row in cluster_config table
+	ClusterConfigRow struct {
+		RowType      int
+		Version      int64
+		Timestamp    time.Time
+		Data         []byte
+		DataEncoding string
 	}
 
 	// tableCRUD defines the API for interacting with the database tables
@@ -601,6 +614,7 @@ type (
 		//    - {domainID, tasklistName, taskType, taskIDLessThanEquals, limit }
 		//    - this will delete up to limit number of tasks less than or equal to the given task id
 		DeleteFromTasks(ctx context.Context, filter *TasksFilter) (sql.Result, error)
+		GetTasksCount(ctx context.Context, filter *TasksFilter) (int64, error)
 		GetOrphanTasks(ctx context.Context, filter *OrphanTasksFilter) ([]TaskKeyRow, error)
 
 		InsertIntoTaskLists(ctx context.Context, row *TaskListsRow) (sql.Result, error)
@@ -716,7 +730,7 @@ type (
 		SelectFromActivityInfoMaps(ctx context.Context, filter *ActivityInfoMapsFilter) ([]ActivityInfoMapsRow, error)
 		// DeleteFromActivityInfoMaps deletes a row from activity_info_maps table
 		// Required filter params
-		// - single row delete - {shardID, domainID, workflowID, runID, scheduleID}
+		// - one or multiple rows delete - {shardID, domainID, workflowID, runID, scheduleIDs}
 		// - range delete - {shardID, domainID, workflowID, runID}
 		DeleteFromActivityInfoMaps(ctx context.Context, filter *ActivityInfoMapsFilter) (sql.Result, error)
 
@@ -726,8 +740,8 @@ type (
 		SelectFromTimerInfoMaps(ctx context.Context, filter *TimerInfoMapsFilter) ([]TimerInfoMapsRow, error)
 		// DeleteFromTimerInfoMaps deletes one or more rows from timer_info_maps
 		// Required filter params
-		// - single row - {shardID, domainID, workflowID, runID, timerID}
-		// - multiple rows - {shardID, domainID, workflowID, runID}
+		// - one or multiple rows delete- {shardID, domainID, workflowID, runID, timerIDs}
+		// - range delete - {shardID, domainID, workflowID, runID}
 		DeleteFromTimerInfoMaps(ctx context.Context, filter *TimerInfoMapsFilter) (sql.Result, error)
 
 		ReplaceIntoChildExecutionInfoMaps(ctx context.Context, rows []ChildExecutionInfoMapsRow) (sql.Result, error)
@@ -736,8 +750,8 @@ type (
 		SelectFromChildExecutionInfoMaps(ctx context.Context, filter *ChildExecutionInfoMapsFilter) ([]ChildExecutionInfoMapsRow, error)
 		// DeleteFromChildExecutionInfoMaps deletes one or more rows from child_execution_info_maps
 		// Required filter params
-		// - single row - {shardID, domainID, workflowID, runID, initiatedID}
-		// - multiple rows - {shardID, domainID, workflowID, runID}
+		// - onne or multiple rows delete - {shardID, domainID, workflowID, runID, initiatedIDs}
+		// - range delete - {shardID, domainID, workflowID, runID}
 		DeleteFromChildExecutionInfoMaps(ctx context.Context, filter *ChildExecutionInfoMapsFilter) (sql.Result, error)
 
 		ReplaceIntoRequestCancelInfoMaps(ctx context.Context, rows []RequestCancelInfoMapsRow) (sql.Result, error)
@@ -746,8 +760,8 @@ type (
 		SelectFromRequestCancelInfoMaps(ctx context.Context, filter *RequestCancelInfoMapsFilter) ([]RequestCancelInfoMapsRow, error)
 		// DeleteFromRequestCancelInfoMaps deletes one or more rows from request_cancel_info_maps
 		// Required filter params
-		// - single row - {shardID, domainID, workflowID, runID, initiatedID}
-		// - multiple rows - {shardID, domainID, workflowID, runID}
+		// - one or multiple rows delete - {shardID, domainID, workflowID, runID, initiatedIDs}
+		// - range delete - {shardID, domainID, workflowID, runID}
 		DeleteFromRequestCancelInfoMaps(ctx context.Context, filter *RequestCancelInfoMapsFilter) (sql.Result, error)
 
 		ReplaceIntoSignalInfoMaps(ctx context.Context, rows []SignalInfoMapsRow) (sql.Result, error)
@@ -756,8 +770,8 @@ type (
 		SelectFromSignalInfoMaps(ctx context.Context, filter *SignalInfoMapsFilter) ([]SignalInfoMapsRow, error)
 		// DeleteFromSignalInfoMaps deletes one or more rows from signal_info_maps table
 		// Required filter params
-		// - single row - {shardID, domainID, workflowID, runID, initiatedID}
-		// - multiple rows - {shardID, domainID, workflowID, runID}
+		// - one or multiple rows delete - {shardID, domainID, workflowID, runID, initiatedIDs}
+		// - range delete - {shardID, domainID, workflowID, runID}
 		DeleteFromSignalInfoMaps(ctx context.Context, filter *SignalInfoMapsFilter) (sql.Result, error)
 
 		InsertIntoSignalsRequestedSets(ctx context.Context, rows []SignalsRequestedSetsRow) (sql.Result, error)
@@ -766,8 +780,8 @@ type (
 		SelectFromSignalsRequestedSets(ctx context.Context, filter *SignalsRequestedSetsFilter) ([]SignalsRequestedSetsRow, error)
 		// DeleteFromSignalsRequestedSets deletes one or more rows from signals_requested_sets
 		// Required filter params
-		// - single row - {shardID, domainID, workflowID, runID, signalID}
-		// - multiple rows - {shardID, domainID, workflowID, runID}
+		// - one or multiple rows delete - {shardID, domainID, workflowID, runID, signalIDs}
+		// - range delete - {shardID, domainID, workflowID, runID}
 		DeleteFromSignalsRequestedSets(ctx context.Context, filter *SignalsRequestedSetsFilter) (sql.Result, error)
 
 		// InsertIntoVisibility inserts a row into visibility table. If a row already exist,
@@ -798,9 +812,15 @@ type (
 		GetAckLevels(ctx context.Context, queueType persistence.QueueType, forUpdate bool) (map[string]int64, error)
 		GetQueueSize(ctx context.Context, queueType persistence.QueueType) (int64, error)
 
+		// InsertConfig insert a config entry with version. Return nosqlplugin.NewConditionFailure if the same version of the row_type is existing
+		InsertConfig(ctx context.Context, row *persistence.InternalConfigStoreEntry) error
+		// SelectLatestConfig returns the config entry of the row_type with the largest(latest) version value
+		SelectLatestConfig(ctx context.Context, rowType int) (*persistence.InternalConfigStoreEntry, error)
+
 		// The follow provide information about the underlying sql crud implementation
 		SupportsTTL() bool
 		MaxAllowedTTL() (*time.Duration, error)
+		SupportsAsyncTransaction() bool
 	}
 
 	// adminCRUD defines admin operations for CLI and test suites
@@ -833,7 +853,7 @@ type (
 		ErrorChecker
 
 		GetTotalNumDBShards() int
-		BeginTx(dbShardID int, ctx context.Context) (Tx, error)
+		BeginTx(ctx context.Context, dbShardID int) (Tx, error)
 		PluginName() string
 		Close() error
 	}

@@ -25,6 +25,10 @@ import (
 
 	"github.com/uber/cadence/cmd/server/cadence"
 	"github.com/uber/cadence/common/metrics"
+	"github.com/uber/cadence/tools/common/commoncli"
+
+	_ "github.com/uber/cadence/common/archiver/gcloud"                                      // needed to load the optional gcloud archiver plugin
+	_ "github.com/uber/cadence/common/asyncworkflow/queue/kafka"                            // needed to load kafka asyncworkflow queue
 	_ "github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra"              // needed to load cassandra plugin
 	_ "github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql/public" // needed to load the default gocql client
 	_ "github.com/uber/cadence/common/persistence/sql/sqlplugin/mysql"                      // needed to load mysql plugin
@@ -34,5 +38,5 @@ import (
 // main entry point for the cadence server
 func main() {
 	app := cadence.BuildCLI(metrics.ReleaseVersion, metrics.Revision)
-	app.Run(os.Args)
+	commoncli.ExitHandler(app.Run(os.Args))
 }

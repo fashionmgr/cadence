@@ -29,6 +29,12 @@ import (
 )
 
 //go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interface_mock.go -self_package github.com/uber/cadence/client/frontend
+//go:generate gowrap gen -g -p . -i Client -t ../templates/retry.tmpl -o ../wrappers/retryable/frontend_generated.go -v client=Frontend
+//go:generate gowrap gen -g -p . -i Client -t ../templates/metered.tmpl -o ../wrappers/metered/frontend_generated.go -v client=Frontend
+//go:generate gowrap gen -g -p . -i Client -t ../templates/errorinjectors.tmpl -o ../wrappers/errorinjectors/frontend_generated.go -v client=Frontend
+//go:generate gowrap gen -g -p . -i Client -t ../templates/grpc.tmpl -o ../wrappers/grpc/frontend_generated.go -v client=Frontend -v package=apiv1 -v path=github.com/uber/cadence-idl/go/proto/api/v1 -v prefix=
+//go:generate gowrap gen -g -p . -i Client -t ../templates/thrift.tmpl -o ../wrappers/thrift/frontend_generated.go -v client=Frontend -v prefix=
+//go:generate gowrap gen -g -p . -i Client -t ../templates/timeout.tmpl -o ../wrappers/timeout/frontend_generated.go -v client=Frontend
 
 // Client is the interface exposed by frontend service client
 type Client interface {
@@ -37,6 +43,7 @@ type Client interface {
 	DescribeDomain(context.Context, *types.DescribeDomainRequest, ...yarpc.CallOption) (*types.DescribeDomainResponse, error)
 	DescribeTaskList(context.Context, *types.DescribeTaskListRequest, ...yarpc.CallOption) (*types.DescribeTaskListResponse, error)
 	DescribeWorkflowExecution(context.Context, *types.DescribeWorkflowExecutionRequest, ...yarpc.CallOption) (*types.DescribeWorkflowExecutionResponse, error)
+	DiagnoseWorkflowExecution(context.Context, *types.DiagnoseWorkflowExecutionRequest, ...yarpc.CallOption) (*types.DiagnoseWorkflowExecutionResponse, error)
 	GetClusterInfo(context.Context, ...yarpc.CallOption) (*types.ClusterInfo, error)
 	GetSearchAttributes(context.Context, ...yarpc.CallOption) (*types.GetSearchAttributesResponse, error)
 	GetWorkflowExecutionHistory(context.Context, *types.GetWorkflowExecutionHistoryRequest, ...yarpc.CallOption) (*types.GetWorkflowExecutionHistoryResponse, error)
@@ -46,6 +53,7 @@ type Client interface {
 	ListOpenWorkflowExecutions(context.Context, *types.ListOpenWorkflowExecutionsRequest, ...yarpc.CallOption) (*types.ListOpenWorkflowExecutionsResponse, error)
 	ListTaskListPartitions(context.Context, *types.ListTaskListPartitionsRequest, ...yarpc.CallOption) (*types.ListTaskListPartitionsResponse, error)
 	GetTaskListsByDomain(context.Context, *types.GetTaskListsByDomainRequest, ...yarpc.CallOption) (*types.GetTaskListsByDomainResponse, error)
+	RefreshWorkflowTasks(context.Context, *types.RefreshWorkflowTasksRequest, ...yarpc.CallOption) error
 	ListWorkflowExecutions(context.Context, *types.ListWorkflowExecutionsRequest, ...yarpc.CallOption) (*types.ListWorkflowExecutionsResponse, error)
 	PollForActivityTask(context.Context, *types.PollForActivityTaskRequest, ...yarpc.CallOption) (*types.PollForActivityTaskResponse, error)
 	PollForDecisionTask(context.Context, *types.PollForDecisionTaskRequest, ...yarpc.CallOption) (*types.PollForDecisionTaskResponse, error)
@@ -65,10 +73,13 @@ type Client interface {
 	RespondDecisionTaskCompleted(context.Context, *types.RespondDecisionTaskCompletedRequest, ...yarpc.CallOption) (*types.RespondDecisionTaskCompletedResponse, error)
 	RespondDecisionTaskFailed(context.Context, *types.RespondDecisionTaskFailedRequest, ...yarpc.CallOption) error
 	RespondQueryTaskCompleted(context.Context, *types.RespondQueryTaskCompletedRequest, ...yarpc.CallOption) error
+	RestartWorkflowExecution(context.Context, *types.RestartWorkflowExecutionRequest, ...yarpc.CallOption) (*types.RestartWorkflowExecutionResponse, error)
 	ScanWorkflowExecutions(context.Context, *types.ListWorkflowExecutionsRequest, ...yarpc.CallOption) (*types.ListWorkflowExecutionsResponse, error)
 	SignalWithStartWorkflowExecution(context.Context, *types.SignalWithStartWorkflowExecutionRequest, ...yarpc.CallOption) (*types.StartWorkflowExecutionResponse, error)
+	SignalWithStartWorkflowExecutionAsync(context.Context, *types.SignalWithStartWorkflowExecutionAsyncRequest, ...yarpc.CallOption) (*types.SignalWithStartWorkflowExecutionAsyncResponse, error)
 	SignalWorkflowExecution(context.Context, *types.SignalWorkflowExecutionRequest, ...yarpc.CallOption) error
 	StartWorkflowExecution(context.Context, *types.StartWorkflowExecutionRequest, ...yarpc.CallOption) (*types.StartWorkflowExecutionResponse, error)
+	StartWorkflowExecutionAsync(context.Context, *types.StartWorkflowExecutionAsyncRequest, ...yarpc.CallOption) (*types.StartWorkflowExecutionAsyncResponse, error)
 	TerminateWorkflowExecution(context.Context, *types.TerminateWorkflowExecutionRequest, ...yarpc.CallOption) error
 	UpdateDomain(context.Context, *types.UpdateDomainRequest, ...yarpc.CallOption) (*types.UpdateDomainResponse, error)
 }

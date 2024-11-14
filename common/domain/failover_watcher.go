@@ -24,6 +24,7 @@ package domain
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -118,7 +119,7 @@ func (p *failoverWatcherImpl) Stop() {
 
 func (p *failoverWatcherImpl) refreshDomainLoop() {
 
-	timer := time.NewTimer(backoff.JitDuration(
+	timer := p.timeSource.NewTimer(backoff.JitDuration(
 		p.refreshInterval(),
 		p.refreshJitter(),
 	))
@@ -128,7 +129,7 @@ func (p *failoverWatcherImpl) refreshDomainLoop() {
 		select {
 		case <-p.shutdownChan:
 			return
-		case <-timer.C:
+		case <-timer.Chan():
 			domains := p.domainCache.GetAllDomain()
 			for _, domain := range domains {
 				p.handleFailoverTimeout(domain)
@@ -183,13 +184,12 @@ func CleanPendingActiveState(
 	// this call has to be made
 	metadata, err := domainManager.GetMetadata(context.Background())
 	if err != nil {
-		return err
+		return fmt.Errorf("getting metadata: %w", err)
 	}
-	notificationVersion := metadata.NotificationVersion
 
 	getResponse, err := domainManager.GetDomain(context.Background(), &persistence.GetDomainRequest{ID: domainID})
 	if err != nil {
-		return err
+		return fmt.Errorf("getting domain: %w", err)
 	}
 	localFailoverVersion := getResponse.FailoverVersion
 	isGlobalDomain := getResponse.IsGlobalDomain
@@ -205,7 +205,7 @@ func CleanPendingActiveState(
 			FailoverVersion:             localFailoverVersion,
 			FailoverNotificationVersion: getResponse.FailoverNotificationVersion,
 			FailoverEndTime:             nil,
-			NotificationVersion:         notificationVersion,
+			NotificationVersion:         metadata.NotificationVersion,
 		}
 		op := func() error {
 			return domainManager.UpdateDomain(context.Background(), updateReq)

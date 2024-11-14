@@ -2,19 +2,27 @@ version: "3.5"
 
 services:
   cassandra:
-    image: cassandra:3.11
+    image: cassandra:4.1.1
+    environment:
+      - "MAX_HEAP_SIZE=256M"
+      - "HEAP_NEWSIZE=128M"
     expose:
       - "9042"
     networks:
       services-network:
         aliases:
           - cassandra
+    healthcheck:
+      test: ["CMD", "cqlsh", "-u cassandra", "-p cassandra" ,"-e describe keyspaces"]
+      interval: 15s
+      timeout: 30s
+      retries: 10
 
   mysql:
-    image: mysql:5.7
+    image: mysql:8.0
     environment:
       MYSQL_DATABASE: db
-      MYSQL_ROOT_PASSWORD: uber
+      MYSQL_ROOT_PASSWORD: cadence
     volumes:
       - ./mysql-init:/docker-entrypoint-initdb.d
     expose:
@@ -25,7 +33,7 @@ services:
           - mysql
 
   postgres:
-    image: postgres:12
+    image: postgres:12.4
     environment:
       POSTGRES_PASSWORD: cadence
       POSTGRES_USER: cadence
@@ -36,29 +44,29 @@ services:
         aliases:
           - postgres
 
-  zookeeper:
-    image: wurstmeister/zookeeper:3.4.6
-    expose:
-      - "2181"
-    networks:
-      services-network:
-        aliases:
-          - zookeeper
-
   kafka:
-    image: wurstmeister/kafka:2.12-2.1.1
-    depends_on:
-      - zookeeper
-    expose:
-      - "9092"
+    image: docker.io/bitnami/kafka:3.7
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft settings
+      - "KAFKA_CFG_NODE_ID=0"
+      - "KAFKA_CFG_PROCESS_ROLES=controller,broker"
+      - "KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093"
+      # Listeners
+      - "KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093"
+      - "KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092"
+      - "KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      - "KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER"
+      - "KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT"
+      # Topic settings
+      - "KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true"
     networks:
       services-network:
         aliases:
           - kafka
-    environment:
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.8.22
@@ -86,20 +94,31 @@ services:
     build:
       context: ../../
       dockerfile: ./docker/buildkite/Dockerfile
-    command: make cover_profile
+    command: sh -c "make .just-build && make install-schema && make cover_profile"
     environment:
+      - "CASSANDRA_HOST=cassandra"
+      - "CASSANDRA=1"
+      - "MYSQL=1"
+      - "POSTGRES=1"
+      - "MONGODB=1"
       - "CASSANDRA_SEEDS=cassandra"
       - "MYSQL_SEEDS=mysql"
       - "POSTGRES_SEEDS=postgres"
       - "POSTGRES_USER=cadence"
       - "POSTGRES_PASSWORD=cadence"
     depends_on:
-      - cassandra
-      - mysql
-      - postgres
-      - mongo
+      cassandra:
+        condition: service_healthy
+      mysql:
+        condition: service_started
+      postgres:
+        condition: service_started
+      mongo:
+        condition: service_started
     volumes:
       - ../../:/cadence
+      - /cadence/.build/ # ensure we don't mount the build directory
+      - /cadence/.bin/ # ensure we don't mount the bin directory
     networks:
       services-network:
         aliases:
@@ -111,16 +130,23 @@ services:
       dockerfile: ./docker/buildkite/Dockerfile
     command: make cover_integration_profile
     environment:
+      - "CASSANDRA_HOST=cassandra"
+      - "CASSANDRA=1"
       - "CASSANDRA_SEEDS=cassandra"
       - "ES_SEEDS=elasticsearch"
       - "KAFKA_SEEDS=kafka"
       - "TEST_TAG=esintegration"
     depends_on:
-      - cassandra
-      - elasticsearch
-      - kafka
+      cassandra:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_started
+      kafka:
+        condition: service_started
     volumes:
       - ../../:/cadence
+      - /cadence/.build/ # ensure we don't mount the build directory
+      - /cadence/.bin/ # ensure we don't mount the bin directory
     networks:
       services-network:
         aliases:
@@ -132,10 +158,12 @@ services:
       dockerfile: ./docker/buildkite/Dockerfile
     command: make cover_integration_profile
     environment:
+      - "MYSQL=1"
       - "MYSQL_SEEDS=mysql"
       - "ES_SEEDS=elasticsearch"
       - "KAFKA_SEEDS=kafka"
       - "PERSISTENCE_TYPE=sql"
+      - "PERSISTENCE_PLUGIN=mysql"
       - "TEST_TAG=esintegration"
     depends_on:
       - mysql
@@ -143,6 +171,8 @@ services:
       - kafka
     volumes:
       - ../../:/cadence
+      - /cadence/.build/ # ensure we don't mount the build directory
+      - /cadence/.bin/ # ensure we don't mount the bin directory
     networks:
       services-network:
         aliases:
@@ -154,6 +184,7 @@ services:
       dockerfile: ./docker/buildkite/Dockerfile
     command: make cover_integration_profile
     environment:
+      - "POSTGRES=1"
       - "POSTGRES_SEEDS=postgres"
       - "PERSISTENCE_PLUGIN=postgres"
       - "ES_SEEDS=elasticsearch"
@@ -166,6 +197,8 @@ services:
       - kafka
     volumes:
       - ../../:/cadence
+      - /cadence/.build/ # ensure we don't mount the build directory
+      - /cadence/.bin/ # ensure we don't mount the bin directory
     networks:
       services-network:
         aliases:
@@ -177,16 +210,23 @@ services:
       dockerfile: ./docker/buildkite/Dockerfile
     command: make cover_integration_profile EVENTSV2=true
     environment:
+      - "CASSANDRA_HOST=cassandra"
+      - "CASSANDRA=1"
       - "CASSANDRA_SEEDS=cassandra"
       - "ES_SEEDS=elasticsearch"
       - "KAFKA_SEEDS=kafka"
       - "TEST_TAG=esintegration"
     depends_on:
-      - cassandra
-      - elasticsearch
-      - kafka
+      cassandra:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_started
+      kafka:
+        condition: service_started
     volumes:
       - ../../:/cadence
+      - /cadence/.build/ # ensure we don't mount the build directory
+      - /cadence/.bin/ # ensure we don't mount the bin directory
     networks:
       services-network:
         aliases:
@@ -198,16 +238,23 @@ services:
       dockerfile: ./docker/buildkite/Dockerfile
     command: make cover_ndc_profile
     environment:
+      - "CASSANDRA_HOST=cassandra"
+      - "CASSANDRA=1"
       - "CASSANDRA_SEEDS=cassandra"
       - "ES_SEEDS=elasticsearch"
       - "KAFKA_SEEDS=kafka"
       - "TEST_TAG=esintegration"
     depends_on:
-      - cassandra
-      - elasticsearch
-      - kafka
+      cassandra:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_started
+      kafka:
+        condition: service_started
     volumes:
       - ../../:/cadence
+      - /cadence/.build/ # ensure we don't mount the build directory
+      - /cadence/.bin/ # ensure we don't mount the bin directory
     networks:
       services-network:
         aliases:
@@ -219,10 +266,12 @@ services:
       dockerfile: ./docker/buildkite/Dockerfile
     command: make cover_ndc_profile
     environment:
+      - "MYSQL=1"
       - "MYSQL_SEEDS=mysql"
       - "ES_SEEDS=elasticsearch"
       - "KAFKA_SEEDS=kafka"
       - "PERSISTENCE_TYPE=sql"
+      - "PERSISTENCE_PLUGIN=mysql"
       - "TEST_TAG=esintegration"
     depends_on:
       - mysql
@@ -230,6 +279,8 @@ services:
       - kafka
     volumes:
       - ../../:/cadence
+      - /cadence/.build/ # ensure we don't mount the build directory
+      - /cadence/.bin/ # ensure we don't mount the bin directory
     networks:
       services-network:
         aliases:

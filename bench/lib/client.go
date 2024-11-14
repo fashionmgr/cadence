@@ -23,12 +23,13 @@ package lib
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.uber.org/cadence/.gen/go/cadence/workflowserviceclient"
 	"go.uber.org/cadence/.gen/go/shared"
 	"go.uber.org/cadence/client"
 	"go.uber.org/yarpc"
-	"go.uber.org/yarpc/transport/tchannel"
+	"go.uber.org/yarpc/transport/grpc"
 )
 
 const workflowRetentionDays = 1
@@ -59,7 +60,9 @@ func (client CadenceClient) CreateDomain(name string, desc string, owner string)
 		EmitMetric:                             &emitMetric,
 		IsGlobalDomain:                         &isGlobalDomain,
 	}
-	err := client.Register(context.Background(), req)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := client.Register(ctx, req)
 	if err != nil {
 		if _, ok := err.(*shared.DomainAlreadyExistsError); !ok {
 			return err
@@ -89,17 +92,14 @@ func NewCadenceClientForDomain(
 	domain string,
 ) (CadenceClient, error) {
 
-	ch, err := tchannel.NewChannelTransport(
-		tchannel.ServiceName(runtime.Bench.Name),
+	transport := grpc.NewTransport(
+		grpc.ServiceName(runtime.Bench.Name),
 	)
-	if err != nil {
-		return CadenceClient{}, fmt.Errorf("failed to create transport channel: %v", err)
-	}
 
 	dispatcher := yarpc.NewDispatcher(yarpc.Config{
 		Name: runtime.Bench.Name,
 		Outbounds: yarpc.Outbounds{
-			runtime.Cadence.ServiceName: {Unary: ch.NewSingleOutbound(runtime.Cadence.HostNameAndPort)},
+			runtime.Cadence.ServiceName: {Unary: transport.NewSingleOutbound(runtime.Cadence.HostNameAndPort)},
 		},
 	})
 

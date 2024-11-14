@@ -27,24 +27,17 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"regexp"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
 
 	"github.com/uber/cadence/common/archiver"
-	"github.com/uber/cadence/common/config"
-)
-
-const (
-	bucketNameRegExpRaw = "^gs:\\/\\/[^:\\/\n?]+"
 )
 
 var (
 	// ErrBucketNotFound is non retriable error that is thrown when the bucket doesn't exist
 	ErrBucketNotFound = errors.New("bucket not found")
 	errObjectNotFound = errors.New("object not found")
-	bucketNameRegExp  = regexp.MustCompile(bucketNameRegExpRaw)
 )
 
 type (
@@ -61,17 +54,23 @@ type (
 		Exist(ctx context.Context, URI archiver.URI, fileName string) (bool, error)
 	}
 
+	// Config structure used to parse from the storage-provider yaml nodes in [github.com/uber/cadence/common/config.HistoryArchiverProvider]
+	// and [github.com/uber/cadence/common/config.VisibilityArchiverProvider] and
+	Config struct {
+		CredentialsPath string `yaml:"credentialsPath"`
+	}
+
 	storageWrapper struct {
 		client GcloudStorageClient
 	}
 )
 
-// NewClient return a Cadence gcloudstorage.Client based on default google service account creadentials (ScopeFullControl required).
+// NewClient return a Cadence gcloudstorage.Client based on default google service account credentials (ScopeFullControl required).
 // Bucket must be created by Iaas scripts, in other words, this library doesn't create the required Bucket.
-// Optionaly you can set your credential path throught "GOOGLE_APPLICATION_CREDENTIALS" environment variable or through cadence config file.
+// Optionally you can set your credential path through the "GOOGLE_APPLICATION_CREDENTIALS" environment variable or through cadence config file.
 // You can find more info about "Google Setting Up Authentication for Server to Server Production Applications" under the following link
 // https://cloud.google.com/docs/authentication/production
-func NewClient(ctx context.Context, config *config.GstorageArchiver) (Client, error) {
+func NewClient(ctx context.Context, config Config) (Client, error) {
 	if credentialsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credentialsPath != "" {
 		clientDelegate, err := newClientDelegateWithCredentials(ctx, credentialsPath)
 		return &storageWrapper{client: clientDelegate}, err
@@ -109,7 +108,6 @@ func (s *storageWrapper) Upload(ctx context.Context, URI archiver.URI, fileName 
 // Exist check if a bucket or an object exist
 // If fileName is empty, then 'Exist' function will only check if the given bucket exist.
 func (s *storageWrapper) Exist(ctx context.Context, URI archiver.URI, fileName string) (exists bool, err error) {
-	err = ErrBucketNotFound
 	bucket := s.client.Bucket(URI.Hostname())
 	if _, err := bucket.Attrs(ctx); err != nil {
 		return false, err

@@ -29,7 +29,6 @@ import (
 	"github.com/pborman/uuid"
 
 	"github.com/uber/cadence/common"
-	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
@@ -146,8 +145,7 @@ type (
 
 	transactionManagerImpl struct {
 		shard            shard.Context
-		domainCache      cache.DomainCache
-		executionCache   *execution.Cache
+		executionCache   execution.Cache
 		clusterMetadata  cluster.Metadata
 		historyV2Manager persistence.HistoryManager
 		serializer       persistence.PayloadSerializer
@@ -165,14 +163,13 @@ var _ transactionManager = (*transactionManagerImpl)(nil)
 
 func newTransactionManager(
 	shard shard.Context,
-	executionCache *execution.Cache,
+	executionCache execution.Cache,
 	eventsReapplier EventsReapplier,
 	logger log.Logger,
 ) *transactionManagerImpl {
 
 	transactionManager := &transactionManagerImpl{
 		shard:            shard,
-		domainCache:      shard.GetDomainCache(),
 		executionCache:   executionCache,
 		clusterMetadata:  shard.GetClusterMetadata(),
 		historyV2Manager: shard.GetHistoryManager(),
@@ -264,6 +261,7 @@ func (r *transactionManagerImpl) backfillWorkflow(
 		nil,
 		transactionPolicy,
 		nil,
+		persistence.CreateWorkflowRequestModeReplicated,
 	)
 }
 
@@ -278,9 +276,12 @@ func (r *transactionManagerImpl) backfillWorkflowEventsReapply(
 		return 0, execution.TransactionPolicyActive, err
 	}
 	isWorkflowRunning := targetWorkflow.GetMutableState().IsWorkflowExecutionRunning()
-	targetWorkflowActiveCluster := r.clusterMetadata.ClusterNameForFailoverVersion(
+	targetWorkflowActiveCluster, err := r.clusterMetadata.ClusterNameForFailoverVersion(
 		targetWorkflow.GetMutableState().GetDomainEntry().GetFailoverVersion(),
 	)
+	if err != nil {
+		return 0, execution.TransactionPolicyActive, err
+	}
 	currentCluster := r.clusterMetadata.GetCurrentClusterName()
 	isActiveCluster := targetWorkflowActiveCluster == currentCluster
 
@@ -385,8 +386,11 @@ func (r *transactionManagerImpl) checkWorkflowExists(
 	workflowID string,
 	runID string,
 ) (bool, error) {
-
-	_, err := r.shard.GetExecutionManager().GetWorkflowExecution(
+	domainName, errorDomainName := r.shard.GetDomainCache().GetDomainName(domainID)
+	if errorDomainName != nil {
+		return false, errorDomainName
+	}
+	_, err := r.shard.GetWorkflowExecution(
 		ctx,
 		&persistence.GetWorkflowExecutionRequest{
 			DomainID: domainID,
@@ -394,6 +398,7 @@ func (r *transactionManagerImpl) checkWorkflowExists(
 				WorkflowID: workflowID,
 				RunID:      runID,
 			},
+			DomainName: domainName,
 		},
 	)
 
@@ -413,11 +418,16 @@ func (r *transactionManagerImpl) getCurrentWorkflowRunID(
 	workflowID string,
 ) (string, error) {
 
+	domainName, errorDomainName := r.shard.GetDomainCache().GetDomainName(domainID)
+	if errorDomainName != nil {
+		return "", errorDomainName
+	}
 	resp, err := r.shard.GetExecutionManager().GetCurrentExecution(
 		ctx,
 		&persistence.GetCurrentExecutionRequest{
 			DomainID:   domainID,
 			WorkflowID: workflowID,
+			DomainName: domainName,
 		},
 	)
 
@@ -457,7 +467,7 @@ func (r *transactionManagerImpl) loadNDCWorkflow(
 		release(err)
 		return nil, err
 	}
-	return execution.NewWorkflow(ctx, r.domainCache, r.clusterMetadata, context, msBuilder, release), nil
+	return execution.NewWorkflow(ctx, r.clusterMetadata, context, msBuilder, release), nil
 }
 
 func (r *transactionManagerImpl) isWorkflowCurrent(

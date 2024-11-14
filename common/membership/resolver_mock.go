@@ -84,6 +84,21 @@ func (mr *MockResolverMockRecorder) Lookup(service, key interface{}) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Lookup", reflect.TypeOf((*MockResolver)(nil).Lookup), service, key)
 }
 
+// LookupByAddress mocks base method.
+func (m *MockResolver) LookupByAddress(service, address string) (HostInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LookupByAddress", service, address)
+	ret0, _ := ret[0].(HostInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LookupByAddress indicates an expected call of LookupByAddress.
+func (mr *MockResolverMockRecorder) LookupByAddress(service, address interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LookupByAddress", reflect.TypeOf((*MockResolver)(nil).LookupByAddress), service, address)
+}
+
 // MemberCount mocks base method.
 func (m *MockResolver) MemberCount(service string) (int, error) {
 	m.ctrl.T.Helper()

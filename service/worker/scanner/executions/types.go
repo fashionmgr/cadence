@@ -22,19 +22,21 @@
 
 package executions
 
-//go:generate enumer -type=ScanType
+//go:generate enumer -type=ScanType -output scantype_enumer_generated.go
 
 import (
 	"context"
 	"strconv"
 
-	"github.com/uber/cadence/service/worker/scanner/shardscanner"
+	"go.uber.org/zap"
 
+	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/pagination"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/reconciliation/entity"
 	"github.com/uber/cadence/common/reconciliation/fetcher"
 	"github.com/uber/cadence/common/reconciliation/invariant"
+	"github.com/uber/cadence/service/worker/scanner/shardscanner"
 )
 
 const (
@@ -48,10 +50,10 @@ const (
 type ScanType int
 
 type (
-	//InvariantFactory represents a function which returns Invariant
-	InvariantFactory func(retryer persistence.Retryer) invariant.Invariant
+	// InvariantFactory represents a function which returns Invariant
+	InvariantFactory func(retryer persistence.Retryer, domainCache cache.DomainCache) invariant.Invariant
 
-	//ExecutionFetcher represents a function which returns specific execution entity
+	// ExecutionFetcher represents a function which returns specific execution entity
 	ExecutionFetcher func(ctx context.Context, retryer persistence.Retryer, request fetcher.ExecutionRequest) (entity.Entity, error)
 )
 
@@ -91,14 +93,20 @@ func (st ScanType) ToExecutionFetcher() ExecutionFetcher {
 }
 
 // ToInvariants returns list of invariants to be checked depending on scan type.
-func (st ScanType) ToInvariants(collections []invariant.Collection) []InvariantFactory {
+func (st ScanType) ToInvariants(collections []invariant.Collection, logger *zap.Logger) []InvariantFactory {
 	var fns []InvariantFactory
 	switch st {
 	case ConcreteExecutionType:
 		for _, collection := range collections {
 			switch collection {
+			case invariant.CollectionDomain:
+				fns = append(fns, invariant.NewInactiveDomainExists)
 			case invariant.CollectionHistory:
 				fns = append(fns, invariant.NewHistoryExists)
+			case invariant.CollectionStale:
+				fns = append(fns, func(pr persistence.Retryer, dc cache.DomainCache) invariant.Invariant {
+					return invariant.NewStaleWorkflow(pr, dc, logger.Named(string(invariant.StaleWorkflow)))
+				})
 			case invariant.CollectionMutableState:
 				fns = append(fns, invariant.NewOpenCurrentExecution)
 			}

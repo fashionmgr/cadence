@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination registry_mock.go -self_package github.com/uber/cadence/service/history/query
+
 package query
 
 import (
@@ -208,7 +210,7 @@ func (r *registryImpl) getQueryNoLock(id string) (query, error) {
 }
 
 func (r *registryImpl) getIDs(m map[string]query) []string {
-	result := make([]string, len(m), len(m))
+	result := make([]string, len(m))
 	index := 0
 	for id := range m {
 		result[index] = id

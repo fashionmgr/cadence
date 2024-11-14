@@ -21,11 +21,10 @@
 package host
 
 import (
+	"github.com/stretchr/testify/require"
 	"go.uber.org/cadence/.gen/go/cadence/workflowserviceclient"
 	"go.uber.org/cadence/client"
 	"go.uber.org/cadence/worker"
-
-	"github.com/stretchr/testify/require"
 )
 
 // NOTE: the following definitions can't be defined in *_test.go
@@ -36,24 +35,44 @@ type (
 		// override suite.Suite.Assertions with require.Assertions; this means that s.NotNil(nil) will stop the test,
 		// not merely log an error
 		*require.Assertions
-		IntegrationBase
+		*IntegrationBase
 	}
 
 	SizeLimitIntegrationSuite struct {
 		// override suite.Suite.Assertions with require.Assertions; this means that s.NotNil(nil) will stop the test,
 		// not merely log an error
 		*require.Assertions
-		IntegrationBase
+		*IntegrationBase
 	}
 
 	ClientIntegrationSuite struct {
 		// override suite.Suite.Assertions with require.Assertions; this means that s.NotNil(nil) will stop the test,
 		// not merely log an error
 		*require.Assertions
-		IntegrationBase
+		*IntegrationBase
 		wfService workflowserviceclient.Interface
 		wfClient  client.Client
 		worker    worker.Worker
 		taskList  string
+	}
+
+	AsyncWFIntegrationSuite struct {
+		*require.Assertions
+		*IntegrationBase
+	}
+
+	MatchingSimulationSuite struct {
+		*require.Assertions
+		*IntegrationBase
+	}
+
+	WorkflowIDRateLimitIntegrationSuite struct {
+		*require.Assertions
+		*IntegrationBase
+	}
+
+	WorkflowIDInternalRateLimitIntegrationSuite struct {
+		*require.Assertions
+		*IntegrationBase
 	}
 )

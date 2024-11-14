@@ -51,6 +51,11 @@ type Interface interface {
 		Request *shared.CloseShardRequest,
 	) error
 
+	DeleteWorkflow(
+		ctx context.Context,
+		Request *admin.AdminDeleteWorkflowRequest,
+	) (*admin.AdminDeleteWorkflowResponse, error)
+
 	DescribeCluster(
 		ctx context.Context,
 	) (*admin.DescribeClusterResponse, error)
@@ -85,6 +90,16 @@ type Interface interface {
 		Request *replicator.GetDLQReplicationMessagesRequest,
 	) (*replicator.GetDLQReplicationMessagesResponse, error)
 
+	GetDomainAsyncWorkflowConfiguraton(
+		ctx context.Context,
+		Request *admin.GetDomainAsyncWorkflowConfiguratonRequest,
+	) (*admin.GetDomainAsyncWorkflowConfiguratonResponse, error)
+
+	GetDomainIsolationGroups(
+		ctx context.Context,
+		Request *admin.GetDomainIsolationGroupsRequest,
+	) (*admin.GetDomainIsolationGroupsResponse, error)
+
 	GetDomainReplicationMessages(
 		ctx context.Context,
 		Request *replicator.GetDomainReplicationMessagesRequest,
@@ -94,6 +109,11 @@ type Interface interface {
 		ctx context.Context,
 		Request *admin.GetDynamicConfigRequest,
 	) (*admin.GetDynamicConfigResponse, error)
+
+	GetGlobalIsolationGroups(
+		ctx context.Context,
+		Request *admin.GetGlobalIsolationGroupsRequest,
+	) (*admin.GetGlobalIsolationGroupsResponse, error)
 
 	GetReplicationMessages(
 		ctx context.Context,
@@ -109,6 +129,11 @@ type Interface interface {
 		ctx context.Context,
 		Request *admin.ListDynamicConfigRequest,
 	) (*admin.ListDynamicConfigResponse, error)
+
+	MaintainCorruptWorkflow(
+		ctx context.Context,
+		Request *admin.AdminMaintainWorkflowRequest,
+	) (*admin.AdminMaintainWorkflowResponse, error)
 
 	MergeDLQMessages(
 		ctx context.Context,
@@ -160,17 +185,32 @@ type Interface interface {
 		Request *admin.RestoreDynamicConfigRequest,
 	) error
 
+	UpdateDomainAsyncWorkflowConfiguraton(
+		ctx context.Context,
+		Request *admin.UpdateDomainAsyncWorkflowConfiguratonRequest,
+	) (*admin.UpdateDomainAsyncWorkflowConfiguratonResponse, error)
+
+	UpdateDomainIsolationGroups(
+		ctx context.Context,
+		Request *admin.UpdateDomainIsolationGroupsRequest,
+	) (*admin.UpdateDomainIsolationGroupsResponse, error)
+
 	UpdateDynamicConfig(
 		ctx context.Context,
 		Request *admin.UpdateDynamicConfigRequest,
 	) error
+
+	UpdateGlobalIsolationGroups(
+		ctx context.Context,
+		Request *admin.UpdateGlobalIsolationGroupsRequest,
+	) (*admin.UpdateGlobalIsolationGroupsResponse, error)
 }
 
 // New prepares an implementation of the AdminService service for
 // registration.
 //
-// 	handler := AdminServiceHandler{}
-// 	dispatcher.Register(adminserviceserver.New(handler))
+//	handler := AdminServiceHandler{}
+//	dispatcher.Register(adminserviceserver.New(handler))
 func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 	h := handler{impl}
 	service := thrift.Service{
@@ -198,6 +238,18 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 					NoWire: closeshard_NoWireHandler{impl},
 				},
 				Signature:    "CloseShard(Request *shared.CloseShardRequest)",
+				ThriftModule: admin.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "DeleteWorkflow",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.DeleteWorkflow),
+					NoWire: deleteworkflow_NoWireHandler{impl},
+				},
+				Signature:    "DeleteWorkflow(Request *admin.AdminDeleteWorkflowRequest) (*admin.AdminDeleteWorkflowResponse)",
 				ThriftModule: admin.ThriftModule,
 			},
 
@@ -286,6 +338,30 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
+				Name: "GetDomainAsyncWorkflowConfiguraton",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.GetDomainAsyncWorkflowConfiguraton),
+					NoWire: getdomainasyncworkflowconfiguraton_NoWireHandler{impl},
+				},
+				Signature:    "GetDomainAsyncWorkflowConfiguraton(Request *admin.GetDomainAsyncWorkflowConfiguratonRequest) (*admin.GetDomainAsyncWorkflowConfiguratonResponse)",
+				ThriftModule: admin.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "GetDomainIsolationGroups",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.GetDomainIsolationGroups),
+					NoWire: getdomainisolationgroups_NoWireHandler{impl},
+				},
+				Signature:    "GetDomainIsolationGroups(Request *admin.GetDomainIsolationGroupsRequest) (*admin.GetDomainIsolationGroupsResponse)",
+				ThriftModule: admin.ThriftModule,
+			},
+
+			thrift.Method{
 				Name: "GetDomainReplicationMessages",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -306,6 +382,18 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 					NoWire: getdynamicconfig_NoWireHandler{impl},
 				},
 				Signature:    "GetDynamicConfig(Request *admin.GetDynamicConfigRequest) (*admin.GetDynamicConfigResponse)",
+				ThriftModule: admin.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "GetGlobalIsolationGroups",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.GetGlobalIsolationGroups),
+					NoWire: getglobalisolationgroups_NoWireHandler{impl},
+				},
+				Signature:    "GetGlobalIsolationGroups(Request *admin.GetGlobalIsolationGroupsRequest) (*admin.GetGlobalIsolationGroupsResponse)",
 				ThriftModule: admin.ThriftModule,
 			},
 
@@ -342,6 +430,18 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 					NoWire: listdynamicconfig_NoWireHandler{impl},
 				},
 				Signature:    "ListDynamicConfig(Request *admin.ListDynamicConfigRequest) (*admin.ListDynamicConfigResponse)",
+				ThriftModule: admin.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "MaintainCorruptWorkflow",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.MaintainCorruptWorkflow),
+					NoWire: maintaincorruptworkflow_NoWireHandler{impl},
+				},
+				Signature:    "MaintainCorruptWorkflow(Request *admin.AdminMaintainWorkflowRequest) (*admin.AdminMaintainWorkflowResponse)",
 				ThriftModule: admin.ThriftModule,
 			},
 
@@ -466,6 +566,30 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 			},
 
 			thrift.Method{
+				Name: "UpdateDomainAsyncWorkflowConfiguraton",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.UpdateDomainAsyncWorkflowConfiguraton),
+					NoWire: updatedomainasyncworkflowconfiguraton_NoWireHandler{impl},
+				},
+				Signature:    "UpdateDomainAsyncWorkflowConfiguraton(Request *admin.UpdateDomainAsyncWorkflowConfiguratonRequest) (*admin.UpdateDomainAsyncWorkflowConfiguratonResponse)",
+				ThriftModule: admin.ThriftModule,
+			},
+
+			thrift.Method{
+				Name: "UpdateDomainIsolationGroups",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.UpdateDomainIsolationGroups),
+					NoWire: updatedomainisolationgroups_NoWireHandler{impl},
+				},
+				Signature:    "UpdateDomainIsolationGroups(Request *admin.UpdateDomainIsolationGroupsRequest) (*admin.UpdateDomainIsolationGroupsResponse)",
+				ThriftModule: admin.ThriftModule,
+			},
+
+			thrift.Method{
 				Name: "UpdateDynamicConfig",
 				HandlerSpec: thrift.HandlerSpec{
 
@@ -476,10 +600,22 @@ func New(impl Interface, opts ...thrift.RegisterOption) []transport.Procedure {
 				Signature:    "UpdateDynamicConfig(Request *admin.UpdateDynamicConfigRequest)",
 				ThriftModule: admin.ThriftModule,
 			},
+
+			thrift.Method{
+				Name: "UpdateGlobalIsolationGroups",
+				HandlerSpec: thrift.HandlerSpec{
+
+					Type:   transport.Unary,
+					Unary:  thrift.UnaryHandler(h.UpdateGlobalIsolationGroups),
+					NoWire: updateglobalisolationgroups_NoWireHandler{impl},
+				},
+				Signature:    "UpdateGlobalIsolationGroups(Request *admin.UpdateGlobalIsolationGroupsRequest) (*admin.UpdateGlobalIsolationGroupsResponse)",
+				ThriftModule: admin.ThriftModule,
+			},
 		},
 	}
 
-	procedures := make([]transport.Procedure, 0, 25)
+	procedures := make([]transport.Procedure, 0, 33)
 	procedures = append(procedures, thrift.BuildProcedures(service, opts...)...)
 	return procedures
 }
@@ -531,6 +667,36 @@ func (h handler) CloseShard(ctx context.Context, body wire.Value) (thrift.Respon
 
 	hadError := appErr != nil
 	result, err := admin.AdminService_CloseShard_Helper.WrapResponse(appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
+func (h handler) DeleteWorkflow(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_DeleteWorkflow_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'AdminService' procedure 'DeleteWorkflow': %w", err)
+	}
+
+	success, appErr := h.impl.DeleteWorkflow(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_DeleteWorkflow_Helper.WrapResponse(success, appErr)
 
 	var response thrift.Response
 	if err == nil {
@@ -760,6 +926,66 @@ func (h handler) GetDLQReplicationMessages(ctx context.Context, body wire.Value)
 	return response, err
 }
 
+func (h handler) GetDomainAsyncWorkflowConfiguraton(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_GetDomainAsyncWorkflowConfiguraton_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'AdminService' procedure 'GetDomainAsyncWorkflowConfiguraton': %w", err)
+	}
+
+	success, appErr := h.impl.GetDomainAsyncWorkflowConfiguraton(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_GetDomainAsyncWorkflowConfiguraton_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
+func (h handler) GetDomainIsolationGroups(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_GetDomainIsolationGroups_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'AdminService' procedure 'GetDomainIsolationGroups': %w", err)
+	}
+
+	success, appErr := h.impl.GetDomainIsolationGroups(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_GetDomainIsolationGroups_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
 func (h handler) GetDomainReplicationMessages(ctx context.Context, body wire.Value) (thrift.Response, error) {
 	var args admin.AdminService_GetDomainReplicationMessages_Args
 	if err := args.FromWire(body); err != nil {
@@ -801,6 +1027,36 @@ func (h handler) GetDynamicConfig(ctx context.Context, body wire.Value) (thrift.
 
 	hadError := appErr != nil
 	result, err := admin.AdminService_GetDynamicConfig_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
+func (h handler) GetGlobalIsolationGroups(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_GetGlobalIsolationGroups_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'AdminService' procedure 'GetGlobalIsolationGroups': %w", err)
+	}
+
+	success, appErr := h.impl.GetGlobalIsolationGroups(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_GetGlobalIsolationGroups_Helper.WrapResponse(success, appErr)
 
 	var response thrift.Response
 	if err == nil {
@@ -891,6 +1147,36 @@ func (h handler) ListDynamicConfig(ctx context.Context, body wire.Value) (thrift
 
 	hadError := appErr != nil
 	result, err := admin.AdminService_ListDynamicConfig_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
+func (h handler) MaintainCorruptWorkflow(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_MaintainCorruptWorkflow_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'AdminService' procedure 'MaintainCorruptWorkflow': %w", err)
+	}
+
+	success, appErr := h.impl.MaintainCorruptWorkflow(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_MaintainCorruptWorkflow_Helper.WrapResponse(success, appErr)
 
 	var response thrift.Response
 	if err == nil {
@@ -1210,6 +1496,66 @@ func (h handler) RestoreDynamicConfig(ctx context.Context, body wire.Value) (thr
 	return response, err
 }
 
+func (h handler) UpdateDomainAsyncWorkflowConfiguraton(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_UpdateDomainAsyncWorkflowConfiguraton_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'AdminService' procedure 'UpdateDomainAsyncWorkflowConfiguraton': %w", err)
+	}
+
+	success, appErr := h.impl.UpdateDomainAsyncWorkflowConfiguraton(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_UpdateDomainAsyncWorkflowConfiguraton_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
+func (h handler) UpdateDomainIsolationGroups(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_UpdateDomainIsolationGroups_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'AdminService' procedure 'UpdateDomainIsolationGroups': %w", err)
+	}
+
+	success, appErr := h.impl.UpdateDomainIsolationGroups(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_UpdateDomainIsolationGroups_Helper.WrapResponse(success, appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
 func (h handler) UpdateDynamicConfig(ctx context.Context, body wire.Value) (thrift.Response, error) {
 	var args admin.AdminService_UpdateDynamicConfig_Args
 	if err := args.FromWire(body); err != nil {
@@ -1221,6 +1567,36 @@ func (h handler) UpdateDynamicConfig(ctx context.Context, body wire.Value) (thri
 
 	hadError := appErr != nil
 	result, err := admin.AdminService_UpdateDynamicConfig_Helper.WrapResponse(appErr)
+
+	var response thrift.Response
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+
+	return response, err
+}
+
+func (h handler) UpdateGlobalIsolationGroups(ctx context.Context, body wire.Value) (thrift.Response, error) {
+	var args admin.AdminService_UpdateGlobalIsolationGroups_Args
+	if err := args.FromWire(body); err != nil {
+		return thrift.Response{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode Thrift request for service 'AdminService' procedure 'UpdateGlobalIsolationGroups': %w", err)
+	}
+
+	success, appErr := h.impl.UpdateGlobalIsolationGroups(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_UpdateGlobalIsolationGroups_Helper.WrapResponse(success, appErr)
 
 	var response thrift.Response
 	if err == nil {
@@ -1296,6 +1672,43 @@ func (h closeshard_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.
 
 	hadError := appErr != nil
 	result, err := admin.AdminService_CloseShard_Helper.WrapResponse(appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
+type deleteworkflow_NoWireHandler struct{ impl Interface }
+
+func (h deleteworkflow_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args admin.AdminService_DeleteWorkflow_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'AdminService' procedure 'DeleteWorkflow': %w", err)
+	}
+
+	success, appErr := h.impl.DeleteWorkflow(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_DeleteWorkflow_Helper.WrapResponse(success, appErr)
 	response := thrift.NoWireResponse{ResponseWriter: rw}
 	if err == nil {
 		response.IsApplicationError = hadError
@@ -1573,6 +1986,80 @@ func (h getdlqreplicationmessages_NoWireHandler) HandleNoWire(ctx context.Contex
 
 }
 
+type getdomainasyncworkflowconfiguraton_NoWireHandler struct{ impl Interface }
+
+func (h getdomainasyncworkflowconfiguraton_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args admin.AdminService_GetDomainAsyncWorkflowConfiguraton_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'AdminService' procedure 'GetDomainAsyncWorkflowConfiguraton': %w", err)
+	}
+
+	success, appErr := h.impl.GetDomainAsyncWorkflowConfiguraton(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_GetDomainAsyncWorkflowConfiguraton_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
+type getdomainisolationgroups_NoWireHandler struct{ impl Interface }
+
+func (h getdomainisolationgroups_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args admin.AdminService_GetDomainIsolationGroups_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'AdminService' procedure 'GetDomainIsolationGroups': %w", err)
+	}
+
+	success, appErr := h.impl.GetDomainIsolationGroups(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_GetDomainIsolationGroups_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
 type getdomainreplicationmessages_NoWireHandler struct{ impl Interface }
 
 func (h getdomainreplicationmessages_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
@@ -1629,6 +2116,43 @@ func (h getdynamicconfig_NoWireHandler) HandleNoWire(ctx context.Context, nwc *t
 
 	hadError := appErr != nil
 	result, err := admin.AdminService_GetDynamicConfig_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
+type getglobalisolationgroups_NoWireHandler struct{ impl Interface }
+
+func (h getglobalisolationgroups_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args admin.AdminService_GetGlobalIsolationGroups_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'AdminService' procedure 'GetGlobalIsolationGroups': %w", err)
+	}
+
+	success, appErr := h.impl.GetGlobalIsolationGroups(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_GetGlobalIsolationGroups_Helper.WrapResponse(success, appErr)
 	response := thrift.NoWireResponse{ResponseWriter: rw}
 	if err == nil {
 		response.IsApplicationError = hadError
@@ -1740,6 +2264,43 @@ func (h listdynamicconfig_NoWireHandler) HandleNoWire(ctx context.Context, nwc *
 
 	hadError := appErr != nil
 	result, err := admin.AdminService_ListDynamicConfig_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
+type maintaincorruptworkflow_NoWireHandler struct{ impl Interface }
+
+func (h maintaincorruptworkflow_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args admin.AdminService_MaintainCorruptWorkflow_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'AdminService' procedure 'MaintainCorruptWorkflow': %w", err)
+	}
+
+	success, appErr := h.impl.MaintainCorruptWorkflow(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_MaintainCorruptWorkflow_Helper.WrapResponse(success, appErr)
 	response := thrift.NoWireResponse{ResponseWriter: rw}
 	if err == nil {
 		response.IsApplicationError = hadError
@@ -2128,6 +2689,80 @@ func (h restoredynamicconfig_NoWireHandler) HandleNoWire(ctx context.Context, nw
 
 }
 
+type updatedomainasyncworkflowconfiguraton_NoWireHandler struct{ impl Interface }
+
+func (h updatedomainasyncworkflowconfiguraton_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args admin.AdminService_UpdateDomainAsyncWorkflowConfiguraton_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'AdminService' procedure 'UpdateDomainAsyncWorkflowConfiguraton': %w", err)
+	}
+
+	success, appErr := h.impl.UpdateDomainAsyncWorkflowConfiguraton(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_UpdateDomainAsyncWorkflowConfiguraton_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
+type updatedomainisolationgroups_NoWireHandler struct{ impl Interface }
+
+func (h updatedomainisolationgroups_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args admin.AdminService_UpdateDomainIsolationGroups_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'AdminService' procedure 'UpdateDomainIsolationGroups': %w", err)
+	}
+
+	success, appErr := h.impl.UpdateDomainIsolationGroups(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_UpdateDomainIsolationGroups_Helper.WrapResponse(success, appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
 type updatedynamicconfig_NoWireHandler struct{ impl Interface }
 
 func (h updatedynamicconfig_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
@@ -2147,6 +2782,43 @@ func (h updatedynamicconfig_NoWireHandler) HandleNoWire(ctx context.Context, nwc
 
 	hadError := appErr != nil
 	result, err := admin.AdminService_UpdateDynamicConfig_Helper.WrapResponse(appErr)
+	response := thrift.NoWireResponse{ResponseWriter: rw}
+	if err == nil {
+		response.IsApplicationError = hadError
+		response.Body = result
+		if namer, ok := appErr.(yarpcErrorNamer); ok {
+			response.ApplicationErrorName = namer.YARPCErrorName()
+		}
+		if extractor, ok := appErr.(yarpcErrorCoder); ok {
+			response.ApplicationErrorCode = extractor.YARPCErrorCode()
+		}
+		if appErr != nil {
+			response.ApplicationErrorDetails = appErr.Error()
+		}
+	}
+	return response, err
+
+}
+
+type updateglobalisolationgroups_NoWireHandler struct{ impl Interface }
+
+func (h updateglobalisolationgroups_NoWireHandler) HandleNoWire(ctx context.Context, nwc *thrift.NoWireCall) (thrift.NoWireResponse, error) {
+	var (
+		args admin.AdminService_UpdateGlobalIsolationGroups_Args
+		rw   stream.ResponseWriter
+		err  error
+	)
+
+	rw, err = nwc.RequestReader.ReadRequest(ctx, nwc.EnvelopeType, nwc.Reader, &args)
+	if err != nil {
+		return thrift.NoWireResponse{}, yarpcerrors.InvalidArgumentErrorf(
+			"could not decode (via no wire) Thrift request for service 'AdminService' procedure 'UpdateGlobalIsolationGroups': %w", err)
+	}
+
+	success, appErr := h.impl.UpdateGlobalIsolationGroups(ctx, args.Request)
+
+	hadError := appErr != nil
+	result, err := admin.AdminService_UpdateGlobalIsolationGroups_Helper.WrapResponse(success, appErr)
 	response := thrift.NoWireResponse{ResponseWriter: rw}
 	if err == nil {
 		response.IsApplicationError = hadError

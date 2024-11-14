@@ -24,10 +24,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"time"
 
 	"github.com/uber-go/tally/m3"
 	"github.com/uber-go/tally/prometheus"
+	yarpctls "go.uber.org/yarpc/api/transport/tls"
+	"gopkg.in/yaml.v2" // CAUTION: go.uber.org/config does not support yaml.v3
 
 	"github.com/uber/cadence/common/dynamicconfig"
 	c "github.com/uber/cadence/common/dynamicconfig/configstore/config"
@@ -40,6 +43,8 @@ type (
 	Config struct {
 		// Ringpop is the ringpop related configuration
 		Ringpop ringpopprovider.Config `yaml:"ringpop"`
+		// Membership is used to configure peer provider plugin
+		Membership Membership `yaml:"membership"`
 		// Persistence contains the configuration for cadence datastores
 		Persistence Persistence `yaml:"persistence"`
 		// Log is the logging config
@@ -72,36 +77,32 @@ type (
 		Blobstore Blobstore `yaml:"blobstore"`
 		// Authorization is the config for setting up authorization
 		Authorization Authorization `yaml:"authorization"`
+		// HeaderForwardingRules defines which inbound headers to include or exclude on outbound calls
+		HeaderForwardingRules []HeaderRule `yaml:"headerForwardingRules"`
+		// Note: This is not implemented yet. It's coming in the next release.
+		// AsyncWorkflowQueues is the config for predefining async workflow queue(s)
+		// To use Async APIs for a domain first specify the queue using Admin API.
+		// Either refer to one of the predefined queues in this config or alternatively specify the queue details inline in the API call.
+		AsyncWorkflowQueues map[string]AsyncWorkflowQueueProvider `yaml:"asyncWorkflowQueues"`
 	}
 
-	Authorization struct {
-		OAuthAuthorizer OAuthAuthorizer `yaml:"oauthAuthorizer"`
-		NoopAuthorizer  NoopAuthorizer  `yaml:"noopAuthorizer"`
+	// Membership holds peer provider configuration.
+	Membership struct {
+		Provider PeerProvider `yaml:"provider"`
+	}
+
+	// PeerProvider is provider config. Contents depends on plugin in use
+	PeerProvider map[string]*YamlNode
+
+	HeaderRule struct {
+		Add   bool // if false, matching headers are removed if previously matched.
+		Match *regexp.Regexp
 	}
 
 	DynamicConfig struct {
 		Client      string                              `yaml:"client"`
 		ConfigStore c.ClientConfig                      `yaml:"configstore"`
 		FileBased   dynamicconfig.FileBasedClientConfig `yaml:"filebased"`
-	}
-
-	NoopAuthorizer struct {
-		Enable bool `yaml:"enable"`
-	}
-
-	OAuthAuthorizer struct {
-		Enable bool `yaml:"enable"`
-		// Credentials to verify/create the JWT
-		JwtCredentials JwtCredentials `yaml:"jwtCredentials"`
-		// Max of TTL in the claim
-		MaxJwtTTL int64 `yaml:"maxJwtTTL"`
-	}
-
-	JwtCredentials struct {
-		// support: RS256 (RSA using SHA256)
-		Algorithm string `yaml:"algorithm"`
-		// Public Key Path for verifying JWT token passed in from external clients
-		PublicKey string `yaml:"publicKey"`
 	}
 
 	// Service contains the service specific config items
@@ -118,14 +119,16 @@ type (
 	PProf struct {
 		// Port is the port on which the PProf will bind to
 		Port int `yaml:"port"`
+		// Host is the host on which the PProf will bind to, default to `localhost`
+		Host string `yaml:"host"`
 	}
 
 	// RPC contains the rpc config items
 	RPC struct {
 		// Port is the port  on which the Thrift TChannel will bind to
-		Port int `yaml:"port"`
+		Port uint16 `yaml:"port"`
 		// GRPCPort is the port on which the grpc listener will bind to
-		GRPCPort int `yaml:"grpcPort"`
+		GRPCPort uint16 `yaml:"grpcPort"`
 		// BindOnLocalHost is true if localhost is the bind address
 		BindOnLocalHost bool `yaml:"bindOnLocalHost"`
 		// BindOnIP can be used to bind service on specific ip (eg. `0.0.0.0`) -
@@ -140,6 +143,21 @@ type (
 		GRPCMaxMsgSize int `yaml:"grpcMaxMsgSize"`
 		// TLS allows configuring optional TLS/SSL authentication on the server (only on gRPC port)
 		TLS TLS `yaml:"tls"`
+		// HTTP keeps configuration for exposed HTTP API
+		HTTP *HTTP `yaml:"http"`
+	}
+
+	// HTTP API configuration
+	HTTP struct {
+		// Port for listening HTTP requests
+		Port uint16 `yaml:"port"`
+		// List of RPC procedures available to call using HTTP
+		Procedures []string `yaml:"procedures"`
+		// TLS allows configuring TLS/SSL for HTTP requests
+		TLS TLS `yaml:"tls"`
+		// Mode represents the TLS mode of the transport.
+		// Available modes: disabled, permissive, enforced
+		TLSMode yarpctls.Mode `yaml:"TLSMode"`
 	}
 
 	// Blobstore contains the config for blobstore
@@ -164,6 +182,7 @@ type (
 		AdvancedVisibilityStore string `yaml:"advancedVisibilityStore"`
 		// HistoryMaxConns is the desired number of conns to history store. Value specified
 		// here overrides the MaxConns config specified as part of datastore
+		// Deprecated: This value is not used
 		HistoryMaxConns int `yaml:"historyMaxConns"`
 		// EnablePersistenceLatencyHistogramMetrics is to enable latency histogram metrics for persistence layer
 		EnablePersistenceLatencyHistogramMetrics bool `yaml:"enablePersistenceLatencyHistogramMetrics"`
@@ -190,8 +209,12 @@ type (
 		SQL *SQL `yaml:"sql"`
 		// NoSQL contains the config for a NoSQL based datastore
 		NoSQL *NoSQL `yaml:"nosql"`
+		// ShardedNoSQL contains the config for a collection of NoSQL datastores that are used as a single datastore
+		ShardedNoSQL *ShardedNoSQL `yaml:"shardedNosql"`
 		// ElasticSearch contains the config for a ElasticSearch datastore
 		ElasticSearch *ElasticSearchConfig `yaml:"elasticsearch"`
+		// Pinot contains the config for a Pinot datastore
+		Pinot *PinotVisibilityConfig `yaml:"pinot"`
 	}
 
 	// Cassandra contains configuration to connect to Cassandra cluster
@@ -224,11 +247,60 @@ type (
 		TLS *TLS `yaml:"tls"`
 		// ProtoVersion
 		ProtoVersion int `yaml:"protoVersion"`
+		// ConnectTimeout defines duration for initial dial
+		ConnectTimeout time.Duration `yaml:"connectTimeout"`
+		// Timout is a connection timeout
+		Timeout time.Duration `yaml:"timeout"`
+		// Consistency defines default consistency level
+		Consistency string `yaml:"consistency"`
+		// SerialConsistency sets the consistency for the serial part of queries
+		SerialConsistency string `yaml:"serialConsistency"`
 		// ConnectAttributes is a set of key-value attributes as a supplement/extension to the above common fields
 		// Use it ONLY when a configure is too specific to a particular NoSQL database that should not be in the common struct
 		// Otherwise please add new fields to the struct for better documentation
 		// If being used in any database, update this comment here to make it clear
 		ConnectAttributes map[string]string `yaml:"connectAttributes"`
+	}
+
+	// ShardedNoSQL contains configuration to connect to a set of NoSQL Database clusters in a sharded manner
+	ShardedNoSQL struct {
+		// DefaultShard is the DB shard where the non-sharded tables (ie. cluster metadata) are stored
+		DefaultShard string `yaml:"defaultShard"`
+		// ShardingPolicy is the configuration for the sharding strategy used
+		ShardingPolicy ShardingPolicy `yaml:"shardingPolicy"`
+		// Connections is the collection of NoSQL DB plugins that are used to connect to the shard
+		Connections map[string]DBShardConnection `yaml:"connections"`
+	}
+
+	// ShardingPolicy contains configuration for physical DB sharding
+	ShardingPolicy struct {
+		// HistoryShardMapping defines the ranges of history shards stored by each DB shard. Ranges listed here *MUST*
+		// be continuous and non-overlapping, such that the first range in the list starts from Shard 0, each following
+		// range starts with <prevRange.End> + 1, and the last range ends with <NumHistoryHosts>-1.
+		HistoryShardMapping []HistoryShardRange `yaml:"historyShardMapping"`
+		// TaskListHashing defines the parameters needed for shard ownership calculation based on hashing
+		TaskListHashing TasklistHashing `yaml:"taskListHashing"`
+	}
+
+	// HistoryShardRange contains configuration for one NoSQL DB Shard
+	HistoryShardRange struct {
+		// Start defines the inclusive lower bound for the history shard range
+		Start int `yaml:"start"`
+		// End defines the exclusive upper bound for the history shard range
+		End int `yaml:"end"`
+		// Shard defines the shard that owns this range
+		Shard string `yaml:"shard"`
+	}
+
+	TasklistHashing struct {
+		// ShardOrder defines the order of shards to be used when hashing tasklists to shards
+		ShardOrder []string `yaml:"shardOrder"`
+	}
+
+	// DBShardConnection contains configuration for one NoSQL DB Shard
+	DBShardConnection struct {
+		// NoSQLPlugin is the NoSQL plugin used for connecting to the DB shard
+		NoSQLPlugin *NoSQL `yaml:"nosqlPlugin"`
 	}
 
 	// SQL is the configuration for connecting to a SQL backed datastore
@@ -343,12 +415,15 @@ type (
 		// 6. QueryWorkflow
 		// 7. ResetWorkflow
 		//
-		// Both "selected-apis-forwarding" and "all-domain-apis-forwarding" can work with EnableDomainNotActiveAutoForwarding dynamicconfig to select certain domains using the policy.
+		// 4) "selected-apis-forwarding-v2" will forward all of "selected-apis-forwarding", and also activity responses
+		// and heartbeats, but not other worker APIs.
 		//
-		// Usage recommendation: when enabling XDC(global domain) feature, either "all-domain-apis-forwarding" or "selected-apis-forwarding" should be used to ensure seamless domain failover(high availability)
-		// Depending on the cost of cross cluster calls :
+		// "selected-apis-forwarding(-v2)" and "all-domain-apis-forwarding" can work with EnableDomainNotActiveAutoForwarding dynamicconfig to select certain domains using the policy.
 		//
-		// 1) If the network communication overhead is high(e.g., clusters are in remote datacenters of different region), then should use "selected-apis-forwarding".
+		// Usage recommendation: when enabling XDC(global domain) feature, either "all-domain-apis-forwarding" or "selected-apis-forwarding(-v2)" should be used to ensure seamless domain failover(high availability)
+		// Depending on the cost of cross cluster calls:
+		//
+		// 1) If the network communication overhead is high(e.g., clusters are in remote datacenters of different region), then should use "selected-apis-forwarding(-v2)".
 		// But you must ensure a different set of workers with the same workflow & activity code are connected to each Cadence cluster.
 		//
 		// 2) If the network communication overhead is low (e.g. in the same datacenter, mostly for cluster migration usage), then you can use "all-domain-apis-forwarding". Then only one set of
@@ -416,15 +491,22 @@ type (
 		// EnableRead whether history can be read from archival
 		EnableRead bool `yaml:"enableRead"`
 		// Provider contains the config for all history archivers
-		Provider *HistoryArchiverProvider `yaml:"provider"`
+		Provider HistoryArchiverProvider `yaml:"provider"`
 	}
 
-	// HistoryArchiverProvider contains the config for all history archivers
-	HistoryArchiverProvider struct {
-		Filestore *FilestoreArchiver `yaml:"filestore"`
-		Gstorage  *GstorageArchiver  `yaml:"gstorage"`
-		S3store   *S3Archiver        `yaml:"s3store"`
-	}
+	// HistoryArchiverProvider contains the config for all history archivers.
+	//
+	// Because archivers support external plugins, so there is no fundamental structure expected,
+	// but a top-level key per named store plugin is required, and will be used to select the
+	// config for a plugin as it is initialized.
+	//
+	// Config keys and structures expected in the main default binary include:
+	//  - FilestoreConfig: [*FilestoreArchiver], used with provider scheme [github.com/uber/cadence/common/archiver/filestore.URIScheme]
+	//  - S3storeConfig: [*S3Archiver], used with provider scheme [github.com/uber/cadence/common/archiver/s3store.URIScheme]
+	//  - "gstorage" via [github.com/uber/cadence/common/archiver/gcloud.ConfigKey]: [github.com/uber/cadence/common/archiver/gcloud.Config], used with provider scheme "gs" [github.com/uber/cadence/common/archiver/gcloud.URIScheme]
+	//
+	// For handling hardcoded config, see ToYamlNode.
+	HistoryArchiverProvider map[string]*YamlNode
 
 	// VisibilityArchival contains the config for visibility archival
 	VisibilityArchival struct {
@@ -433,25 +515,27 @@ type (
 		// EnableRead whether visibility can be read from archival
 		EnableRead bool `yaml:"enableRead"`
 		// Provider contains the config for all visibility archivers
-		Provider *VisibilityArchiverProvider `yaml:"provider"`
+		Provider VisibilityArchiverProvider `yaml:"provider"`
 	}
 
-	// VisibilityArchiverProvider contains the config for all visibility archivers
-	VisibilityArchiverProvider struct {
-		Filestore *FilestoreArchiver `yaml:"filestore"`
-		S3store   *S3Archiver        `yaml:"s3store"`
-		Gstorage  *GstorageArchiver  `yaml:"gstorage"`
-	}
+	// VisibilityArchiverProvider contains the config for all visibility archivers.
+	//
+	// Because archivers support external plugins, so there is no fundamental structure expected,
+	// but a top-level key per named store plugin is required, and will be used to select the
+	// config for a plugin as it is initialized.
+	//
+	// Config keys and structures expected in the main default binary include:
+	//  - FilestoreConfig: [*FilestoreArchiver], used with provider scheme [github.com/uber/cadence/common/archiver/filestore.URIScheme]
+	//  - S3storeConfig: [*S3Archiver], used with provider scheme [github.com/uber/cadence/common/archiver/s3store.URIScheme]
+	//  - "gstorage" via [github.com/uber/cadence/common/archiver/gcloud.ConfigKey]: [github.com/uber/cadence/common/archiver/gcloud.Config], used with provider scheme "gs" [github.com/uber/cadence/common/archiver/gcloud.URIScheme]
+	//
+	// For handling hardcoded config, see ToYamlNode.
+	VisibilityArchiverProvider map[string]*YamlNode
 
 	// FilestoreArchiver contain the config for filestore archiver
 	FilestoreArchiver struct {
 		FileMode string `yaml:"fileMode"`
 		DirMode  string `yaml:"dirMode"`
-	}
-
-	// GstorageArchiver contain the config for google storage archiver
-	GstorageArchiver struct {
-		CredentialsPath string `yaml:"credentialsPath"`
 	}
 
 	// S3Archiver contains the config for S3 archiver
@@ -504,7 +588,71 @@ type (
 		// URI is the domain default URI for visibility archiver
 		URI string `yaml:"URI"`
 	}
+
+	// YamlNode is a lazy-unmarshaler, because *yaml.Node only exists in gopkg.in/yaml.v3, not v2,
+	// and go.uber.org/config currently uses only v2.
+	YamlNode struct {
+		unmarshal func(out any) error
+	}
+
+	// AsyncWorkflowQueueProvider contains the config for an async workflow queue.
+	// Type is the implementation type of the queue provider.
+	// Config is the configuration for the queue provider.
+	// Config types and structures expected in the main default binary include:
+	// - type: "kafka", config: [*github.com/uber/cadence/common/asyncworkflow/queue/kafka.QueueConfig]]]
+	AsyncWorkflowQueueProvider struct {
+		Type   string    `yaml:"type"`
+		Config *YamlNode `yaml:"config"`
+	}
 )
+
+const (
+	// NonShardedStoreName is the shard name used for singular (non-sharded) stores
+	NonShardedStoreName = "NonShardedStore"
+
+	FilestoreConfig = "filestore"
+	S3storeConfig   = "s3store"
+)
+
+var _ yaml.Unmarshaler = (*YamlNode)(nil)
+
+func (y *YamlNode) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	y.unmarshal = unmarshal
+	return nil
+}
+
+func (y *YamlNode) Decode(out any) error {
+	return y.unmarshal(out)
+}
+
+// ToYamlNode is a bit of a hack to get a *yaml.Node for config-parsing compatibility purposes.
+// There is probably a better way to achieve this with yaml-loading compatibility, but this is at least fairly simple.
+func ToYamlNode(input any) (*YamlNode, error) {
+	data, err := yaml.Marshal(input)
+	if err != nil {
+		// should be extremely unlikely, unless yaml marshaling is customized
+		return nil, fmt.Errorf("could not serialize data to yaml: %w", err)
+	}
+	var out *YamlNode
+	err = yaml.Unmarshal(data, &out)
+	if err != nil {
+		// should not be possible
+		return nil, fmt.Errorf("could not deserialize to yaml node: %w", err)
+	}
+	return out, nil
+}
+
+func (n *NoSQL) ConvertToShardedNoSQLConfig() *ShardedNoSQL {
+	connections := make(map[string]DBShardConnection)
+	connections[NonShardedStoreName] = DBShardConnection{
+		NoSQLPlugin: n,
+	}
+
+	return &ShardedNoSQL{
+		DefaultShard: NonShardedStoreName,
+		Connections:  connections,
+	}
+}
 
 // ValidateAndFillDefaults validates this config and fills default values if needed
 func (c *Config) ValidateAndFillDefaults() error {

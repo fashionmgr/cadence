@@ -39,8 +39,6 @@ type (
 		useTx         bool       // if tx is not nil, the methods from commonOfDbAndTx should use tx
 		currTxShardID int        // which shard is current tx started from
 	}
-
-	shardedSqlExecResult struct{}
 )
 
 // newShardedSQLDriver returns a driver querying a group of SQL databases as sharded solution.
@@ -164,6 +162,6 @@ func (s *sharded) Rollback() error {
 	return s.tx.Rollback()
 }
 
-func getUnmatchedTxnError(requestShardID, startedShardId int) error {
-	return fmt.Errorf("requested dbShardID %v doesn't match with started transaction shardID %v, must be a bug", requestShardID, startedShardId)
+func getUnmatchedTxnError(requestShardID, startedShardID int) error {
+	return fmt.Errorf("requested dbShardID %v doesn't match with started transaction shardID %v, must be a bug", requestShardID, startedShardID)
 }

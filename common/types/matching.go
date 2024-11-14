@@ -28,14 +28,16 @@ import (
 
 // AddActivityTaskRequest is an internal type (TBD...)
 type AddActivityTaskRequest struct {
-	DomainUUID                    string             `json:"domainUUID,omitempty"`
-	Execution                     *WorkflowExecution `json:"execution,omitempty"`
-	SourceDomainUUID              string             `json:"sourceDomainUUID,omitempty"`
-	TaskList                      *TaskList          `json:"taskList,omitempty"`
-	ScheduleID                    int64              `json:"scheduleId,omitempty"`
-	ScheduleToStartTimeoutSeconds *int32             `json:"scheduleToStartTimeoutSeconds,omitempty"`
-	Source                        *TaskSource        `json:"source,omitempty"`
-	ForwardedFrom                 string             `json:"forwardedFrom,omitempty"`
+	DomainUUID                    string                    `json:"domainUUID,omitempty"`
+	Execution                     *WorkflowExecution        `json:"execution,omitempty"`
+	SourceDomainUUID              string                    `json:"sourceDomainUUID,omitempty"`
+	TaskList                      *TaskList                 `json:"taskList,omitempty"`
+	ScheduleID                    int64                     `json:"scheduleId,omitempty"`
+	ScheduleToStartTimeoutSeconds *int32                    `json:"scheduleToStartTimeoutSeconds,omitempty"`
+	Source                        *TaskSource               `json:"source,omitempty"`
+	ForwardedFrom                 string                    `json:"forwardedFrom,omitempty"`
+	ActivityTaskDispatchInfo      *ActivityTaskDispatchInfo `json:"activityTaskDispatchInfo,omitempty"`
+	PartitionConfig               map[string]string
 }
 
 // GetDomainUUID is an internal getter (TBD...)
@@ -102,6 +104,25 @@ func (v *AddActivityTaskRequest) GetForwardedFrom() (o string) {
 	return
 }
 
+// GetPartitionConfig is an internal getter (TBD...)
+func (v *AddActivityTaskRequest) GetPartitionConfig() (o map[string]string) {
+	if v != nil && v.PartitionConfig != nil {
+		return v.PartitionConfig
+	}
+	return
+}
+
+// ActivityTaskDispatchInfo is an internal type (TBD...)
+type ActivityTaskDispatchInfo struct {
+	ScheduledEvent                  *HistoryEvent `json:"scheduledEvent,omitempty"`
+	StartedTimestamp                *int64        `json:"startedTimestamp,omitempty"`
+	Attempt                         *int64        `json:"attempt,omitempty"`
+	ScheduledTimestampOfThisAttempt *int64        `json:"scheduledTimestampOfThisAttempt,omitempty"`
+	HeartbeatDetails                []byte        `json:"heartbeatDetails,omitempty"`
+	WorkflowType                    *WorkflowType `json:"workflowType,omitempty"`
+	WorkflowDomain                  string        `json:"workflowDomain,omitempty"`
+}
+
 // AddDecisionTaskRequest is an internal type (TBD...)
 type AddDecisionTaskRequest struct {
 	DomainUUID                    string             `json:"domainUUID,omitempty"`
@@ -111,6 +132,7 @@ type AddDecisionTaskRequest struct {
 	ScheduleToStartTimeoutSeconds *int32             `json:"scheduleToStartTimeoutSeconds,omitempty"`
 	Source                        *TaskSource        `json:"source,omitempty"`
 	ForwardedFrom                 string             `json:"forwardedFrom,omitempty"`
+	PartitionConfig               map[string]string
 }
 
 // GetDomainUUID is an internal getter (TBD...)
@@ -167,6 +189,22 @@ func (v *AddDecisionTaskRequest) GetForwardedFrom() (o string) {
 		return v.ForwardedFrom
 	}
 	return
+}
+
+// GetPartitionConfig is an internal getter (TBD...)
+func (v *AddDecisionTaskRequest) GetPartitionConfig() (o map[string]string) {
+	if v != nil && v.PartitionConfig != nil {
+		return v.PartitionConfig
+	}
+	return
+}
+
+type AddActivityTaskResponse struct {
+	PartitionConfig *TaskListPartitionConfig
+}
+
+type AddDecisionTaskResponse struct {
+	PartitionConfig *TaskListPartitionConfig
 }
 
 // CancelOutstandingPollRequest is an internal type (TBD...)
@@ -268,10 +306,11 @@ func (v *MatchingGetTaskListsByDomainRequest) GetDomain() (o string) {
 
 // MatchingPollForActivityTaskRequest is an internal type (TBD...)
 type MatchingPollForActivityTaskRequest struct {
-	DomainUUID    string                      `json:"domainUUID,omitempty"`
-	PollerID      string                      `json:"pollerID,omitempty"`
-	PollRequest   *PollForActivityTaskRequest `json:"pollRequest,omitempty"`
-	ForwardedFrom string                      `json:"forwardedFrom,omitempty"`
+	DomainUUID     string                      `json:"domainUUID,omitempty"`
+	PollerID       string                      `json:"pollerID,omitempty"`
+	PollRequest    *PollForActivityTaskRequest `json:"pollRequest,omitempty"`
+	ForwardedFrom  string                      `json:"forwardedFrom,omitempty"`
+	IsolationGroup string
 }
 
 // GetDomainUUID is an internal getter (TBD...)
@@ -298,6 +337,14 @@ func (v *MatchingPollForActivityTaskRequest) GetPollRequest() (o *PollForActivit
 	return
 }
 
+// GetTaskList is an internal getter.
+func (v *MatchingPollForActivityTaskRequest) GetTaskList() (o *TaskList) {
+	if v != nil && v.PollRequest != nil {
+		return v.PollRequest.TaskList
+	}
+	return
+}
+
 // GetForwardedFrom is an internal getter (TBD...)
 func (v *MatchingPollForActivityTaskRequest) GetForwardedFrom() (o string) {
 	if v != nil {
@@ -306,12 +353,21 @@ func (v *MatchingPollForActivityTaskRequest) GetForwardedFrom() (o string) {
 	return
 }
 
+// GetIsolatioonGroup is an internal getter (TBD...)
+func (v *MatchingPollForActivityTaskRequest) GetIsolationGroup() (o string) {
+	if v != nil {
+		return v.IsolationGroup
+	}
+	return
+}
+
 // MatchingPollForDecisionTaskRequest is an internal type (TBD...)
 type MatchingPollForDecisionTaskRequest struct {
-	DomainUUID    string                      `json:"domainUUID,omitempty"`
-	PollerID      string                      `json:"pollerID,omitempty"`
-	PollRequest   *PollForDecisionTaskRequest `json:"pollRequest,omitempty"`
-	ForwardedFrom string                      `json:"forwardedFrom,omitempty"`
+	DomainUUID     string                      `json:"domainUUID,omitempty"`
+	PollerID       string                      `json:"pollerID,omitempty"`
+	PollRequest    *PollForDecisionTaskRequest `json:"pollRequest,omitempty"`
+	ForwardedFrom  string                      `json:"forwardedFrom,omitempty"`
+	IsolationGroup string
 }
 
 // GetDomainUUID is an internal getter (TBD...)
@@ -338,12 +394,34 @@ func (v *MatchingPollForDecisionTaskRequest) GetPollRequest() (o *PollForDecisio
 	return
 }
 
+// GetTaskList is an internal getter.
+func (v *MatchingPollForDecisionTaskRequest) GetTaskList() (o *TaskList) {
+	if v != nil && v.PollRequest != nil {
+		return v.PollRequest.TaskList
+	}
+	return
+}
+
 // GetForwardedFrom is an internal getter (TBD...)
 func (v *MatchingPollForDecisionTaskRequest) GetForwardedFrom() (o string) {
 	if v != nil {
 		return v.ForwardedFrom
 	}
 	return
+}
+
+// GetIsolatioonGroup is an internal getter (TBD...)
+func (v *MatchingPollForDecisionTaskRequest) GetIsolationGroup() (o string) {
+	if v != nil {
+		return v.IsolationGroup
+	}
+	return
+}
+
+type TaskListPartitionConfig struct {
+	Version            int64
+	NumReadPartitions  int32
+	NumWritePartitions int32
 }
 
 // MatchingPollForDecisionTaskResponse is an internal type (TBD...)
@@ -365,28 +443,14 @@ type MatchingPollForDecisionTaskResponse struct {
 	ScheduledTimestamp        *int64                    `json:"scheduledTimestamp,omitempty"`
 	StartedTimestamp          *int64                    `json:"startedTimestamp,omitempty"`
 	Queries                   map[string]*WorkflowQuery `json:"queries,omitempty"`
-}
-
-// GetTaskToken is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetTaskToken() (o []byte) {
-	if v != nil && v.TaskToken != nil {
-		return v.TaskToken
-	}
-	return
+	TotalHistoryBytes         int64                     `json:"currentHistorySize,omitempty"`
+	PartitionConfig           *TaskListPartitionConfig
 }
 
 // GetWorkflowExecution is an internal getter (TBD...)
 func (v *MatchingPollForDecisionTaskResponse) GetWorkflowExecution() (o *WorkflowExecution) {
 	if v != nil && v.WorkflowExecution != nil {
 		return v.WorkflowExecution
-	}
-	return
-}
-
-// GetWorkflowType is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetWorkflowType() (o *WorkflowType) {
-	if v != nil && v.WorkflowType != nil {
-		return v.WorkflowType
 	}
 	return
 }
@@ -399,34 +463,10 @@ func (v *MatchingPollForDecisionTaskResponse) GetPreviousStartedEventID() (o int
 	return
 }
 
-// GetStartedEventID is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetStartedEventID() (o int64) {
-	if v != nil {
-		return v.StartedEventID
-	}
-	return
-}
-
-// GetAttempt is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetAttempt() (o int64) {
-	if v != nil {
-		return v.Attempt
-	}
-	return
-}
-
 // GetNextEventID is an internal getter (TBD...)
 func (v *MatchingPollForDecisionTaskResponse) GetNextEventID() (o int64) {
 	if v != nil {
 		return v.NextEventID
-	}
-	return
-}
-
-// GetBacklogCountHint is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetBacklogCountHint() (o int64) {
-	if v != nil {
-		return v.BacklogCountHint
 	}
 	return
 }
@@ -439,38 +479,6 @@ func (v *MatchingPollForDecisionTaskResponse) GetStickyExecutionEnabled() (o boo
 	return
 }
 
-// GetQuery is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetQuery() (o *WorkflowQuery) {
-	if v != nil && v.Query != nil {
-		return v.Query
-	}
-	return
-}
-
-// GetDecisionInfo is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetDecisionInfo() (o *TransientDecisionInfo) {
-	if v != nil && v.DecisionInfo != nil {
-		return v.DecisionInfo
-	}
-	return
-}
-
-// GetWorkflowExecutionTaskList is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetWorkflowExecutionTaskList() (o *TaskList) {
-	if v != nil && v.WorkflowExecutionTaskList != nil {
-		return v.WorkflowExecutionTaskList
-	}
-	return
-}
-
-// GetEventStoreVersion is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetEventStoreVersion() (o int32) {
-	if v != nil {
-		return v.EventStoreVersion
-	}
-	return
-}
-
 // GetBranchToken is an internal getter (TBD...)
 func (v *MatchingPollForDecisionTaskResponse) GetBranchToken() (o []byte) {
 	if v != nil && v.BranchToken != nil {
@@ -479,28 +487,33 @@ func (v *MatchingPollForDecisionTaskResponse) GetBranchToken() (o []byte) {
 	return
 }
 
-// GetScheduledTimestamp is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetScheduledTimestamp() (o int64) {
-	if v != nil && v.ScheduledTimestamp != nil {
-		return *v.ScheduledTimestamp
+// GetTotalHistoryBytes is an internal getter of returning the history size in bytes
+func (v *MatchingPollForDecisionTaskResponse) GetTotalHistoryBytes() (o int64) {
+	if v != nil {
+		return v.TotalHistoryBytes
 	}
 	return
 }
 
-// GetStartedTimestamp is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetStartedTimestamp() (o int64) {
-	if v != nil && v.StartedTimestamp != nil {
-		return *v.StartedTimestamp
-	}
-	return
-}
-
-// GetQueries is an internal getter (TBD...)
-func (v *MatchingPollForDecisionTaskResponse) GetQueries() (o map[string]*WorkflowQuery) {
-	if v != nil && v.Queries != nil {
-		return v.Queries
-	}
-	return
+type MatchingPollForActivityTaskResponse struct {
+	TaskToken                       []byte             `json:"taskToken,omitempty"`
+	WorkflowExecution               *WorkflowExecution `json:"workflowExecution,omitempty"`
+	ActivityID                      string             `json:"activityId,omitempty"`
+	ActivityType                    *ActivityType      `json:"activityType,omitempty"`
+	Input                           []byte             `json:"input,omitempty"`
+	ScheduledTimestamp              *int64             `json:"scheduledTimestamp,omitempty"`
+	ScheduleToCloseTimeoutSeconds   *int32             `json:"scheduleToCloseTimeoutSeconds,omitempty"`
+	StartedTimestamp                *int64             `json:"startedTimestamp,omitempty"`
+	StartToCloseTimeoutSeconds      *int32             `json:"startToCloseTimeoutSeconds,omitempty"`
+	HeartbeatTimeoutSeconds         *int32             `json:"heartbeatTimeoutSeconds,omitempty"`
+	Attempt                         int32              `json:"attempt,omitempty"`
+	ScheduledTimestampOfThisAttempt *int64             `json:"scheduledTimestampOfThisAttempt,omitempty"`
+	HeartbeatDetails                []byte             `json:"heartbeatDetails,omitempty"`
+	WorkflowType                    *WorkflowType      `json:"workflowType,omitempty"`
+	WorkflowDomain                  string             `json:"workflowDomain,omitempty"`
+	Header                          *Header            `json:"header,omitempty"`
+	BacklogCountHint                int64              `json:"backlogCountHint,omitempty"`
+	PartitionConfig                 *TaskListPartitionConfig
 }
 
 // MatchingQueryWorkflowRequest is an internal type (TBD...)

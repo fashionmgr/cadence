@@ -131,6 +131,12 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) (*history.QueryWorkflowResponse, error)
 
+	RatelimitUpdate(
+		ctx context.Context,
+		Request *history.RatelimitUpdateRequest,
+		opts ...yarpc.CallOption,
+	) (*history.RatelimitUpdateResponse, error)
+
 	ReadDLQMessages(
 		ctx context.Context,
 		Request *replicator.ReadDLQMessagesRequest,
@@ -296,7 +302,7 @@ type Interface interface {
 
 // New builds a new client for the HistoryService service.
 //
-// 	client := historyserviceclient.New(dispatcher.ClientConfig("historyservice"))
+//	client := historyserviceclient.New(dispatcher.ClientConfig("historyservice"))
 func New(c transport.ClientConfig, opts ...thrift.ClientOption) Interface {
 	return client{
 		c: thrift.New(thrift.Config{
@@ -740,6 +746,34 @@ func (c client) QueryWorkflow(
 	}
 
 	success, err = history.HistoryService_QueryWorkflow_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) RatelimitUpdate(
+	ctx context.Context,
+	_Request *history.RatelimitUpdateRequest,
+	opts ...yarpc.CallOption,
+) (success *history.RatelimitUpdateResponse, err error) {
+
+	var result history.HistoryService_RatelimitUpdate_Result
+	args := history.HistoryService_RatelimitUpdate_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = history.HistoryService_RatelimitUpdate_Helper.UnwrapResponse(&result)
 	return
 }
 

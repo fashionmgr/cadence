@@ -22,6 +22,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/uber/cadence/common"
@@ -50,7 +51,7 @@ type (
 func NewTransferStandbyTaskExecutor(
 	shard shard.Context,
 	archiverClient archiver.Client,
-	executionCache *execution.Cache,
+	executionCache execution.Cache,
 	historyResender ndc.HistoryResender,
 	logger log.Logger,
 	clusterName string,
@@ -73,7 +74,6 @@ func (t *transferStandbyTaskExecutor) Execute(
 	task Task,
 	shouldProcessTask bool,
 ) error {
-
 	transferTask, ok := task.GetInfo().(*persistence.TransferTaskInfo)
 	if !ok {
 		return errUnexpectedTask
@@ -118,6 +118,9 @@ func (t *transferStandbyTaskExecutor) Execute(
 	}
 }
 
+// Empty func for now
+func (t *transferStandbyTaskExecutor) Stop() {}
+
 func (t *transferStandbyTaskExecutor) processActivityTask(
 	ctx context.Context,
 	transferTask *persistence.TransferTaskInfo,
@@ -139,6 +142,7 @@ func (t *transferStandbyTaskExecutor) processActivityTask(
 		if activityInfo.StartedID == common.EmptyEventID {
 			return newPushActivityToMatchingInfo(
 				activityInfo.ScheduleToStartTimeout,
+				mutableState.GetExecutionInfo().PartitionConfig,
 			), nil
 		}
 
@@ -177,6 +181,12 @@ func (t *transferStandbyTaskExecutor) processDecisionTask(
 		executionInfo := mutableState.GetExecutionInfo()
 		workflowTimeout := executionInfo.WorkflowTimeout
 		decisionTimeout := common.MinInt32(workflowTimeout, common.MaxTaskTimeout)
+		if executionInfo.TaskList != transferTask.TaskList {
+			// Experimental: try to push sticky task as regular task with sticky timeout as TTL.
+			// workflow might be sticky before namespace become standby
+			// there shall already be a schedule_to_start timer created
+			decisionTimeout = executionInfo.StickyScheduleToStartTimeout
+		}
 
 		ok, err := verifyTaskVersion(t.shard, t.logger, transferTask.DomainID, decisionInfo.Version, transferTask.Version, transferTask)
 		if err != nil || !ok {
@@ -186,7 +196,8 @@ func (t *transferStandbyTaskExecutor) processDecisionTask(
 		if decisionInfo.StartedID == common.EmptyEventID {
 			return newPushDecisionToMatchingInfo(
 				decisionTimeout,
-				types.TaskList{Name: transferTask.TaskList},
+				types.TaskList{Name: executionInfo.TaskList}, // at standby, always use non-sticky tasklist
+				mutableState.GetExecutionInfo().PartitionConfig,
 			), nil
 		}
 
@@ -241,7 +252,9 @@ func (t *transferStandbyTaskExecutor) processCloseExecution(
 		workflowExecutionTimestamp := getWorkflowExecutionTimestamp(mutableState, startEvent)
 		visibilityMemo := getWorkflowMemo(executionInfo.Memo)
 		searchAttr := executionInfo.SearchAttributes
+		headers := getWorkflowHeaders(startEvent)
 		isCron := len(executionInfo.CronSchedule) > 0
+		updateTimestamp := t.shard.GetTimeSource().Now()
 
 		lastWriteVersion, err := mutableState.GetLastWriteVersion()
 		if err != nil {
@@ -276,7 +289,9 @@ func (t *transferStandbyTaskExecutor) processCloseExecution(
 			executionInfo.TaskList,
 			isCron,
 			numClusters,
+			updateTimestamp.UnixNano(),
 			searchAttr,
+			headers,
 		)
 	}
 
@@ -445,6 +460,8 @@ func (t *transferStandbyTaskExecutor) processRecordWorkflowStartedOrUpsertHelper
 	isRecordStart bool,
 ) error {
 
+	workflowStartedScope := getOrCreateDomainTaggedScope(t.shard, metrics.TransferStandbyTaskRecordWorkflowStartedScope, transferTask.DomainID, t.logger)
+
 	// verify task version for RecordWorkflowStarted.
 	// upsert doesn't require verifyTask, because it is just a sync of mutableState.
 	if isRecordStart {
@@ -468,8 +485,8 @@ func (t *transferStandbyTaskExecutor) processRecordWorkflowStartedOrUpsertHelper
 	startTimestamp := startEvent.GetTimestamp()
 	executionTimestamp := getWorkflowExecutionTimestamp(mutableState, startEvent)
 	visibilityMemo := getWorkflowMemo(executionInfo.Memo)
-	searchAttr := copySearchAttributes(executionInfo.SearchAttributes)
 	isCron := len(executionInfo.CronSchedule) > 0
+	updateTimestamp := t.shard.GetTimeSource().Now()
 
 	domainEntry, err := t.shard.GetDomainCache().GetDomainByID(transferTask.DomainID)
 	if err != nil {
@@ -477,7 +494,11 @@ func (t *transferStandbyTaskExecutor) processRecordWorkflowStartedOrUpsertHelper
 	}
 	numClusters := (int16)(len(domainEntry.GetReplicationConfig().Clusters))
 
+	searchAttr := copySearchAttributes(executionInfo.SearchAttributes)
+	headers := getWorkflowHeaders(startEvent)
+
 	if isRecordStart {
+		workflowStartedScope.IncCounter(metrics.WorkflowStartedCount)
 		return t.recordWorkflowStarted(
 			ctx,
 			transferTask.DomainID,
@@ -492,7 +513,9 @@ func (t *transferStandbyTaskExecutor) processRecordWorkflowStartedOrUpsertHelper
 			isCron,
 			numClusters,
 			visibilityMemo,
+			updateTimestamp.UnixNano(),
 			searchAttr,
+			headers,
 		)
 	}
 	return t.upsertWorkflowExecution(
@@ -509,7 +532,9 @@ func (t *transferStandbyTaskExecutor) processRecordWorkflowStartedOrUpsertHelper
 		visibilityMemo,
 		isCron,
 		numClusters,
+		updateTimestamp.UnixNano(),
 		searchAttr,
+		headers,
 	)
 
 }
@@ -535,7 +560,7 @@ func (t *transferStandbyTaskExecutor) processTransfer(
 		return err
 	}
 	defer func() {
-		if retError == ErrTaskRedispatch {
+		if isRedispatchErr(err) {
 			release(nil)
 		} else {
 			release(retError)
@@ -578,6 +603,7 @@ func (t *transferStandbyTaskExecutor) pushActivity(
 		ctx,
 		task.(*persistence.TransferTaskInfo),
 		timeout,
+		pushActivityInfo.partitionConfig,
 	)
 }
 
@@ -599,6 +625,7 @@ func (t *transferStandbyTaskExecutor) pushDecision(
 		task.(*persistence.TransferTaskInfo),
 		&pushDecisionInfo.tasklist,
 		timeout,
+		pushDecisionInfo.partitionConfig,
 	)
 }
 
@@ -606,14 +633,14 @@ func (t *transferStandbyTaskExecutor) fetchHistoryFromRemote(
 	_ context.Context,
 	taskInfo Info,
 	postActionInfo interface{},
-	log log.Logger,
+	_ log.Logger,
 ) error {
 
 	if postActionInfo == nil {
 		return nil
 	}
 
-	transferTask := taskInfo.(*persistence.TransferTaskInfo)
+	task := taskInfo.(*persistence.TransferTaskInfo)
 	resendInfo := postActionInfo.(*historyResendInfo)
 
 	t.metricsClient.IncCounter(metrics.HistoryRereplicationByTransferTaskScope, metrics.CadenceClientRequests)
@@ -625,9 +652,9 @@ func (t *transferStandbyTaskExecutor) fetchHistoryFromRemote(
 		// note history resender doesn't take in a context parameter, there's a separate dynamicconfig for
 		// controlling the timeout for resending history.
 		err = t.historyResender.SendSingleWorkflowHistory(
-			transferTask.DomainID,
-			transferTask.WorkflowID,
-			transferTask.RunID,
+			task.DomainID,
+			task.WorkflowID,
+			task.RunID,
 			resendInfo.lastEventID,
 			resendInfo.lastEventVersion,
 			nil,
@@ -635,21 +662,23 @@ func (t *transferStandbyTaskExecutor) fetchHistoryFromRemote(
 		)
 	} else {
 		err = &types.InternalServiceError{
-			Message: "transferQueueStandbyProcessor encounter empty historyResendInfo",
+			Message: fmt.Sprintf("incomplete historyResendInfo: %v", resendInfo),
 		}
 	}
 
 	if err != nil {
 		t.logger.Error("Error re-replicating history from remote.",
 			tag.ShardID(t.shard.GetShardID()),
-			tag.WorkflowDomainID(transferTask.DomainID),
-			tag.WorkflowID(transferTask.WorkflowID),
-			tag.WorkflowRunID(transferTask.RunID),
-			tag.SourceCluster(t.clusterName))
+			tag.WorkflowDomainID(task.DomainID),
+			tag.WorkflowID(task.WorkflowID),
+			tag.WorkflowRunID(task.RunID),
+			tag.SourceCluster(t.clusterName),
+			tag.Error(err),
+		)
 	}
 
 	// return error so task processing logic will retry
-	return ErrTaskRedispatch
+	return &redispatchError{Reason: "fetchHistoryFromRemote"}
 }
 
 func (t *transferStandbyTaskExecutor) getCurrentTime() time.Time {

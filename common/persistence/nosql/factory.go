@@ -25,58 +25,59 @@ import (
 
 	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
-	p "github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin"
+	"github.com/uber/cadence/common/persistence"
 )
 
 type (
 	// Factory vends datastore implementations backed by cassandra
 	Factory struct {
 		sync.RWMutex
-		cfg              config.Cassandra
+		cfg              config.ShardedNoSQL
 		clusterName      string
 		logger           log.Logger
 		execStoreFactory *executionStoreFactory
+		dc               *persistence.DynamicConfiguration
 	}
 
 	executionStoreFactory struct {
-		db     nosqlplugin.DB
-		logger log.Logger
+		logger            log.Logger
+		shardedNosqlStore shardedNosqlStore
 	}
 )
 
 // NewFactory returns an instance of a factory object which can be used to create
 // datastores that are backed by cassandra
-func NewFactory(cfg config.Cassandra, clusterName string, logger log.Logger) *Factory {
+func NewFactory(cfg config.ShardedNoSQL, clusterName string, logger log.Logger, dc *persistence.DynamicConfiguration) *Factory {
 	return &Factory{
 		cfg:         cfg,
 		clusterName: clusterName,
 		logger:      logger,
+		dc:          dc,
 	}
 }
 
 // NewTaskStore returns a new task store
-func (f *Factory) NewTaskStore() (p.TaskStore, error) {
-	return newNoSQLTaskStore(f.cfg, f.logger)
+func (f *Factory) NewTaskStore() (persistence.TaskStore, error) {
+	return newNoSQLTaskStore(f.cfg, f.logger, f.dc)
 }
 
 // NewShardStore returns a new shard store
-func (f *Factory) NewShardStore() (p.ShardStore, error) {
-	return newNoSQLShardStore(f.cfg, f.clusterName, f.logger)
+func (f *Factory) NewShardStore() (persistence.ShardStore, error) {
+	return newNoSQLShardStore(f.cfg, f.clusterName, f.logger, f.dc)
 }
 
 // NewHistoryStore returns a new history store
-func (f *Factory) NewHistoryStore() (p.HistoryStore, error) {
-	return newNoSQLHistoryStore(f.cfg, f.logger)
+func (f *Factory) NewHistoryStore() (persistence.HistoryStore, error) {
+	return newNoSQLHistoryStore(f.cfg, f.logger, f.dc)
 }
 
 // NewDomainStore returns a metadata store that understands only v2
-func (f *Factory) NewDomainStore() (p.DomainStore, error) {
-	return newNoSQLDomainStore(f.cfg, f.clusterName, f.logger)
+func (f *Factory) NewDomainStore() (persistence.DomainStore, error) {
+	return newNoSQLDomainStore(f.cfg, f.clusterName, f.logger, f.dc)
 }
 
 // NewExecutionStore returns an ExecutionStore for a given shardID
-func (f *Factory) NewExecutionStore(shardID int) (p.ExecutionStore, error) {
+func (f *Factory) NewExecutionStore(shardID int) (persistence.ExecutionStore, error) {
 	factory, err := f.executionStoreFactory()
 	if err != nil {
 		return nil, err
@@ -85,18 +86,18 @@ func (f *Factory) NewExecutionStore(shardID int) (p.ExecutionStore, error) {
 }
 
 // NewVisibilityStore returns a visibility store
-func (f *Factory) NewVisibilityStore(sortByCloseTime bool) (p.VisibilityStore, error) {
-	return newNoSQLVisibilityStore(sortByCloseTime, f.cfg, f.logger)
+func (f *Factory) NewVisibilityStore(sortByCloseTime bool) (persistence.VisibilityStore, error) {
+	return newNoSQLVisibilityStore(sortByCloseTime, f.cfg, f.logger, f.dc)
 }
 
 // NewQueue returns a new queue backed by cassandra
-func (f *Factory) NewQueue(queueType p.QueueType) (p.Queue, error) {
-	return newNoSQLQueueStore(f.cfg, f.logger, queueType)
+func (f *Factory) NewQueue(queueType persistence.QueueType) (persistence.Queue, error) {
+	return newNoSQLQueueStore(f.cfg, f.logger, queueType, f.dc)
 }
 
 // NewConfigStore returns a new config store
-func (f *Factory) NewConfigStore() (p.ConfigStore, error) {
-	return NewNoSQLConfigStore(f.cfg, f.logger)
+func (f *Factory) NewConfigStore() (persistence.ConfigStore, error) {
+	return NewNoSQLConfigStore(f.cfg, f.logger, f.dc)
 }
 
 // Close closes the factory
@@ -121,7 +122,7 @@ func (f *Factory) executionStoreFactory() (*executionStoreFactory, error) {
 		return f.execStoreFactory, nil
 	}
 
-	factory, err := newExecutionStoreFactory(f.cfg, f.logger)
+	factory, err := newExecutionStoreFactory(f.cfg, f.logger, f.dc)
 	if err != nil {
 		return nil, err
 	}
@@ -131,28 +132,31 @@ func (f *Factory) executionStoreFactory() (*executionStoreFactory, error) {
 
 // newExecutionStoreFactory is used to create an instance of ExecutionStoreFactory implementation
 func newExecutionStoreFactory(
-	cfg config.Cassandra,
+	cfg config.ShardedNoSQL,
 	logger log.Logger,
+	dc *persistence.DynamicConfiguration,
 ) (*executionStoreFactory, error) {
-
-	db, err := NewNoSQLDB(&cfg, logger)
+	s, err := newShardedNosqlStore(cfg, logger, dc)
 	if err != nil {
 		return nil, err
 	}
-
 	return &executionStoreFactory{
-		db:     db,
-		logger: logger,
+		logger:            logger,
+		shardedNosqlStore: s,
 	}, nil
 }
 
 func (f *executionStoreFactory) close() {
-	f.db.Close()
+	f.shardedNosqlStore.Close()
 }
 
 // new implements ExecutionStoreFactory interface
-func (f *executionStoreFactory) new(shardID int) (p.ExecutionStore, error) {
-	pmgr, err := NewExecutionStore(shardID, f.db, f.logger)
+func (f *executionStoreFactory) new(shardID int) (persistence.ExecutionStore, error) {
+	storeShard, err := f.shardedNosqlStore.GetStoreShardByHistoryShard(shardID)
+	if err != nil {
+		return nil, err
+	}
+	pmgr, err := NewExecutionStore(shardID, storeShard.db, f.logger)
 	if err != nil {
 		return nil, err
 	}

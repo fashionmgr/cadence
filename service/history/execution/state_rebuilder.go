@@ -24,7 +24,6 @@ package execution
 
 import (
 	"context"
-	ctx "context"
 	"fmt"
 	"time"
 
@@ -50,7 +49,7 @@ type (
 	// StateRebuilder is a mutable state builder to ndc state rebuild
 	StateRebuilder interface {
 		Rebuild(
-			ctx ctx.Context,
+			ctx context.Context,
 			now time.Time,
 			baseWorkflowIdentifier definition.WorkflowIdentifier,
 			baseBranchToken []byte,
@@ -92,7 +91,6 @@ func NewStateRebuilder(
 			shard.GetClusterMetadata(),
 			shard.GetDomainCache(),
 			shard.GetEventsCache(),
-			logger,
 			shard.GetShardID(),
 		),
 		rebuiltHistorySize: 0,
@@ -101,7 +99,7 @@ func NewStateRebuilder(
 }
 
 func (r *stateRebuilderImpl) Rebuild(
-	ctx ctx.Context,
+	ctx context.Context,
 	now time.Time,
 	baseWorkflowIdentifier definition.WorkflowIdentifier,
 	baseBranchToken []byte,
@@ -117,6 +115,7 @@ func (r *stateRebuilderImpl) Rebuild(
 		common.FirstEventID,
 		baseLastEventID+1,
 		baseBranchToken,
+		targetWorkflowIdentifier.DomainID,
 	))
 
 	domainEntry, err := r.domainCache.GetDomainByID(targetWorkflowIdentifier.DomainID)
@@ -124,6 +123,10 @@ func (r *stateRebuilderImpl) Rebuild(
 		return nil, 0, err
 	}
 
+	// Corrupt data handling
+	if !iter.HasNext() {
+		return nil, 0, fmt.Errorf("Attempting to build history state but the iterator has found no history")
+	}
 	// need to specially handling the first batch, to initialize mutable state & state builder
 	batch, err := iter.Next()
 	if err != nil {
@@ -177,7 +180,7 @@ func (r *stateRebuilderImpl) Rebuild(
 		}
 	}
 
-	// close rebuilt mutable state transaction clearing all generated tasks, etc.
+	// close rebuilt mutable state transaction clearing all generated tasks, workflow requests, etc.
 	_, _, err = rebuiltMutableState.CloseTransactionAsSnapshot(now, TransactionPolicyPassive)
 	if err != nil {
 		return nil, 0, err
@@ -205,9 +208,6 @@ func (r *stateRebuilderImpl) initializeBuilders(
 		r.shard,
 		r.logger,
 		resetMutableStateBuilder,
-		func(mutableState MutableState) MutableStateTaskGenerator {
-			return NewMutableStateTaskGenerator(r.shard.GetClusterMetadata(), r.shard.GetDomainCache(), r.logger, mutableState)
-		},
 	)
 	return resetMutableStateBuilder, stateBuilder
 }
@@ -231,9 +231,9 @@ func (r *stateRebuilderImpl) applyEvents(
 	)
 	if err != nil {
 		r.logger.Error("nDCStateRebuilder unable to rebuild mutable state.", tag.Error(err))
-		return err
 	}
-	return nil
+
+	return err
 }
 
 func (r *stateRebuilderImpl) getPaginationFn(
@@ -241,6 +241,7 @@ func (r *stateRebuilderImpl) getPaginationFn(
 	firstEventID int64,
 	nextEventID int64,
 	branchToken []byte,
+	domainID string,
 ) collection.PaginationFn {
 
 	return func(paginationToken []byte) ([]interface{}, []byte, error) {
@@ -255,6 +256,8 @@ func (r *stateRebuilderImpl) getPaginationFn(
 			paginationToken,
 			NDCDefaultPageSize,
 			common.IntPtr(r.shard.GetShardID()),
+			domainID,
+			r.domainCache,
 		)
 		if err != nil {
 			return nil, nil, err

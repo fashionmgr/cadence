@@ -37,140 +37,6 @@ const (
 	domainPartition = 0
 )
 
-const (
-	///////////////// Open Executions /////////////////
-	openExecutionsColumnsForSelect = " workflow_id, run_id, start_time, execution_time, workflow_type_name, memo, encoding, task_list, is_cron, num_clusters "
-
-	openExecutionsColumnsForInsert = "(domain_id, domain_partition, " + openExecutionsColumnsForSelect + ")"
-
-	templateCreateWorkflowExecutionStartedWithTTL = `INSERT INTO open_executions ` +
-		openExecutionsColumnsForInsert +
-		`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) using TTL ?`
-
-	templateCreateWorkflowExecutionStarted = `INSERT INTO open_executions` +
-		openExecutionsColumnsForInsert +
-		`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	templateDeleteWorkflowExecutionStarted = `DELETE FROM open_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND start_time = ? ` +
-		`AND run_id = ?`
-
-	templateGetOpenWorkflowExecutions = `SELECT ` + openExecutionsColumnsForSelect +
-		`FROM open_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition IN (?) ` +
-		`AND start_time >= ? ` +
-		`AND start_time <= ? `
-
-	templateGetOpenWorkflowExecutionsByType = `SELECT ` + openExecutionsColumnsForSelect +
-		`FROM open_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND start_time >= ? ` +
-		`AND start_time <= ? ` +
-		`AND workflow_type_name = ? `
-
-	templateGetOpenWorkflowExecutionsByID = `SELECT ` + openExecutionsColumnsForSelect +
-		`FROM open_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND start_time >= ? ` +
-		`AND start_time <= ? ` +
-		`AND workflow_id = ? `
-
-	///////////////// Closed Executions /////////////////
-	closedExecutionColumnsForSelect = " workflow_id, run_id, start_time, execution_time, close_time, workflow_type_name, status, history_length, memo, encoding, task_list, is_cron, num_clusters "
-
-	closedExecutionColumnsForInsert = "(domain_id, domain_partition, " + closedExecutionColumnsForSelect + ")"
-
-	templateCreateWorkflowExecutionClosedWithTTL = `INSERT INTO closed_executions ` +
-		closedExecutionColumnsForInsert +
-		`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) using TTL ?`
-
-	templateCreateWorkflowExecutionClosed = `INSERT INTO closed_executions ` +
-		closedExecutionColumnsForInsert +
-		`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	templateCreateWorkflowExecutionClosedWithTTLV2 = `INSERT INTO closed_executions_v2 ` +
-		closedExecutionColumnsForInsert +
-		`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) using TTL ?`
-
-	templateCreateWorkflowExecutionClosedV2 = `INSERT INTO closed_executions_v2 ` +
-		closedExecutionColumnsForInsert +
-		`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	templateGetClosedWorkflowExecutions = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition IN (?) ` +
-		`AND start_time >= ? ` +
-		`AND start_time <= ? `
-
-	templateGetClosedWorkflowExecutionsByType = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND start_time >= ? ` +
-		`AND start_time <= ? ` +
-		`AND workflow_type_name = ? `
-
-	templateGetClosedWorkflowExecutionsByID = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND start_time >= ? ` +
-		`AND start_time <= ? ` +
-		`AND workflow_id = ? `
-
-	templateGetClosedWorkflowExecutionsByStatus = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND start_time >= ? ` +
-		`AND start_time <= ? ` +
-		`AND status = ? `
-
-	templateGetClosedWorkflowExecution = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND workflow_id = ? ` +
-		`AND run_id = ? ALLOW FILTERING `
-
-	templateGetClosedWorkflowExecutionsSortByCloseTime = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions_v2 ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition IN (?) ` +
-		`AND close_time >= ? ` +
-		`AND close_time <= ? `
-
-	templateGetClosedWorkflowExecutionsByTypeSortByCloseTime = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions_v2 ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND close_time >= ? ` +
-		`AND close_time <= ? ` +
-		`AND workflow_type_name = ? `
-
-	templateGetClosedWorkflowExecutionsByIDSortByCloseTime = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions_v2 ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND close_time >= ? ` +
-		`AND close_time <= ? ` +
-		`AND workflow_id = ? `
-
-	templateGetClosedWorkflowExecutionsByStatusSortByClosedTime = `SELECT ` + closedExecutionColumnsForSelect +
-		`FROM closed_executions_v2 ` +
-		`WHERE domain_id = ? ` +
-		`AND domain_partition = ? ` +
-		`AND close_time >= ? ` +
-		`AND close_time <= ? ` +
-		`AND status = ? `
-)
-
 // InsertVisibility creates a new visibility record, return error is there is any.
 // TODO: Cassandra implementation ignores search attributes
 func (db *cdb) InsertVisibility(ctx context.Context, ttlSeconds int64, row *nosqlplugin.VisibilityRowForInsert) error {
@@ -189,6 +55,8 @@ func (db *cdb) InsertVisibility(ctx context.Context, ttlSeconds int64, row *nosq
 			row.TaskList,
 			row.IsCron,
 			row.NumClusters,
+			row.UpdateTime,
+			row.ShardID,
 		).WithContext(ctx)
 	} else {
 		query = db.session.Query(templateCreateWorkflowExecutionStartedWithTTL,
@@ -204,6 +72,8 @@ func (db *cdb) InsertVisibility(ctx context.Context, ttlSeconds int64, row *nosq
 			row.TaskList,
 			row.IsCron,
 			row.NumClusters,
+			row.UpdateTime,
+			row.ShardID,
 			ttlSeconds,
 		).WithContext(ctx)
 	}
@@ -247,6 +117,8 @@ func (db *cdb) UpdateVisibility(ctx context.Context, ttlSeconds int64, row *nosq
 			row.TaskList,
 			row.IsCron,
 			row.NumClusters,
+			row.UpdateTime,
+			row.ShardID,
 		)
 		// duplicate write to v2 to order by close time
 		batch.Query(templateCreateWorkflowExecutionClosedV2,
@@ -265,6 +137,8 @@ func (db *cdb) UpdateVisibility(ctx context.Context, ttlSeconds int64, row *nosq
 			row.TaskList,
 			row.IsCron,
 			row.NumClusters,
+			row.UpdateTime,
+			row.ShardID,
 		)
 	} else {
 		batch.Query(templateCreateWorkflowExecutionClosedWithTTL,
@@ -283,6 +157,8 @@ func (db *cdb) UpdateVisibility(ctx context.Context, ttlSeconds int64, row *nosq
 			row.TaskList,
 			row.IsCron,
 			row.NumClusters,
+			row.UpdateTime,
+			row.ShardID,
 			ttlSeconds,
 		)
 		// duplicate write to v2 to order by close time
@@ -302,6 +178,8 @@ func (db *cdb) UpdateVisibility(ctx context.Context, ttlSeconds int64, row *nosq
 			row.TaskList,
 			row.IsCron,
 			row.NumClusters,
+			row.UpdateTime,
+			row.ShardID,
 			ttlSeconds,
 		)
 	}
@@ -351,6 +229,33 @@ func (db *cdb) SelectOneClosedWorkflow(
 
 // Noop for Cassandra as it already handle by TTL
 func (db *cdb) DeleteVisibility(ctx context.Context, domainID, workflowID, runID string) error {
+	// Normally we only depend on TTL for Cassandra visibility deletion but
+	// we explicitly delete from open executions when an admin command is issued
+	key := persistence.VisibilityAdminDeletionKey("visibilityAdminDelete")
+	if v := ctx.Value(key); v != nil && v.(bool) {
+		// Primary key is <domainId, domainPartition, startTime, runId>
+		// to optimize showing open executions sorted by their start time
+		// However, it is not useful for deletion since we don't have the start
+		// time information. So, we need to get the record first with "allow
+		// filtering", read startTime then delete it. This is okay because
+		// it is only intended to be used for admin ops.
+
+		record, err := db.openWorkflowByRunID(ctx, domainID, runID)
+		if err != nil {
+			return err
+		}
+		if record == nil {
+			return nil // workflow not found, nothing to do
+		}
+
+		query := db.session.Query(templateDeleteVisibilityRecord,
+			domainID,
+			domainPartition,
+			record.StartTime,
+			runID,
+		).WithContext(ctx)
+		return db.executeWithConsistencyAll(query)
+	}
 	return nil
 }
 
@@ -467,6 +372,34 @@ func (db *cdb) openFilteredByWorkflowIDSortedByStartTime(
 		workflowID,
 	).Consistency(cassandraLowConslevel).WithContext(ctx)
 	return processQuery(query, request, readOpenWorkflowExecutionRecord)
+}
+
+func (db *cdb) openWorkflowByRunID(
+	ctx context.Context,
+	domainID string,
+	runID string,
+) (*persistence.InternalVisibilityWorkflowExecutionInfo, error) {
+	query := db.session.Query(templateGetOpenWorkflowExecutionsByRunID,
+		domainID,
+		domainPartition,
+		runID,
+	).WithContext(ctx)
+
+	iter := query.Iter()
+	if iter == nil {
+		return nil, fmt.Errorf("not able to create query iterator")
+	}
+
+	wfexecution, has := readOpenWorkflowExecutionRecord(iter)
+	if !has {
+		return nil, nil
+	}
+
+	if err := iter.Close(); err != nil {
+		return nil, err
+	}
+
+	return wfexecution, nil
 }
 
 func (db *cdb) closedFilteredByWorkflowIDSortedByStartTime(
@@ -613,7 +546,9 @@ func readOpenWorkflowExecutionRecord(
 	var taskList string
 	var isCron bool
 	var numClusters int16
-	if iter.Scan(&workflowID, &runID, &startTime, &executionTime, &typeName, &memo, &encoding, &taskList, &isCron, &numClusters) {
+	var updateTime time.Time
+	var shardID int16
+	if iter.Scan(&workflowID, &runID, &startTime, &executionTime, &typeName, &memo, &encoding, &taskList, &isCron, &numClusters, &updateTime, &shardID) {
 		record := &persistence.InternalVisibilityWorkflowExecutionInfo{
 			WorkflowID:    workflowID,
 			RunID:         runID,
@@ -624,6 +559,8 @@ func readOpenWorkflowExecutionRecord(
 			TaskList:      taskList,
 			IsCron:        isCron,
 			NumClusters:   numClusters,
+			UpdateTime:    updateTime,
+			ShardID:       shardID,
 		}
 		return record, true
 	}
@@ -646,7 +583,9 @@ func readClosedWorkflowExecutionRecord(
 	var taskList string
 	var isCron bool
 	var numClusters int16
-	if iter.Scan(&workflowID, &runID, &startTime, &executionTime, &closeTime, &typeName, &status, &historyLength, &memo, &encoding, &taskList, &isCron, &numClusters) {
+	var updateTime time.Time
+	var shardID int16
+	if iter.Scan(&workflowID, &runID, &startTime, &executionTime, &closeTime, &typeName, &status, &historyLength, &memo, &encoding, &taskList, &isCron, &numClusters, &updateTime, &shardID) {
 		record := &persistence.InternalVisibilityWorkflowExecutionInfo{
 			WorkflowID:    workflowID,
 			RunID:         runID,
@@ -660,6 +599,8 @@ func readClosedWorkflowExecutionRecord(
 			TaskList:      taskList,
 			IsCron:        isCron,
 			NumClusters:   numClusters,
+			UpdateTime:    updateTime,
+			ShardID:       shardID,
 		}
 		return record, true
 	}

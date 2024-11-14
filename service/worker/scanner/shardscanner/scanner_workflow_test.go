@@ -29,21 +29,22 @@ import (
 	"github.com/stretchr/testify/suite"
 	"go.uber.org/cadence/testsuite"
 
+	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/pagination"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/reconciliation/invariant"
 )
 
-type workflowsSuite struct {
+type scannerWorkflowsSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 }
 
 func TestScannerWorkflowSuite(t *testing.T) {
-	suite.Run(t, new(workflowsSuite))
+	suite.Run(t, new(scannerWorkflowsSuite))
 }
 
-func (s *workflowsSuite) TestGetBatchIndices() {
+func (s *scannerWorkflowsSuite) TestGetBatchIndices() {
 	testCases := []struct {
 		batchSize   int
 		concurrency int
@@ -100,7 +101,7 @@ func (s *workflowsSuite) TestGetBatchIndices() {
 	}
 }
 
-func (s *workflowsSuite) TestGetShardBatches() {
+func (s *scannerWorkflowsSuite) TestGetShardBatches() {
 	var shards []int
 	for i := 5; i < 50; i += 2 {
 		shards = append(shards, i)
@@ -112,7 +113,7 @@ func (s *workflowsSuite) TestGetShardBatches() {
 	}, batches)
 }
 
-func (s *workflowsSuite) TestFlattenShards() {
+func (s *scannerWorkflowsSuite) TestFlattenShards() {
 	testCases := []struct {
 		input        Shards
 		expectedList []int
@@ -159,7 +160,7 @@ func (s *workflowsSuite) TestFlattenShards() {
 	}
 }
 
-func (s *workflowsSuite) TestValidateShards() {
+func (s *scannerWorkflowsSuite) TestValidateShards() {
 	testCases := []struct {
 		shards    Shards
 		expectErr bool
@@ -243,6 +244,7 @@ func (s *fixerWorkflowSuite) TestNewScannerHooks() {
 				ctx context.Context,
 				retryer persistence.Retryer,
 				params ScanShardActivityParams,
+				cache cache.DomainCache,
 			) invariant.Manager {
 				return nil
 			},
@@ -255,6 +257,7 @@ func (s *fixerWorkflowSuite) TestNewScannerHooks() {
 				ctx context.Context,
 				retryer persistence.Retryer,
 				params ScanShardActivityParams,
+				cache cache.DomainCache,
 			) invariant.Manager {
 				return nil
 			},
@@ -271,7 +274,9 @@ func (s *fixerWorkflowSuite) TestNewScannerHooks() {
 
 	for _, tc := range testCases {
 		s.Run(tc.name, func() {
-			_, err := NewScannerHooks(tc.manager, tc.iterator)
+			_, err := NewScannerHooks(tc.manager, tc.iterator, func(scanner ScannerContext) CustomScannerConfig {
+				return nil // no config overrides
+			})
 			if tc.wantErr {
 				s.Error(err)
 			} else {

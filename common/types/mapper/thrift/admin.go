@@ -21,13 +21,20 @@
 package thrift
 
 import (
-	"github.com/uber/cadence/common/types"
+	"sort"
 
 	"github.com/uber/cadence/.gen/go/admin"
+	"github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/common/types"
 )
 
-// FromAddSearchAttributeRequest converts internal AddSearchAttributeRequest type to thrift
-func FromAddSearchAttributeRequest(t *types.AddSearchAttributeRequest) *admin.AddSearchAttributeRequest {
+var (
+	FromAdminRefreshWorkflowTasksRequest = FromRefreshWorkflowTasksRequest
+	ToAdminRefreshWorkflowTasksRequest   = ToRefreshWorkflowTasksRequest
+)
+
+// FromAdminAddSearchAttributeRequest converts internal AddSearchAttributeRequest type to thrift
+func FromAdminAddSearchAttributeRequest(t *types.AddSearchAttributeRequest) *admin.AddSearchAttributeRequest {
 	if t == nil {
 		return nil
 	}
@@ -37,8 +44,8 @@ func FromAddSearchAttributeRequest(t *types.AddSearchAttributeRequest) *admin.Ad
 	}
 }
 
-// ToAddSearchAttributeRequest converts thrift AddSearchAttributeRequest type to internal
-func ToAddSearchAttributeRequest(t *admin.AddSearchAttributeRequest) *types.AddSearchAttributeRequest {
+// ToAdminAddSearchAttributeRequest converts thrift AddSearchAttributeRequest type to internal
+func ToAdminAddSearchAttributeRequest(t *admin.AddSearchAttributeRequest) *types.AddSearchAttributeRequest {
 	if t == nil {
 		return nil
 	}
@@ -48,8 +55,8 @@ func ToAddSearchAttributeRequest(t *admin.AddSearchAttributeRequest) *types.AddS
 	}
 }
 
-// FromDescribeClusterResponse converts internal DescribeClusterResponse type to thrift
-func FromDescribeClusterResponse(t *types.DescribeClusterResponse) *admin.DescribeClusterResponse {
+// FromAdminDescribeClusterResponse converts internal DescribeClusterResponse type to thrift
+func FromAdminDescribeClusterResponse(t *types.DescribeClusterResponse) *admin.DescribeClusterResponse {
 	if t == nil {
 		return nil
 	}
@@ -60,8 +67,8 @@ func FromDescribeClusterResponse(t *types.DescribeClusterResponse) *admin.Descri
 	}
 }
 
-// ToDescribeClusterResponse converts thrift DescribeClusterResponse type to internal
-func ToDescribeClusterResponse(t *admin.DescribeClusterResponse) *types.DescribeClusterResponse {
+// ToAdminDescribeClusterResponse converts thrift DescribeClusterResponse type to internal
+func ToAdminDescribeClusterResponse(t *admin.DescribeClusterResponse) *types.DescribeClusterResponse {
 	if t == nil {
 		return nil
 	}
@@ -120,8 +127,8 @@ func ToAdminDescribeWorkflowExecutionResponse(t *admin.DescribeWorkflowExecution
 	}
 }
 
-// FromGetWorkflowExecutionRawHistoryV2Request converts internal GetWorkflowExecutionRawHistoryV2Request type to thrift
-func FromGetWorkflowExecutionRawHistoryV2Request(t *types.GetWorkflowExecutionRawHistoryV2Request) *admin.GetWorkflowExecutionRawHistoryV2Request {
+// FromAdminGetWorkflowExecutionRawHistoryV2Request converts internal GetWorkflowExecutionRawHistoryV2Request type to thrift
+func FromAdminGetWorkflowExecutionRawHistoryV2Request(t *types.GetWorkflowExecutionRawHistoryV2Request) *admin.GetWorkflowExecutionRawHistoryV2Request {
 	if t == nil {
 		return nil
 	}
@@ -137,8 +144,8 @@ func FromGetWorkflowExecutionRawHistoryV2Request(t *types.GetWorkflowExecutionRa
 	}
 }
 
-// ToGetWorkflowExecutionRawHistoryV2Request converts thrift GetWorkflowExecutionRawHistoryV2Request type to internal
-func ToGetWorkflowExecutionRawHistoryV2Request(t *admin.GetWorkflowExecutionRawHistoryV2Request) *types.GetWorkflowExecutionRawHistoryV2Request {
+// ToAdminGetWorkflowExecutionRawHistoryV2Request converts thrift GetWorkflowExecutionRawHistoryV2Request type to internal
+func ToAdminGetWorkflowExecutionRawHistoryV2Request(t *admin.GetWorkflowExecutionRawHistoryV2Request) *types.GetWorkflowExecutionRawHistoryV2Request {
 	if t == nil {
 		return nil
 	}
@@ -154,8 +161,8 @@ func ToGetWorkflowExecutionRawHistoryV2Request(t *admin.GetWorkflowExecutionRawH
 	}
 }
 
-// FromGetWorkflowExecutionRawHistoryV2Response converts internal GetWorkflowExecutionRawHistoryV2Response type to thrift
-func FromGetWorkflowExecutionRawHistoryV2Response(t *types.GetWorkflowExecutionRawHistoryV2Response) *admin.GetWorkflowExecutionRawHistoryV2Response {
+// FromAdminGetWorkflowExecutionRawHistoryV2Response converts internal GetWorkflowExecutionRawHistoryV2Response type to thrift
+func FromAdminGetWorkflowExecutionRawHistoryV2Response(t *types.GetWorkflowExecutionRawHistoryV2Response) *admin.GetWorkflowExecutionRawHistoryV2Response {
 	if t == nil {
 		return nil
 	}
@@ -166,8 +173,8 @@ func FromGetWorkflowExecutionRawHistoryV2Response(t *types.GetWorkflowExecutionR
 	}
 }
 
-// ToGetWorkflowExecutionRawHistoryV2Response converts thrift GetWorkflowExecutionRawHistoryV2Response type to internal
-func ToGetWorkflowExecutionRawHistoryV2Response(t *admin.GetWorkflowExecutionRawHistoryV2Response) *types.GetWorkflowExecutionRawHistoryV2Response {
+// ToAdminGetWorkflowExecutionRawHistoryV2Response converts thrift GetWorkflowExecutionRawHistoryV2Response type to internal
+func ToAdminGetWorkflowExecutionRawHistoryV2Response(t *admin.GetWorkflowExecutionRawHistoryV2Response) *types.GetWorkflowExecutionRawHistoryV2Response {
 	if t == nil {
 		return nil
 	}
@@ -362,8 +369,8 @@ func ToPersistenceFeature(t *admin.PersistenceFeature) *types.PersistenceFeature
 	}
 }
 
-// FromResendReplicationTasksRequest converts internal ResendReplicationTasksRequest type to thrift
-func FromResendReplicationTasksRequest(t *types.ResendReplicationTasksRequest) *admin.ResendReplicationTasksRequest {
+// FromAdminResendReplicationTasksRequest converts internal ResendReplicationTasksRequest type to thrift
+func FromAdminResendReplicationTasksRequest(t *types.ResendReplicationTasksRequest) *admin.ResendReplicationTasksRequest {
 	if t == nil {
 		return nil
 	}
@@ -379,8 +386,8 @@ func FromResendReplicationTasksRequest(t *types.ResendReplicationTasksRequest) *
 	}
 }
 
-// ToResendReplicationTasksRequest converts thrift ResendReplicationTasksRequest type to internal
-func ToResendReplicationTasksRequest(t *admin.ResendReplicationTasksRequest) *types.ResendReplicationTasksRequest {
+// ToAdminResendReplicationTasksRequest converts thrift ResendReplicationTasksRequest type to internal
+func ToAdminResendReplicationTasksRequest(t *admin.ResendReplicationTasksRequest) *types.ResendReplicationTasksRequest {
 	if t == nil {
 		return nil
 	}
@@ -468,8 +475,8 @@ func ToHostInfoArray(t []*admin.HostInfo) []*types.HostInfo {
 	return v
 }
 
-//FromGetDynamicConfigRequest converts internal GetDynamicConfigRequest type to thrift
-func FromGetDynamicConfigRequest(t *types.GetDynamicConfigRequest) *admin.GetDynamicConfigRequest {
+// FromAdminGetDynamicConfigRequest converts internal GetDynamicConfigRequest type to thrift
+func FromAdminGetDynamicConfigRequest(t *types.GetDynamicConfigRequest) *admin.GetDynamicConfigRequest {
 	if t == nil {
 		return nil
 	}
@@ -479,8 +486,8 @@ func FromGetDynamicConfigRequest(t *types.GetDynamicConfigRequest) *admin.GetDyn
 	}
 }
 
-//ToGetDynamicConfigRequest converts thrift GetDynamicConfigRequest type to internal
-func ToGetDynamicConfigRequest(t *admin.GetDynamicConfigRequest) *types.GetDynamicConfigRequest {
+// ToAdminGetDynamicConfigRequest converts thrift GetDynamicConfigRequest type to internal
+func ToAdminGetDynamicConfigRequest(t *admin.GetDynamicConfigRequest) *types.GetDynamicConfigRequest {
 	if t == nil {
 		return nil
 	}
@@ -490,8 +497,8 @@ func ToGetDynamicConfigRequest(t *admin.GetDynamicConfigRequest) *types.GetDynam
 	}
 }
 
-//FromGetDynamicConfigResponse converts internal GetDynamicConfigResponse type to thrift
-func FromGetDynamicConfigResponse(t *types.GetDynamicConfigResponse) *admin.GetDynamicConfigResponse {
+// FromAdminGetDynamicConfigResponse converts internal GetDynamicConfigResponse type to thrift
+func FromAdminGetDynamicConfigResponse(t *types.GetDynamicConfigResponse) *admin.GetDynamicConfigResponse {
 	if t == nil {
 		return nil
 	}
@@ -500,8 +507,8 @@ func FromGetDynamicConfigResponse(t *types.GetDynamicConfigResponse) *admin.GetD
 	}
 }
 
-//ToGetDynamicConfigResponse converts thrift GetDynamicConfigResponse type to internal
-func ToGetDynamicConfigResponse(t *admin.GetDynamicConfigResponse) *types.GetDynamicConfigResponse {
+// ToAdminGetDynamicConfigResponse converts thrift GetDynamicConfigResponse type to internal
+func ToAdminGetDynamicConfigResponse(t *admin.GetDynamicConfigResponse) *types.GetDynamicConfigResponse {
 	if t == nil {
 		return nil
 	}
@@ -510,8 +517,8 @@ func ToGetDynamicConfigResponse(t *admin.GetDynamicConfigResponse) *types.GetDyn
 	}
 }
 
-//FromUpdateDynamicConfigRequest converts internal UpdateDynamicConfigRequest type to thrift
-func FromUpdateDynamicConfigRequest(t *types.UpdateDynamicConfigRequest) *admin.UpdateDynamicConfigRequest {
+// FromAdminUpdateDynamicConfigRequest converts internal UpdateDynamicConfigRequest type to thrift
+func FromAdminUpdateDynamicConfigRequest(t *types.UpdateDynamicConfigRequest) *admin.UpdateDynamicConfigRequest {
 	if t == nil {
 		return nil
 	}
@@ -521,8 +528,8 @@ func FromUpdateDynamicConfigRequest(t *types.UpdateDynamicConfigRequest) *admin.
 	}
 }
 
-//ToUpdateDynamicConfigRequest converts thrift UpdateDynamicConfigRequest type to internal
-func ToUpdateDynamicConfigRequest(t *admin.UpdateDynamicConfigRequest) *types.UpdateDynamicConfigRequest {
+// ToAdminUpdateDynamicConfigRequest converts thrift UpdateDynamicConfigRequest type to internal
+func ToAdminUpdateDynamicConfigRequest(t *admin.UpdateDynamicConfigRequest) *types.UpdateDynamicConfigRequest {
 	if t == nil {
 		return nil
 	}
@@ -532,8 +539,8 @@ func ToUpdateDynamicConfigRequest(t *admin.UpdateDynamicConfigRequest) *types.Up
 	}
 }
 
-//FromRestoreDynamicConfigRequest converts internal RestoreDynamicConfigRequest type to thrift
-func FromRestoreDynamicConfigRequest(t *types.RestoreDynamicConfigRequest) *admin.RestoreDynamicConfigRequest {
+// FromAdminRestoreDynamicConfigRequest converts internal RestoreDynamicConfigRequest type to thrift
+func FromAdminRestoreDynamicConfigRequest(t *types.RestoreDynamicConfigRequest) *admin.RestoreDynamicConfigRequest {
 	if t == nil {
 		return nil
 	}
@@ -543,8 +550,8 @@ func FromRestoreDynamicConfigRequest(t *types.RestoreDynamicConfigRequest) *admi
 	}
 }
 
-//ToRestoreDynamicConfigRequest converts thrift RestoreDynamicConfigRequest type to internal
-func ToRestoreDynamicConfigRequest(t *admin.RestoreDynamicConfigRequest) *types.RestoreDynamicConfigRequest {
+// ToAdminRestoreDynamicConfigRequest converts thrift RestoreDynamicConfigRequest type to internal
+func ToAdminRestoreDynamicConfigRequest(t *admin.RestoreDynamicConfigRequest) *types.RestoreDynamicConfigRequest {
 	if t == nil {
 		return nil
 	}
@@ -554,8 +561,100 @@ func ToRestoreDynamicConfigRequest(t *admin.RestoreDynamicConfigRequest) *types.
 	}
 }
 
-//FromListDynamicConfigResponse converts internal ListDynamicConfigResponse type to thrift
-func FromListDynamicConfigResponse(t *types.ListDynamicConfigResponse) *admin.ListDynamicConfigResponse {
+// FromAdminDeleteWorkflowRequest converts internal AdminDeleteWorkflowRequest type to thrift
+func FromAdminDeleteWorkflowRequest(t *types.AdminDeleteWorkflowRequest) *admin.AdminDeleteWorkflowRequest {
+	if t == nil {
+		return nil
+	}
+	return &admin.AdminDeleteWorkflowRequest{
+		Domain:    &t.Domain,
+		Execution: FromWorkflowExecution(t.Execution),
+	}
+}
+
+// ToAdminDeleteWorkflowRequest converts thrift AdminDeleteWorkflowRequest type to internal
+func ToAdminDeleteWorkflowRequest(t *admin.AdminDeleteWorkflowRequest) *types.AdminDeleteWorkflowRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.AdminDeleteWorkflowRequest{
+		Domain:    t.GetDomain(),
+		Execution: ToWorkflowExecution(t.Execution),
+	}
+}
+
+// FromAdminDeleteWorkflowResponse converts internal AdminDeleteWorkflowResponse type to thrift
+func FromAdminDeleteWorkflowResponse(t *types.AdminDeleteWorkflowResponse) *admin.AdminDeleteWorkflowResponse {
+	if t == nil {
+		return nil
+	}
+	return &admin.AdminDeleteWorkflowResponse{
+		HistoryDeleted:    &t.HistoryDeleted,
+		ExecutionsDeleted: &t.ExecutionsDeleted,
+		VisibilityDeleted: &t.VisibilityDeleted,
+	}
+}
+
+// ToAdminDeleteWorkflowResponse converts thrift AdminDeleteWorkflowResponse type to internal
+func ToAdminDeleteWorkflowResponse(t *admin.AdminDeleteWorkflowResponse) *types.AdminDeleteWorkflowResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.AdminDeleteWorkflowResponse{
+		HistoryDeleted:    *t.HistoryDeleted,
+		ExecutionsDeleted: *t.ExecutionsDeleted,
+		VisibilityDeleted: *t.VisibilityDeleted,
+	}
+}
+
+// FromAdminMaintainCorruptWorkflowRequest converts internal AdminMaintainWorkflowRequest type to thrift
+func FromAdminMaintainCorruptWorkflowRequest(t *types.AdminMaintainWorkflowRequest) *admin.AdminMaintainWorkflowRequest {
+	if t == nil {
+		return nil
+	}
+	return &admin.AdminMaintainWorkflowRequest{
+		Domain:    &t.Domain,
+		Execution: FromWorkflowExecution(t.Execution),
+	}
+}
+
+// ToAdminMaintainCorruptWorkflowRequest converts thrift AdminMaintainWorkflowRequest type to internal
+func ToAdminMaintainCorruptWorkflowRequest(t *admin.AdminMaintainWorkflowRequest) *types.AdminMaintainWorkflowRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.AdminMaintainWorkflowRequest{
+		Domain:    t.GetDomain(),
+		Execution: ToWorkflowExecution(t.Execution),
+	}
+}
+
+// FromAdminMaintainCorruptWorkflowResponse converts internal AdminMaintainWorkflowResponse type to thrift
+func FromAdminMaintainCorruptWorkflowResponse(t *types.AdminMaintainWorkflowResponse) *admin.AdminMaintainWorkflowResponse {
+	if t == nil {
+		return nil
+	}
+	return &admin.AdminMaintainWorkflowResponse{
+		HistoryDeleted:    &t.HistoryDeleted,
+		ExecutionsDeleted: &t.ExecutionsDeleted,
+		VisibilityDeleted: &t.VisibilityDeleted,
+	}
+}
+
+// ToAdminMaintainCorruptWorkflowResponse converts thrift AdminMaintainWorkflowResponse type to internal
+func ToAdminMaintainCorruptWorkflowResponse(t *admin.AdminMaintainWorkflowResponse) *types.AdminMaintainWorkflowResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.AdminMaintainWorkflowResponse{
+		HistoryDeleted:    *t.HistoryDeleted,
+		ExecutionsDeleted: *t.ExecutionsDeleted,
+		VisibilityDeleted: *t.VisibilityDeleted,
+	}
+}
+
+// FromAdminListDynamicConfigResponse converts internal ListDynamicConfigResponse type to thrift
+func FromAdminListDynamicConfigResponse(t *types.ListDynamicConfigResponse) *admin.ListDynamicConfigResponse {
 	if t == nil {
 		return nil
 	}
@@ -564,8 +663,8 @@ func FromListDynamicConfigResponse(t *types.ListDynamicConfigResponse) *admin.Li
 	}
 }
 
-//FromListDynamicConfigRequest converts internal ListDynamicConfigRequest type to thrift
-func FromListDynamicConfigRequest(t *types.ListDynamicConfigRequest) *admin.ListDynamicConfigRequest {
+// FromAdminListDynamicConfigRequest converts internal ListDynamicConfigRequest type to thrift
+func FromAdminListDynamicConfigRequest(t *types.ListDynamicConfigRequest) *admin.ListDynamicConfigRequest {
 	if t == nil {
 		return nil
 	}
@@ -574,8 +673,8 @@ func FromListDynamicConfigRequest(t *types.ListDynamicConfigRequest) *admin.List
 	}
 }
 
-//ToListDynamicConfigRequest converts thrift ListDynamicConfigRequest type to internal
-func ToListDynamicConfigRequest(t *admin.ListDynamicConfigRequest) *types.ListDynamicConfigRequest {
+// ToAdminListDynamicConfigRequest converts thrift ListDynamicConfigRequest type to internal
+func ToAdminListDynamicConfigRequest(t *admin.ListDynamicConfigRequest) *types.ListDynamicConfigRequest {
 	if t == nil {
 		return nil
 	}
@@ -584,8 +683,8 @@ func ToListDynamicConfigRequest(t *admin.ListDynamicConfigRequest) *types.ListDy
 	}
 }
 
-//ToListDynamicConfigResponse converts thrift ListDynamicConfigResponse type to internal
-func ToListDynamicConfigResponse(t *admin.ListDynamicConfigResponse) *types.ListDynamicConfigResponse {
+// ToAdminListDynamicConfigResponse converts thrift ListDynamicConfigResponse type to internal
+func ToAdminListDynamicConfigResponse(t *admin.ListDynamicConfigResponse) *types.ListDynamicConfigResponse {
 	if t == nil {
 		return nil
 	}
@@ -593,3 +692,305 @@ func ToListDynamicConfigResponse(t *admin.ListDynamicConfigResponse) *types.List
 		Entries: ToDynamicConfigEntryArray(t.Entries),
 	}
 }
+
+func FromAdminGetGlobalIsolationGroupsRequest(t *types.GetGlobalIsolationGroupsRequest) *admin.GetGlobalIsolationGroupsRequest {
+	if t == nil {
+		return nil
+	}
+	return &admin.GetGlobalIsolationGroupsRequest{}
+}
+
+func FromAdminGetDomainIsolationGroupsRequest(t *types.GetDomainIsolationGroupsRequest) *admin.GetDomainIsolationGroupsRequest {
+	if t == nil {
+		return nil
+	}
+	return &admin.GetDomainIsolationGroupsRequest{
+		Domain: &t.Domain,
+	}
+}
+
+func FromAdminGetGlobalIsolationGroupsResponse(t *types.GetGlobalIsolationGroupsResponse) *admin.GetGlobalIsolationGroupsResponse {
+	if t == nil {
+		return nil
+	}
+	cfg := FromIsolationGroupConfig(&t.IsolationGroups)
+	if cfg == nil || cfg.GetIsolationGroups() == nil {
+		return &admin.GetGlobalIsolationGroupsResponse{}
+	}
+	return &admin.GetGlobalIsolationGroupsResponse{
+		IsolationGroups: cfg,
+	}
+}
+
+func ToAdminGetGlobalIsolationGroupsResponse(t *admin.GetGlobalIsolationGroupsResponse) *types.GetGlobalIsolationGroupsResponse {
+	if t == nil {
+		return nil
+	}
+	if t.IsolationGroups == nil {
+		return &types.GetGlobalIsolationGroupsResponse{}
+	}
+	ig := ToIsolationGroupConfig(t.IsolationGroups)
+	if ig == nil || len(*ig) == 0 {
+		return &types.GetGlobalIsolationGroupsResponse{}
+	}
+	return &types.GetGlobalIsolationGroupsResponse{
+		IsolationGroups: *ig,
+	}
+}
+
+func ToAdminGetDomainIsolationGroupsResponse(t *admin.GetDomainIsolationGroupsResponse) *types.GetDomainIsolationGroupsResponse {
+	if t == nil {
+		return nil
+	}
+	if t.IsolationGroups == nil {
+		return &types.GetDomainIsolationGroupsResponse{}
+	}
+	ig := ToIsolationGroupConfig(t.IsolationGroups)
+	if ig == nil || len(*ig) == 0 {
+		return &types.GetDomainIsolationGroupsResponse{}
+	}
+	return &types.GetDomainIsolationGroupsResponse{
+		IsolationGroups: *ig,
+	}
+}
+
+func ToAdminGetGlobalIsolationGroupsRequest(t *admin.GetGlobalIsolationGroupsRequest) *types.GetGlobalIsolationGroupsRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.GetGlobalIsolationGroupsRequest{}
+}
+
+func FromAdminGetDomainIsolationGroupsResponse(t *types.GetDomainIsolationGroupsResponse) *admin.GetDomainIsolationGroupsResponse {
+	if t == nil {
+		return nil
+	}
+	cfg := FromIsolationGroupConfig(&t.IsolationGroups)
+	return &admin.GetDomainIsolationGroupsResponse{
+		IsolationGroups: cfg,
+	}
+}
+
+func ToAdminGetDomainIsolationGroupsRequest(t *admin.GetDomainIsolationGroupsRequest) *types.GetDomainIsolationGroupsRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.GetDomainIsolationGroupsRequest{Domain: t.GetDomain()}
+}
+
+func FromAdminUpdateGlobalIsolationGroupsResponse(t *types.UpdateGlobalIsolationGroupsResponse) *admin.UpdateGlobalIsolationGroupsResponse {
+	if t == nil {
+		return nil
+	}
+	return &admin.UpdateGlobalIsolationGroupsResponse{}
+}
+
+func FromAdminUpdateGlobalIsolationGroupsRequest(t *types.UpdateGlobalIsolationGroupsRequest) *admin.UpdateGlobalIsolationGroupsRequest {
+	if t == nil {
+		return nil
+	}
+	if t.IsolationGroups == nil {
+		return &admin.UpdateGlobalIsolationGroupsRequest{}
+	}
+	return &admin.UpdateGlobalIsolationGroupsRequest{
+		IsolationGroups: FromIsolationGroupConfig(&t.IsolationGroups),
+	}
+}
+
+func FromAdminUpdateDomainIsolationGroupsRequest(t *types.UpdateDomainIsolationGroupsRequest) *admin.UpdateDomainIsolationGroupsRequest {
+	if t == nil {
+		return nil
+	}
+	if t.IsolationGroups == nil {
+		return &admin.UpdateDomainIsolationGroupsRequest{}
+	}
+	return &admin.UpdateDomainIsolationGroupsRequest{
+		Domain:          &t.Domain,
+		IsolationGroups: FromIsolationGroupConfig(&t.IsolationGroups),
+	}
+}
+
+func ToAdminUpdateGlobalIsolationGroupsRequest(t *admin.UpdateGlobalIsolationGroupsRequest) *types.UpdateGlobalIsolationGroupsRequest {
+	if t == nil {
+		return nil
+	}
+	cfg := ToIsolationGroupConfig(t.IsolationGroups)
+	if cfg == nil {
+		return &types.UpdateGlobalIsolationGroupsRequest{}
+	}
+	return &types.UpdateGlobalIsolationGroupsRequest{
+		IsolationGroups: *cfg,
+	}
+}
+
+func ToAdminUpdateGlobalIsolationGroupsResponse(t *admin.UpdateGlobalIsolationGroupsResponse) *types.UpdateGlobalIsolationGroupsResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.UpdateGlobalIsolationGroupsResponse{}
+}
+
+func ToAdminUpdateDomainIsolationGroupsResponse(t *admin.UpdateDomainIsolationGroupsResponse) *types.UpdateDomainIsolationGroupsResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.UpdateDomainIsolationGroupsResponse{}
+}
+
+func FromAdminUpdateDomainIsolationGroupsResponse(t *types.UpdateDomainIsolationGroupsResponse) *admin.UpdateDomainIsolationGroupsResponse {
+	if t == nil {
+		return nil
+	}
+	return &admin.UpdateDomainIsolationGroupsResponse{}
+}
+
+func ToAdminUpdateDomainIsolationGroupsRequest(t *admin.UpdateDomainIsolationGroupsRequest) *types.UpdateDomainIsolationGroupsRequest {
+	if t == nil {
+		return nil
+	}
+	cfg := ToIsolationGroupConfig(t.IsolationGroups)
+	if cfg == nil {
+		return &types.UpdateDomainIsolationGroupsRequest{
+			Domain: t.GetDomain(),
+		}
+	}
+	return &types.UpdateDomainIsolationGroupsRequest{
+		Domain:          t.GetDomain(),
+		IsolationGroups: *cfg,
+	}
+}
+
+func FromIsolationGroupConfig(in *types.IsolationGroupConfiguration) *shared.IsolationGroupConfiguration {
+	if in == nil {
+		return nil
+	}
+	var out []*shared.IsolationGroupPartition
+	for _, v := range *in {
+		out = append(out, &shared.IsolationGroupPartition{
+			Name:  strPtr(v.Name),
+			State: igStatePtr(shared.IsolationGroupState(v.State)),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i] == nil || out[j] == nil {
+			return false
+		}
+		return *out[i].Name < *out[j].Name
+	})
+	return &shared.IsolationGroupConfiguration{
+		IsolationGroups: out,
+	}
+}
+
+func ToIsolationGroupConfig(in *shared.IsolationGroupConfiguration) *types.IsolationGroupConfiguration {
+	if in == nil {
+		return nil
+	}
+	out := make(types.IsolationGroupConfiguration)
+	for v := range in.IsolationGroups {
+		out[in.IsolationGroups[v].GetName()] = types.IsolationGroupPartition{
+			Name:  in.IsolationGroups[v].GetName(),
+			State: types.IsolationGroupState(in.IsolationGroups[v].GetState()),
+		}
+	}
+	return &out
+}
+
+func ToAdminGetDomainAsyncWorkflowConfiguratonRequest(in *admin.GetDomainAsyncWorkflowConfiguratonRequest) *types.GetDomainAsyncWorkflowConfiguratonRequest {
+	if in == nil {
+		return nil
+	}
+	return &types.GetDomainAsyncWorkflowConfiguratonRequest{
+		Domain: in.GetDomain(),
+	}
+}
+
+func FromAdminGetDomainAsyncWorkflowConfiguratonResponse(in *types.GetDomainAsyncWorkflowConfiguratonResponse) *admin.GetDomainAsyncWorkflowConfiguratonResponse {
+	if in == nil {
+		return nil
+	}
+	return &admin.GetDomainAsyncWorkflowConfiguratonResponse{
+		Configuration: FromDomainAsyncWorkflowConfiguraton(in.Configuration),
+	}
+}
+
+func FromDomainAsyncWorkflowConfiguraton(in *types.AsyncWorkflowConfiguration) *shared.AsyncWorkflowConfiguration {
+	if in == nil {
+		return nil
+	}
+
+	return &shared.AsyncWorkflowConfiguration{
+		Enabled:             &in.Enabled,
+		PredefinedQueueName: strPtr(in.PredefinedQueueName),
+		QueueType:           strPtr(in.QueueType),
+		QueueConfig:         FromDataBlob(in.QueueConfig),
+	}
+}
+
+func ToAdminUpdateDomainAsyncWorkflowConfiguratonRequest(in *admin.UpdateDomainAsyncWorkflowConfiguratonRequest) *types.UpdateDomainAsyncWorkflowConfiguratonRequest {
+	if in == nil {
+		return nil
+	}
+	return &types.UpdateDomainAsyncWorkflowConfiguratonRequest{
+		Domain:        in.GetDomain(),
+		Configuration: ToDomainAsyncWorkflowConfiguraton(in.Configuration),
+	}
+}
+
+func ToDomainAsyncWorkflowConfiguraton(in *shared.AsyncWorkflowConfiguration) *types.AsyncWorkflowConfiguration {
+	if in == nil {
+		return nil
+	}
+
+	return &types.AsyncWorkflowConfiguration{
+		Enabled:             in.GetEnabled(),
+		PredefinedQueueName: in.GetPredefinedQueueName(),
+		QueueType:           in.GetQueueType(),
+		QueueConfig:         ToDataBlob(in.GetQueueConfig()),
+	}
+}
+
+func FromAdminUpdateDomainAsyncWorkflowConfiguratonResponse(in *types.UpdateDomainAsyncWorkflowConfiguratonResponse) *admin.UpdateDomainAsyncWorkflowConfiguratonResponse {
+	if in == nil {
+		return nil
+	}
+	return &admin.UpdateDomainAsyncWorkflowConfiguratonResponse{}
+}
+
+func FromAdminGetDomainAsyncWorkflowConfiguratonRequest(in *types.GetDomainAsyncWorkflowConfiguratonRequest) *admin.GetDomainAsyncWorkflowConfiguratonRequest {
+	if in == nil {
+		return nil
+	}
+	return &admin.GetDomainAsyncWorkflowConfiguratonRequest{
+		Domain: strPtr(in.Domain),
+	}
+}
+
+func ToAdminGetDomainAsyncWorkflowConfiguratonResponse(in *admin.GetDomainAsyncWorkflowConfiguratonResponse) *types.GetDomainAsyncWorkflowConfiguratonResponse {
+	if in == nil {
+		return nil
+	}
+	return &types.GetDomainAsyncWorkflowConfiguratonResponse{
+		Configuration: ToDomainAsyncWorkflowConfiguraton(in.Configuration),
+	}
+}
+
+func FromAdminUpdateDomainAsyncWorkflowConfiguratonRequest(in *types.UpdateDomainAsyncWorkflowConfiguratonRequest) *admin.UpdateDomainAsyncWorkflowConfiguratonRequest {
+	if in == nil {
+		return nil
+	}
+	return &admin.UpdateDomainAsyncWorkflowConfiguratonRequest{
+		Domain:        strPtr(in.Domain),
+		Configuration: FromDomainAsyncWorkflowConfiguraton(in.Configuration),
+	}
+}
+
+func ToAdminUpdateDomainAsyncWorkflowConfiguratonResponse(in *admin.UpdateDomainAsyncWorkflowConfiguratonResponse) *types.UpdateDomainAsyncWorkflowConfiguratonResponse {
+	if in == nil {
+		return nil
+	}
+	return &types.UpdateDomainAsyncWorkflowConfiguratonResponse{}
+}
+
+func strPtr(s string) *string                                             { return &s }
+func igStatePtr(s shared.IsolationGroupState) *shared.IsolationGroupState { return &s }

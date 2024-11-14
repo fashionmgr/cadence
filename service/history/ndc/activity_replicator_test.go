@@ -52,17 +52,16 @@ type (
 		suite.Suite
 		*require.Assertions
 
-		controller          *gomock.Controller
-		mockShard           *shard.TestContext
-		mockEngine          *engine.MockEngine
-		mockDomainCache     *cache.MockDomainCache
-		mockClusterMetadata *cluster.MockMetadata
-		mockMutableState    *execution.MockMutableState
+		controller       *gomock.Controller
+		mockShard        *shard.TestContext
+		mockEngine       *engine.MockEngine
+		mockDomainCache  *cache.MockDomainCache
+		mockMutableState *execution.MockMutableState
 
 		mockExecutionMgr *mocks.ExecutionManager
 
 		logger         log.Logger
-		executionCache *execution.Cache
+		executionCache execution.Cache
 
 		activityReplicator ActivityReplicator
 	}
@@ -88,6 +87,7 @@ func (s *activityReplicatorSuite) SetupTest() {
 	s.mockMutableState = execution.NewMockMutableState(s.controller)
 
 	s.mockShard = shard.NewTestContext(
+		s.T(),
 		s.controller,
 		&persistence.ShardInfo{
 			ShardID:          0,
@@ -99,19 +99,13 @@ func (s *activityReplicatorSuite) SetupTest() {
 
 	s.mockDomainCache = s.mockShard.Resource.DomainCache
 	s.mockExecutionMgr = s.mockShard.Resource.ExecutionMgr
-	s.mockClusterMetadata = s.mockShard.Resource.ClusterMetadata
-	s.mockClusterMetadata.EXPECT().IsGlobalDomainEnabled().Return(true).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestAllClusterInfo).AnyTimes()
-
 	s.logger = s.mockShard.GetLogger()
 
 	s.executionCache = execution.NewCache(s.mockShard)
 	s.mockEngine = engine.NewMockEngine(s.controller)
 	s.mockEngine.EXPECT().NotifyNewHistoryEvent(gomock.Any()).AnyTimes()
-	s.mockEngine.EXPECT().NotifyNewTransferTasks(gomock.Any(), gomock.Any()).AnyTimes()
-	s.mockEngine.EXPECT().NotifyNewTimerTasks(gomock.Any(), gomock.Any()).AnyTimes()
-	s.mockEngine.EXPECT().NotifyNewCrossClusterTasks(gomock.Any(), gomock.Any()).AnyTimes()
+	s.mockEngine.EXPECT().NotifyNewTransferTasks(gomock.Any()).AnyTimes()
+	s.mockEngine.EXPECT().NotifyNewTimerTasks(gomock.Any()).AnyTimes()
 	s.mockShard.SetEngine(s.mockEngine)
 
 	s.activityReplicator = NewActivityReplicator(
@@ -138,12 +132,15 @@ func (s *activityReplicatorSuite) TestSyncActivity_WorkflowNotFound() {
 		WorkflowID: workflowID,
 		RunID:      runID,
 	}
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	s.mockExecutionMgr.On("GetWorkflowExecution", mock.Anything, &persistence.GetWorkflowExecutionRequest{
 		DomainID: domainID,
 		Execution: types.WorkflowExecution{
 			WorkflowID: workflowID,
 			RunID:      runID,
 		},
+		DomainName: domainName,
+		RangeID:    1,
 	}).Return(nil, &types.EntityNotExistsError{})
 	s.mockDomainCache.EXPECT().GetDomainByID(domainID).Return(
 		cache.NewGlobalDomainCacheEntryForTest(
@@ -157,7 +154,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_WorkflowNotFound() {
 				},
 			},
 			version,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -180,6 +176,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_WorkflowClosed() {
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:   domainID,
 		WorkflowID: workflowID,
@@ -201,7 +198,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_WorkflowClosed() {
 				},
 			},
 			version,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -240,6 +236,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_IncomingScheduleIDLarger_Inco
 		versionHistoryItem0,
 		versionHistoryItem2,
 	})
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:       domainID,
 		WorkflowID:     workflowID,
@@ -264,7 +261,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_IncomingScheduleIDLarger_Inco
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -290,7 +286,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_IncomingScheduleIDLarger_Inco
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:    domainID,
 		WorkflowID:  workflowID,
@@ -315,7 +311,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_IncomingScheduleIDLarger_Inco
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -352,7 +347,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_VersionHistories_IncomingVers
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:       domainID,
 		WorkflowID:     workflowID,
@@ -393,7 +388,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_VersionHistories_IncomingVers
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -431,7 +425,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_DifferentVersionHistories_Inc
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:       domainID,
 		WorkflowID:     workflowID,
@@ -468,7 +462,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_DifferentVersionHistories_Inc
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -521,7 +514,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_VersionHistories_IncomingSche
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:       domainID,
 		WorkflowID:     workflowID,
@@ -558,7 +551,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_VersionHistories_IncomingSche
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -607,7 +599,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_VersionHistories_SameSchedule
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:       domainID,
 		WorkflowID:     workflowID,
@@ -646,7 +638,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_VersionHistories_SameSchedule
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -680,7 +671,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_VersionHistories_LocalVersion
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:       domainID,
 		WorkflowID:     workflowID,
@@ -723,7 +714,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_VersionHistories_LocalVersion
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 
@@ -754,7 +744,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityCompleted() {
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:       domainID,
 		WorkflowID:     workflowID,
@@ -779,7 +769,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityCompleted() {
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 	s.mockMutableState.EXPECT().GetActivityInfo(scheduleID).Return(nil, false).AnyTimes()
@@ -811,7 +800,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_LocalActivity
 	context.EXPECT().Clear().AnyTimes()
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:       domainID,
 		WorkflowID:     workflowID,
@@ -836,7 +825,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_LocalActivity
 				},
 			},
 			lastWriteVersion,
-			nil,
 		), nil,
 	).AnyTimes()
 	s.mockMutableState.EXPECT().GetActivityInfo(scheduleID).Return(&persistence.ActivityInfo{
@@ -875,7 +863,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_SameVe
 	context.EXPECT().Clear().Times(1)
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:          domainID,
 		WorkflowID:        workflowID,
@@ -906,7 +894,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_SameVe
 				},
 			},
 			version,
-			nil,
 		), nil,
 	).AnyTimes()
 	activityInfo := &persistence.ActivityInfo{
@@ -915,7 +902,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_SameVe
 		Attempt:    attempt,
 	}
 	s.mockMutableState.EXPECT().GetActivityInfo(scheduleID).Return(activityInfo, true).AnyTimes()
-	s.mockClusterMetadata.EXPECT().IsVersionFromSameCluster(version, activityInfo.Version).Return(true).AnyTimes()
 
 	expectedErr := errors.New("this is error is used to by pass lots of mocking")
 	s.mockMutableState.EXPECT().ReplicateActivityInfo(request, false).Return(expectedErr).Times(1)
@@ -952,7 +938,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_SameVe
 	context.EXPECT().Clear().Times(1)
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:          domainID,
 		WorkflowID:        workflowID,
@@ -983,7 +969,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_SameVe
 				},
 			},
 			version,
-			nil,
 		), nil,
 	).AnyTimes()
 	activityInfo := &persistence.ActivityInfo{
@@ -992,7 +977,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_SameVe
 		Attempt:    attempt - 1,
 	}
 	s.mockMutableState.EXPECT().GetActivityInfo(scheduleID).Return(activityInfo, true).AnyTimes()
-	s.mockClusterMetadata.EXPECT().IsVersionFromSameCluster(version, activityInfo.Version).Return(true).AnyTimes()
 
 	expectedErr := errors.New("this is error is used to by pass lots of mocking")
 	s.mockMutableState.EXPECT().ReplicateActivityInfo(request, true).Return(expectedErr).Times(1)
@@ -1029,7 +1013,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_Larger
 	context.EXPECT().Clear().Times(1)
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:          domainID,
 		WorkflowID:        workflowID,
@@ -1060,7 +1044,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_Larger
 				},
 			},
 			version,
-			nil,
 		), nil,
 	).AnyTimes()
 	activityInfo := &persistence.ActivityInfo{
@@ -1069,7 +1052,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_Update_Larger
 		Attempt:    attempt + 1,
 	}
 	s.mockMutableState.EXPECT().GetActivityInfo(scheduleID).Return(activityInfo, true).AnyTimes()
-	s.mockClusterMetadata.EXPECT().IsVersionFromSameCluster(version, activityInfo.Version).Return(false).AnyTimes()
 
 	expectedErr := errors.New("this is error is used to by pass lots of mocking")
 	s.mockMutableState.EXPECT().ReplicateActivityInfo(request, true).Return(expectedErr).Times(1)
@@ -1105,7 +1087,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning() {
 	context.EXPECT().Unlock().Times(1)
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:          domainID,
 		WorkflowID:        workflowID,
@@ -1136,7 +1118,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning() {
 				},
 			},
 			version,
-			nil,
 		), nil,
 	).AnyTimes()
 	activityInfo := &persistence.ActivityInfo{
@@ -1147,7 +1128,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning() {
 	s.mockMutableState.EXPECT().GetActivityInfo(scheduleID).Return(activityInfo, true).AnyTimes()
 	activityInfos := map[int64]*persistence.ActivityInfo{activityInfo.ScheduleID: activityInfo}
 	s.mockMutableState.EXPECT().GetPendingActivityInfos().Return(activityInfos).AnyTimes()
-	s.mockClusterMetadata.EXPECT().IsVersionFromSameCluster(version, activityInfo.Version).Return(false).AnyTimes()
 
 	s.mockMutableState.EXPECT().ReplicateActivityInfo(request, true).Return(nil).Times(1)
 	s.mockMutableState.EXPECT().UpdateActivity(activityInfo).Return(nil).Times(1)
@@ -1162,6 +1142,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning() {
 		nil,
 		execution.TransactionPolicyPassive,
 		nil,
+		persistence.CreateWorkflowRequestModeReplicated,
 	).Return(nil).Times(1)
 	err = s.activityReplicator.SyncActivity(ctx.Background(), request)
 	s.NoError(err)
@@ -1194,7 +1175,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_ZombieWorkflo
 	context.EXPECT().Unlock().Times(1)
 	_, err := s.executionCache.PutIfNotExist(key, context)
 	s.NoError(err)
-
+	s.mockDomainCache.EXPECT().GetDomainName(domainID).Return(domainName, nil).AnyTimes()
 	request := &types.SyncActivityRequest{
 		DomainID:          domainID,
 		WorkflowID:        workflowID,
@@ -1225,7 +1206,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_ZombieWorkflo
 				},
 			},
 			version,
-			nil,
 		), nil,
 	).AnyTimes()
 	activityInfo := &persistence.ActivityInfo{
@@ -1236,7 +1216,6 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_ZombieWorkflo
 	s.mockMutableState.EXPECT().GetActivityInfo(scheduleID).Return(activityInfo, true).AnyTimes()
 	activityInfos := map[int64]*persistence.ActivityInfo{activityInfo.ScheduleID: activityInfo}
 	s.mockMutableState.EXPECT().GetPendingActivityInfos().Return(activityInfos).AnyTimes()
-	s.mockClusterMetadata.EXPECT().IsVersionFromSameCluster(version, activityInfo.Version).Return(false).AnyTimes()
 
 	s.mockMutableState.EXPECT().ReplicateActivityInfo(request, true).Return(nil).Times(1)
 	s.mockMutableState.EXPECT().UpdateActivity(activityInfo).Return(nil).Times(1)
@@ -1251,6 +1230,7 @@ func (s *activityReplicatorSuite) TestSyncActivity_ActivityRunning_ZombieWorkflo
 		nil,
 		execution.TransactionPolicyPassive,
 		nil,
+		persistence.CreateWorkflowRequestModeReplicated,
 	).Return(nil).Times(1)
 	err = s.activityReplicator.SyncActivity(ctx.Background(), request)
 	s.NoError(err)

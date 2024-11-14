@@ -32,6 +32,7 @@ import "uber/cadence/api/v1/query.proto";
 import "uber/cadence/api/v1/tasklist.proto";
 import "uber/cadence/api/v1/service_worker.proto";
 import "uber/cadence/api/v1/service_workflow.proto";
+import "uber/cadence/api/v1/history.proto";
 import "uber/cadence/shared/v1/history.proto";
 import "uber/cadence/shared/v1/tasklist.proto";
 
@@ -84,11 +85,18 @@ service MatchingAPI {
   rpc GetTaskListsByDomain(GetTaskListsByDomainRequest) returns (GetTaskListsByDomainResponse);
 }
 
+message TaskListPartitionConfig {
+  int64 version = 1;
+  int32 num_read_partitions = 2;
+  int32 num_write_partitions = 3;
+}
+
 message PollForDecisionTaskRequest {
   api.v1.PollForDecisionTaskRequest request = 1;
   string domain_id = 2;
   string poller_id = 3;
   string forwarded_from = 4;
+  string isolation_group = 5;
 }
 
 message PollForDecisionTaskResponse {
@@ -109,6 +117,8 @@ message PollForDecisionTaskResponse {
   google.protobuf.Timestamp scheduled_time = 15;
   google.protobuf.Timestamp started_time = 16;
   map<string, api.v1.WorkflowQuery> queries = 17;
+  int64 total_history_bytes = 18;
+  TaskListPartitionConfig partition_config = 19;
 }
 
 message PollForActivityTaskRequest {
@@ -116,6 +126,7 @@ message PollForActivityTaskRequest {
   string domain_id = 2;
   string poller_id = 3;
   string forwarded_from = 4;
+  string isolation_group = 5;
 }
 
 message PollForActivityTaskResponse {
@@ -135,6 +146,7 @@ message PollForActivityTaskResponse {
   api.v1.WorkflowType workflow_type = 14;
   string workflow_domain = 15;
   api.v1.Header header = 16;
+  TaskListPartitionConfig partition_config = 19;
 }
 
 message AddDecisionTaskRequest {
@@ -145,9 +157,11 @@ message AddDecisionTaskRequest {
   google.protobuf.Duration schedule_to_start_timeout = 5;
   shared.v1.TaskSource source = 6;
   string forwarded_from = 7;
+  map<string, string> partition_config = 8;
 }
 
 message AddDecisionTaskResponse {
+  TaskListPartitionConfig partition_config = 1;
 }
 
 message AddActivityTaskRequest {
@@ -159,9 +173,22 @@ message AddActivityTaskRequest {
   google.protobuf.Duration schedule_to_start_timeout = 6;
   shared.v1.TaskSource source = 7;
   string forwarded_from = 8;
+  ActivityTaskDispatchInfo activityTaskDispatchInfo = 9;
+  map<string, string> partition_config = 10;
+}
+
+message ActivityTaskDispatchInfo {
+  api.v1.HistoryEvent scheduled_event = 1;
+  google.protobuf.Timestamp started_time = 2;
+  int32 attempt = 3;
+  google.protobuf.Timestamp scheduled_time_of_this_attempt = 4;
+  api.v1.Payload heartbeat_details = 5;
+  api.v1.WorkflowType workflow_type = 6;
+  string workflow_domain = 7;
 }
 
 message AddActivityTaskResponse {
+  TaskListPartitionConfig partition_config = 1;
 }
 
 message QueryWorkflowRequest {
@@ -224,4 +251,3 @@ message GetTaskListsByDomainResponse {
   map <string,DescribeTaskListResponse> decision_task_list_map = 1;
   map <string,DescribeTaskListResponse> activity_task_list_map = 2;
 }
-

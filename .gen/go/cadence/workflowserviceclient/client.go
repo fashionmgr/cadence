@@ -70,6 +70,12 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) (*shared.DescribeWorkflowExecutionResponse, error)
 
+	DiagnoseWorkflowExecution(
+		ctx context.Context,
+		DiagnoseRequest *shared.DiagnoseWorkflowExecutionRequest,
+		opts ...yarpc.CallOption,
+	) (*shared.DiagnoseWorkflowExecutionResponse, error)
+
 	GetClusterInfo(
 		ctx context.Context,
 		opts ...yarpc.CallOption,
@@ -158,6 +164,12 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) (*shared.RecordActivityTaskHeartbeatResponse, error)
 
+	RefreshWorkflowTasks(
+		ctx context.Context,
+		Request *shared.RefreshWorkflowTasksRequest,
+		opts ...yarpc.CallOption,
+	) error
+
 	RegisterDomain(
 		ctx context.Context,
 		RegisterRequest *shared.RegisterDomainRequest,
@@ -236,6 +248,12 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) error
 
+	RestartWorkflowExecution(
+		ctx context.Context,
+		RestartRequest *shared.RestartWorkflowExecutionRequest,
+		opts ...yarpc.CallOption,
+	) (*shared.RestartWorkflowExecutionResponse, error)
+
 	ScanWorkflowExecutions(
 		ctx context.Context,
 		ListRequest *shared.ListWorkflowExecutionsRequest,
@@ -248,6 +266,12 @@ type Interface interface {
 		opts ...yarpc.CallOption,
 	) (*shared.StartWorkflowExecutionResponse, error)
 
+	SignalWithStartWorkflowExecutionAsync(
+		ctx context.Context,
+		SignalWithStartRequest *shared.SignalWithStartWorkflowExecutionAsyncRequest,
+		opts ...yarpc.CallOption,
+	) (*shared.SignalWithStartWorkflowExecutionAsyncResponse, error)
+
 	SignalWorkflowExecution(
 		ctx context.Context,
 		SignalRequest *shared.SignalWorkflowExecutionRequest,
@@ -259,6 +283,12 @@ type Interface interface {
 		StartRequest *shared.StartWorkflowExecutionRequest,
 		opts ...yarpc.CallOption,
 	) (*shared.StartWorkflowExecutionResponse, error)
+
+	StartWorkflowExecutionAsync(
+		ctx context.Context,
+		StartRequest *shared.StartWorkflowExecutionAsyncRequest,
+		opts ...yarpc.CallOption,
+	) (*shared.StartWorkflowExecutionAsyncResponse, error)
 
 	TerminateWorkflowExecution(
 		ctx context.Context,
@@ -275,7 +305,7 @@ type Interface interface {
 
 // New builds a new client for the WorkflowService service.
 //
-// 	client := workflowserviceclient.New(dispatcher.ClientConfig("workflowservice"))
+//	client := workflowserviceclient.New(dispatcher.ClientConfig("workflowservice"))
 func New(c transport.ClientConfig, opts ...thrift.ClientOption) Interface {
 	return client{
 		c: thrift.New(thrift.Config{
@@ -439,6 +469,34 @@ func (c client) DescribeWorkflowExecution(
 	}
 
 	success, err = cadence.WorkflowService_DescribeWorkflowExecution_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) DiagnoseWorkflowExecution(
+	ctx context.Context,
+	_DiagnoseRequest *shared.DiagnoseWorkflowExecutionRequest,
+	opts ...yarpc.CallOption,
+) (success *shared.DiagnoseWorkflowExecutionResponse, err error) {
+
+	var result cadence.WorkflowService_DiagnoseWorkflowExecution_Result
+	args := cadence.WorkflowService_DiagnoseWorkflowExecution_Helper.Args(_DiagnoseRequest)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = cadence.WorkflowService_DiagnoseWorkflowExecution_Helper.UnwrapResponse(&result)
 	return
 }
 
@@ -860,6 +918,34 @@ func (c client) RecordActivityTaskHeartbeatByID(
 	return
 }
 
+func (c client) RefreshWorkflowTasks(
+	ctx context.Context,
+	_Request *shared.RefreshWorkflowTasksRequest,
+	opts ...yarpc.CallOption,
+) (err error) {
+
+	var result cadence.WorkflowService_RefreshWorkflowTasks_Result
+	args := cadence.WorkflowService_RefreshWorkflowTasks_Helper.Args(_Request)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	err = cadence.WorkflowService_RefreshWorkflowTasks_Helper.UnwrapResponse(&result)
+	return
+}
+
 func (c client) RegisterDomain(
 	ctx context.Context,
 	_RegisterRequest *shared.RegisterDomainRequest,
@@ -1224,6 +1310,34 @@ func (c client) RespondQueryTaskCompleted(
 	return
 }
 
+func (c client) RestartWorkflowExecution(
+	ctx context.Context,
+	_RestartRequest *shared.RestartWorkflowExecutionRequest,
+	opts ...yarpc.CallOption,
+) (success *shared.RestartWorkflowExecutionResponse, err error) {
+
+	var result cadence.WorkflowService_RestartWorkflowExecution_Result
+	args := cadence.WorkflowService_RestartWorkflowExecution_Helper.Args(_RestartRequest)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = cadence.WorkflowService_RestartWorkflowExecution_Helper.UnwrapResponse(&result)
+	return
+}
+
 func (c client) ScanWorkflowExecutions(
 	ctx context.Context,
 	_ListRequest *shared.ListWorkflowExecutionsRequest,
@@ -1280,6 +1394,34 @@ func (c client) SignalWithStartWorkflowExecution(
 	return
 }
 
+func (c client) SignalWithStartWorkflowExecutionAsync(
+	ctx context.Context,
+	_SignalWithStartRequest *shared.SignalWithStartWorkflowExecutionAsyncRequest,
+	opts ...yarpc.CallOption,
+) (success *shared.SignalWithStartWorkflowExecutionAsyncResponse, err error) {
+
+	var result cadence.WorkflowService_SignalWithStartWorkflowExecutionAsync_Result
+	args := cadence.WorkflowService_SignalWithStartWorkflowExecutionAsync_Helper.Args(_SignalWithStartRequest)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = cadence.WorkflowService_SignalWithStartWorkflowExecutionAsync_Helper.UnwrapResponse(&result)
+	return
+}
+
 func (c client) SignalWorkflowExecution(
 	ctx context.Context,
 	_SignalRequest *shared.SignalWorkflowExecutionRequest,
@@ -1333,6 +1475,34 @@ func (c client) StartWorkflowExecution(
 	}
 
 	success, err = cadence.WorkflowService_StartWorkflowExecution_Helper.UnwrapResponse(&result)
+	return
+}
+
+func (c client) StartWorkflowExecutionAsync(
+	ctx context.Context,
+	_StartRequest *shared.StartWorkflowExecutionAsyncRequest,
+	opts ...yarpc.CallOption,
+) (success *shared.StartWorkflowExecutionAsyncResponse, err error) {
+
+	var result cadence.WorkflowService_StartWorkflowExecutionAsync_Result
+	args := cadence.WorkflowService_StartWorkflowExecutionAsync_Helper.Args(_StartRequest)
+
+	if c.nwc != nil && c.nwc.Enabled() {
+		if err = c.nwc.Call(ctx, args, &result, opts...); err != nil {
+			return
+		}
+	} else {
+		var body wire.Value
+		if body, err = c.c.Call(ctx, args, opts...); err != nil {
+			return
+		}
+
+		if err = result.FromWire(body); err != nil {
+			return
+		}
+	}
+
+	success, err = cadence.WorkflowService_StartWorkflowExecutionAsync_Helper.UnwrapResponse(&result)
 	return
 }
 

@@ -31,6 +31,11 @@ const (
 )
 
 var (
+	TaskListPartitionConfig = types.TaskListPartitionConfig{
+		Version:            1,
+		NumReadPartitions:  3,
+		NumWritePartitions: 2,
+	}
 	MatchingAddActivityTaskRequest = types.AddActivityTaskRequest{
 		DomainUUID:                    DomainID,
 		Execution:                     &WorkflowExecution,
@@ -40,6 +45,7 @@ var (
 		ScheduleToStartTimeoutSeconds: &Duration1,
 		Source:                        types.TaskSourceDbBacklog.Ptr(),
 		ForwardedFrom:                 ForwardedFrom,
+		PartitionConfig:               PartitionConfig,
 	}
 	MatchingAddDecisionTaskRequest = types.AddDecisionTaskRequest{
 		DomainUUID:                    DomainID,
@@ -49,6 +55,13 @@ var (
 		ScheduleToStartTimeoutSeconds: &Duration1,
 		Source:                        types.TaskSourceDbBacklog.Ptr(),
 		ForwardedFrom:                 ForwardedFrom,
+		PartitionConfig:               PartitionConfig,
+	}
+	MatchingAddActivityTaskResponse = types.AddActivityTaskResponse{
+		PartitionConfig: &TaskListPartitionConfig,
+	}
+	MatchingAddDecisionTaskResponse = types.AddDecisionTaskResponse{
+		PartitionConfig: &TaskListPartitionConfig,
 	}
 	MatchingCancelOutstandingPollRequest = types.CancelOutstandingPollRequest{
 		DomainUUID:   DomainID,
@@ -73,12 +86,13 @@ var (
 		DecisionTaskListPartitions: TaskListPartitionMetadataArray,
 	}
 	MatchingPollForActivityTaskRequest = types.MatchingPollForActivityTaskRequest{
-		DomainUUID:    DomainID,
-		PollerID:      PollerID,
-		PollRequest:   &PollForActivityTaskRequest,
-		ForwardedFrom: ForwardedFrom,
+		DomainUUID:     DomainID,
+		PollerID:       PollerID,
+		PollRequest:    &PollForActivityTaskRequest,
+		ForwardedFrom:  ForwardedFrom,
+		IsolationGroup: IsolationGroup,
 	}
-	MatchingPollForActivityTaskResponse = types.PollForActivityTaskResponse{
+	MatchingPollForActivityTaskResponse = types.MatchingPollForActivityTaskResponse{
 		TaskToken:                       TaskToken,
 		WorkflowExecution:               &WorkflowExecution,
 		ActivityID:                      ActivityID,
@@ -95,12 +109,14 @@ var (
 		WorkflowType:                    &WorkflowType,
 		WorkflowDomain:                  DomainName,
 		Header:                          &Header,
+		PartitionConfig:                 &TaskListPartitionConfig,
 	}
 	MatchingPollForDecisionTaskRequest = types.MatchingPollForDecisionTaskRequest{
-		DomainUUID:    DomainID,
-		PollerID:      PollerID,
-		PollRequest:   &PollForDecisionTaskRequest,
-		ForwardedFrom: ForwardedFrom,
+		DomainUUID:     DomainID,
+		PollerID:       PollerID,
+		PollRequest:    &PollForDecisionTaskRequest,
+		ForwardedFrom:  ForwardedFrom,
+		IsolationGroup: IsolationGroup,
 	}
 	MatchingPollForDecisionTaskResponse = types.MatchingPollForDecisionTaskResponse{
 		TaskToken:                 TaskToken,
@@ -120,6 +136,7 @@ var (
 		ScheduledTimestamp:        &Timestamp1,
 		StartedTimestamp:          &Timestamp2,
 		Queries:                   WorkflowQueryMap,
+		PartitionConfig:           &TaskListPartitionConfig,
 	}
 	MatchingQueryWorkflowRequest = types.MatchingQueryWorkflowRequest{
 		DomainUUID:    DomainID,
@@ -147,4 +164,14 @@ var (
 	}
 
 	DescribeTaskListResponseMap = map[string]*types.DescribeTaskListResponse{DomainName: &MatchingDescribeTaskListResponse}
+
+	MatchingActivityTaskDispatchInfo = types.ActivityTaskDispatchInfo{
+		ScheduledEvent:                  &HistoryEvent_WorkflowExecutionStarted,
+		StartedTimestamp:                &Timestamp1,
+		Attempt:                         &Attempt2,
+		ScheduledTimestampOfThisAttempt: &Timestamp1,
+		HeartbeatDetails:                Payload2,
+		WorkflowType:                    &WorkflowType,
+		WorkflowDomain:                  DomainName,
+	}
 )

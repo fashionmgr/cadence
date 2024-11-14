@@ -54,24 +54,6 @@ func (s *IntegrationSuite) TestQueryWorkflow_Sticky() {
 	stickyTaskList.Name = stl
 	stickyScheduleToStartTimeoutSeconds := common.Int32Ptr(10)
 
-	// Start workflow execution
-	request := &types.StartWorkflowExecutionRequest{
-		RequestID:                           uuid.New(),
-		Domain:                              s.domainName,
-		WorkflowID:                          id,
-		WorkflowType:                        workflowType,
-		TaskList:                            taskList,
-		Input:                               nil,
-		ExecutionStartToCloseTimeoutSeconds: common.Int32Ptr(100),
-		TaskStartToCloseTimeoutSeconds:      common.Int32Ptr(1),
-		Identity:                            identity,
-	}
-
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
-	s.Nil(err0)
-
-	s.Logger.Info("StartWorkflowExecution: response", tag.WorkflowRunID(we.RunID))
-
 	// decider logic
 	activityScheduled := false
 	activityData := int32(1)
@@ -137,8 +119,41 @@ func (s *IntegrationSuite) TestQueryWorkflow_Sticky() {
 		StickyScheduleToStartTimeoutSeconds: stickyScheduleToStartTimeoutSeconds,
 	}
 
+	// Make a request with stick tasklist to refresh the stickiness, otherwise we won't be able to add
+	// decisions to the sticky tasklist
+	ctx, cancel := createContext()
+	defer cancel()
+	resp, err := poller.Engine.PollForDecisionTask(ctx, &types.PollForDecisionTaskRequest{
+		Domain:   poller.Domain,
+		TaskList: poller.StickyTaskList,
+		Identity: poller.Identity,
+	})
+	s.NotNil(resp)
+	s.Equal(0, len(resp.TaskToken))
+	s.Nil(err)
+
+	// Start workflow execution
+	request := &types.StartWorkflowExecutionRequest{
+		RequestID:                           uuid.New(),
+		Domain:                              s.domainName,
+		WorkflowID:                          id,
+		WorkflowType:                        workflowType,
+		TaskList:                            taskList,
+		Input:                               nil,
+		ExecutionStartToCloseTimeoutSeconds: common.Int32Ptr(100),
+		TaskStartToCloseTimeoutSeconds:      common.Int32Ptr(1),
+		Identity:                            identity,
+	}
+
+	ctx, cancel = createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
+	s.Nil(err0)
+
+	s.Logger.Info("StartWorkflowExecution: response", tag.WorkflowRunID(we.RunID))
+
 	// Make first decision to schedule activity
-	_, err := poller.PollAndProcessDecisionTaskWithAttempt(false, false, false, true, int64(0))
+	_, err = poller.PollAndProcessDecisionTaskWithAttempt(false, false, false, true, int64(0))
 	s.Logger.Info("PollAndProcessDecisionTask", tag.Error(err))
 	s.Nil(err)
 
@@ -148,7 +163,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Sticky() {
 	}
 	queryResultCh := make(chan QueryResult)
 	queryWorkflowFn := func(queryType string) {
-		queryResp, err := s.engine.QueryWorkflow(createContext(), &types.QueryWorkflowRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		queryResp, err := s.engine.QueryWorkflow(ctx, &types.QueryWorkflowRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -230,7 +247,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_StickyTimeout() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -311,7 +330,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_StickyTimeout() {
 	}
 	queryResultCh := make(chan QueryResult)
 	queryWorkflowFn := func(queryType string) {
-		queryResp, err := s.engine.QueryWorkflow(createContext(), &types.QueryWorkflowRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		queryResp, err := s.engine.QueryWorkflow(ctx, &types.QueryWorkflowRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -374,7 +395,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_NonSticky() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -452,7 +475,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_NonSticky() {
 	}
 	queryResultCh := make(chan QueryResult)
 	queryWorkflowFn := func(queryType string, rejectCondition *types.QueryRejectCondition) {
-		queryResp, err := s.engine.QueryWorkflow(createContext(), &types.QueryWorkflowRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		queryResp, err := s.engine.QueryWorkflow(ctx, &types.QueryWorkflowRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -581,7 +606,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_PiggybackQuery() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -671,7 +698,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_PiggybackQuery() {
 		// before the query is answer the signal is not handled because the decision task is not dispatched
 		// to the worker yet
 		s.False(handledSignal.Load().(bool))
-		queryResp, err := s.engine.QueryWorkflow(createContext(), &types.QueryWorkflowRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		queryResp, err := s.engine.QueryWorkflow(ctx, &types.QueryWorkflowRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -693,7 +722,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_PiggybackQuery() {
 	// otherwise query will just go through matching
 	signalName := "my signal"
 	signalInput := []byte("my signal input.")
-	err = s.engine.SignalWorkflowExecution(createContext(), &types.SignalWorkflowExecutionRequest{
+	ctx, cancel = createContext()
+	defer cancel()
+	err = s.engine.SignalWorkflowExecution(ctx, &types.SignalWorkflowExecutionRequest{
 		Domain: s.domainName,
 		WorkflowExecution: &types.WorkflowExecution{
 			WorkflowID: id,
@@ -767,7 +798,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_Timeout() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -871,7 +904,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_Timeout() {
 
 	signalName := "my signal"
 	signalInput := []byte("my signal input.")
-	err = s.engine.SignalWorkflowExecution(createContext(), &types.SignalWorkflowExecutionRequest{
+	ctx, cancel = createContext()
+	defer cancel()
+	err = s.engine.SignalWorkflowExecution(ctx, &types.SignalWorkflowExecutionRequest{
 		Domain: s.domainName,
 		WorkflowExecution: &types.WorkflowExecution{
 			WorkflowID: id,
@@ -898,7 +933,6 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_Timeout() {
 	// wait for query to timeout
 	queryResult := <-queryResultCh
 	s.Error(queryResult.Err) // got a timeout error
-	s.Nil(queryResult.Resp)
 }
 
 func (s *IntegrationSuite) TestQueryWorkflow_Consistent_BlockedByStarted_NonSticky() {
@@ -928,7 +962,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_BlockedByStarted_NonStic
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
@@ -1018,7 +1054,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_BlockedByStarted_NonStic
 	queryResultCh := make(chan QueryResult)
 	queryWorkflowFn := func(queryType string, rejectCondition *types.QueryRejectCondition) {
 		s.False(handledSignal.Load().(bool))
-		queryResp, err := s.engine.QueryWorkflow(createContext(), &types.QueryWorkflowRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		queryResp, err := s.engine.QueryWorkflow(ctx, &types.QueryWorkflowRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -1038,7 +1076,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_BlockedByStarted_NonStic
 	// this causes the signal to still be outstanding at the time query arrives
 	signalName := "my signal"
 	signalInput := []byte("my signal input.")
-	err = s.engine.SignalWorkflowExecution(createContext(), &types.SignalWorkflowExecutionRequest{
+	ctx, cancel = createContext()
+	defer cancel()
+	err = s.engine.SignalWorkflowExecution(ctx, &types.SignalWorkflowExecutionRequest{
 		Domain: s.domainName,
 		WorkflowExecution: &types.WorkflowExecution{
 			WorkflowID: id,
@@ -1105,24 +1145,6 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_NewDecisionTask_Sticky()
 	stickyTaskList.Name = stl
 	stickyTaskList.Kind = types.TaskListKindSticky.Ptr()
 	stickyScheduleToStartTimeoutSeconds := common.Int32Ptr(10)
-
-	// Start workflow execution
-	request := &types.StartWorkflowExecutionRequest{
-		RequestID:                           uuid.New(),
-		Domain:                              s.domainName,
-		WorkflowID:                          id,
-		WorkflowType:                        workflowType,
-		TaskList:                            taskList,
-		Input:                               nil,
-		ExecutionStartToCloseTimeoutSeconds: common.Int32Ptr(100),
-		TaskStartToCloseTimeoutSeconds:      common.Int32Ptr(10), // ensure longer than time takes to handle signal
-		Identity:                            identity,
-	}
-
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
-	s.Nil(err0)
-
-	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
 
 	// decider logic
 	activityScheduled := false
@@ -1198,8 +1220,41 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_NewDecisionTask_Sticky()
 		StickyScheduleToStartTimeoutSeconds: stickyScheduleToStartTimeoutSeconds,
 	}
 
+	// Make a request with stick tasklist to refresh the stickiness, otherwise we won't be able to add
+	// decisions to the sticky tasklist
+	ctx, cancel := createContext()
+	defer cancel()
+	resp, err := poller.Engine.PollForDecisionTask(ctx, &types.PollForDecisionTaskRequest{
+		Domain:   poller.Domain,
+		TaskList: poller.StickyTaskList,
+		Identity: poller.Identity,
+	})
+	s.NotNil(resp)
+	s.Equal(0, len(resp.TaskToken))
+	s.Nil(err)
+
+	// Start workflow execution
+	request := &types.StartWorkflowExecutionRequest{
+		RequestID:                           uuid.New(),
+		Domain:                              s.domainName,
+		WorkflowID:                          id,
+		WorkflowType:                        workflowType,
+		TaskList:                            taskList,
+		Input:                               nil,
+		ExecutionStartToCloseTimeoutSeconds: common.Int32Ptr(100),
+		TaskStartToCloseTimeoutSeconds:      common.Int32Ptr(10), // ensure longer than time takes to handle signal
+		Identity:                            identity,
+	}
+
+	ctx, cancel = createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
+	s.Nil(err0)
+
+	s.Logger.Info("StartWorkflowExecution", tag.WorkflowRunID(we.RunID))
+
 	// Make first decision to schedule activity
-	_, err := poller.PollAndProcessDecisionTaskWithAttempt(false, false, false, true, int64(0))
+	_, err = poller.PollAndProcessDecisionTaskWithAttempt(false, false, false, true, int64(0))
 	s.Logger.Info("PollAndProcessDecisionTask", tag.Error(err))
 	s.Nil(err)
 
@@ -1210,7 +1265,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_NewDecisionTask_Sticky()
 	queryResultCh := make(chan QueryResult)
 	queryWorkflowFn := func(queryType string, rejectCondition *types.QueryRejectCondition) {
 		s.False(handledSignal.Load().(bool))
-		queryResp, err := s.engine.QueryWorkflow(createContext(), &types.QueryWorkflowRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		queryResp, err := s.engine.QueryWorkflow(ctx, &types.QueryWorkflowRequest{
 			Domain: s.domainName,
 			Execution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -1230,7 +1287,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_NewDecisionTask_Sticky()
 	// this causes the signal to still be outstanding at the time query arrives
 	signalName := "my signal"
 	signalInput := []byte("my signal input.")
-	err = s.engine.SignalWorkflowExecution(createContext(), &types.SignalWorkflowExecutionRequest{
+	ctx, cancel = createContext()
+	defer cancel()
+	err = s.engine.SignalWorkflowExecution(ctx, &types.SignalWorkflowExecutionRequest{
 		Domain: s.domainName,
 		WorkflowExecution: &types.WorkflowExecution{
 			WorkflowID: id,
@@ -1252,7 +1311,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_Consistent_NewDecisionTask_Sticky()
 		// at this point there is a decision task started on the worker so this second signal will become buffered
 		signalName := "my signal"
 		signalInput := []byte("my signal input.")
-		err = s.engine.SignalWorkflowExecution(createContext(), &types.SignalWorkflowExecutionRequest{
+		ctx, cancel := createContext()
+		defer cancel()
+		err = s.engine.SignalWorkflowExecution(ctx, &types.SignalWorkflowExecutionRequest{
 			Domain: s.domainName,
 			WorkflowExecution: &types.WorkflowExecution{
 				WorkflowID: id,
@@ -1333,7 +1394,9 @@ func (s *IntegrationSuite) TestQueryWorkflow_BeforeFirstDecision() {
 		Identity:                            identity,
 	}
 
-	we, err0 := s.engine.StartWorkflowExecution(createContext(), request)
+	ctx, cancel := createContext()
+	defer cancel()
+	we, err0 := s.engine.StartWorkflowExecution(ctx, request)
 	s.Nil(err0)
 
 	workflowExecution := &types.WorkflowExecution{
@@ -1341,15 +1404,16 @@ func (s *IntegrationSuite) TestQueryWorkflow_BeforeFirstDecision() {
 		RunID:      we.RunID,
 	}
 
+	ctx, cancel = createContext()
+	defer cancel()
 	// query workflow without any decision task should produce an error
-	queryResp, err := s.engine.QueryWorkflow(createContext(), &types.QueryWorkflowRequest{
+	_, err := s.engine.QueryWorkflow(ctx, &types.QueryWorkflowRequest{
 		Domain:    s.domainName,
 		Execution: workflowExecution,
 		Query: &types.WorkflowQuery{
 			QueryType: queryType,
 		},
 	})
-	s.Nil(queryResp)
 	s.IsType(&types.QueryFailedError{}, err)
 	s.Equal("workflow must handle at least one decision task before it can be queried", err.(*types.QueryFailedError).Message)
 }

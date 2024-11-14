@@ -38,11 +38,20 @@ const (
 	// See https://github.com/uber/cadence/issues/4200
 	maxCassandraTTL = int64(157680000)
 
+	// We use local serial consistency level as the default consistency level for conditional updates
+	cassandraDefaultSerialConsLevel = gocql.LocalSerial
+
+	// We use local quorum consistency level as the default consistency level
+	cassandraDefaultConsLevel = gocql.LocalQuorum
+
 	// Although Cadence core data models always require strong consistency, reading visibility is a special case that
 	// eventual consistency is sufficient.
 	// That's because the engine layer writes into visibility with eventual consistency anyway(using transfer tasks)
 	// Do NOT use it in other places, unless you are sure it's the same special cases like reading visibility
-	cassandraLowConslevel = gocql.One
+	cassandraLowConslevel = gocql.LocalOne
+
+	// We use all consistency level for delete operations to prevent the data resurrection issue
+	cassandraAllConslevel = gocql.All
 )
 
 const (
@@ -54,6 +63,10 @@ const (
 	rowTypeReplicationTask
 	rowTypeDLQ
 	rowTypeCrossClusterTask
+	rowTypeWorkflowRequestStart
+	rowTypeWorkflowRequestSignal
+	rowTypeWorkflowRequestCancel
+	rowTypeWorkflowRequestReset
 )
 
 // Guidelines for creating new special UUID constants
@@ -91,7 +104,9 @@ const (
 	rowTypeDLQDomainID = "10000000-6000-f000-f000-000000000000"
 	rowTypeDLQRunID    = "30000000-6000-f000-f000-000000000000"
 	// Special TaskId constants
-	rowTypeExecutionTaskID = int64(-10)
-	rowTypeShardTaskID     = int64(-11)
-	emptyInitiatedID       = int64(-7)
+	rowTypeExecutionTaskID      = int64(-10)
+	rowTypeShardTaskID          = int64(-11)
+	emptyInitiatedID            = int64(-7)
+	emptyWorkflowRequestVersion = int64(-1000)
+	workflowRequestTTLInSeconds = 10800
 )

@@ -23,6 +23,9 @@ package tag
 import (
 	"fmt"
 	"time"
+
+	"github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/common/types"
 )
 
 // All logging tags are defined in this file.
@@ -32,7 +35,7 @@ import (
 //   1. Workflow: these tags are information that are useful to our customer, like workflow-id/run-id/task-list/...
 //   2. System : these tags are internal information which usually cannot be understood by our customers,
 
-///////////////////  Common tags defined here ///////////////////
+// /////////////////  Common tags defined here ///////////////////
 
 // Error returns tag for Error
 func Error(err error) Tag {
@@ -49,7 +52,15 @@ func Timestamp(timestamp time.Time) Tag {
 	return newTimeTag("timestamp", timestamp)
 }
 
-///////////////////  Workflow tags defined here: ( wf is short for workflow) ///////////////////
+func EarliestTime(time int64) Tag {
+	return newInt64("earliest-time", time)
+}
+
+func LatestTime(time int64) Tag {
+	return newInt64("latest-time", time)
+}
+
+// /////////////////  Workflow tags defined here: ( wf is short for workflow) ///////////////////
 
 // WorkflowAction returns tag for WorkflowAction
 func workflowAction(action string) Tag {
@@ -63,6 +74,16 @@ func workflowListFilterType(listFilterType string) Tag {
 
 // general
 
+// ClientImpl returns tag for ClientImpl
+func ClientImpl(clientImpl string) Tag {
+	return newStringTag("client-impl", clientImpl)
+}
+
+// ClientFeatureVersion returns tag for ClientFeatureVersion
+func ClientFeatureVersion(clientFeatureVersion string) Tag {
+	return newStringTag("client-feature-version", clientFeatureVersion)
+}
+
 // WorkflowError returns tag for WorkflowError
 func WorkflowError(error error) Tag {
 	return newErrorTag("wf-error", error)
@@ -71,6 +92,11 @@ func WorkflowError(error error) Tag {
 // WorkflowTimeoutType returns tag for WorkflowTimeoutType
 func WorkflowTimeoutType(timeoutType int64) Tag {
 	return newInt64("wf-timeout-type", timeoutType)
+}
+
+// ActivityTimeoutType returns tag for ActivityTimeoutType
+func ActivityTimeoutType(timerType shared.TimeoutType) Tag {
+	return newStringTag("activity-timer-type", timerType.String())
 }
 
 // WorkflowPollContextTimeout returns tag for WorkflowPollContextTimeout
@@ -88,9 +114,24 @@ func WorkflowID(workflowID string) Tag {
 	return newStringTag("wf-id", workflowID)
 }
 
+// TargetWorkflowID returns tag for target WorkflowID
+func TargetWorkflowID(workflowID string) Tag {
+	return newStringTag("target-wf-id", workflowID)
+}
+
 // WorkflowType returns tag for WorkflowType
 func WorkflowType(wfType string) Tag {
 	return newStringTag("wf-type", wfType)
+}
+
+// WorkflowSignalName returns tag for WorkflowSignalName
+func WorkflowSignalName(signalName string) Tag {
+	return newStringTag("wf-signal-name", signalName)
+}
+
+// WorkflowRequestID returns tag for WorkflowRequestID
+func WorkflowRequestID(requestID string) Tag {
+	return newStringTag("wf-request-id", requestID)
 }
 
 // WorkflowState returns tag for WorkflowState
@@ -101,6 +142,11 @@ func WorkflowState(s int) Tag {
 // WorkflowRunID returns tag for WorkflowRunID
 func WorkflowRunID(runID string) Tag {
 	return newStringTag("wf-run-id", runID)
+}
+
+// TargetWorkflowRunID returns tag for target  WorkflowRunID
+func TargetWorkflowRunID(runID string) Tag {
+	return newStringTag("target-wf-run-id", runID)
 }
 
 // WorkflowResetBaseRunID returns tag for WorkflowResetBaseRunID
@@ -153,11 +199,36 @@ func BlobSizeViolationOperation(operation string) Tag {
 	return newStringTag("blob-size-violation-operation", operation)
 }
 
+// WorkflowCronSchedule returns a tag to report a workflow's cron schedule
+func WorkflowCronSchedule(schedule string) Tag {
+	return newStringTag("wf-cron-schedule", schedule)
+}
+
+// WorkflowCloseStatus returns a tag to report a workflow's close status
+func WorkflowCloseStatus(status int) Tag {
+	return newInt("close-status", status)
+}
+
+// IsWorkflowOpen returns a tag to report a workflow is open or not
+func IsWorkflowOpen(isOpen bool) Tag {
+	return newBoolTag("is-workflow-open", isOpen)
+}
+
+// WorkflowTerminationReason returns a tag to report a workflow's termination reason
+func WorkflowTerminationReason(reason string) Tag {
+	return newStringTag("wf-termination-reason", reason)
+}
+
 // domain related
 
 // WorkflowDomainID returns tag for WorkflowDomainID
 func WorkflowDomainID(domainID string) Tag {
 	return newStringTag("wf-domain-id", domainID)
+}
+
+// TargetWorkflowDomainID returns tag for target WorkflowDomainID
+func TargetWorkflowDomainID(domainID string) Tag {
+	return newStringTag("target-wf-domain-id", domainID)
 }
 
 // WorkflowDomainName returns tag for WorkflowDomainName
@@ -168,6 +239,11 @@ func WorkflowDomainName(domainName string) Tag {
 // WorkflowDomainIDs returns tag for WorkflowDomainIDs
 func WorkflowDomainIDs(domainIDs interface{}) Tag {
 	return newObjectTag("wf-domain-ids", domainIDs)
+}
+
+// OperationName returns tag for OperationName
+func OperationName(operationName string) Tag {
+	return newStringTag("operation-name", operationName)
 }
 
 // history event ID related
@@ -200,16 +276,6 @@ func WorkflowFirstEventID(firstEventID int64) Tag {
 // WorkflowNextEventID returns tag for WorkflowNextEventID
 func WorkflowNextEventID(nextEventID int64) Tag {
 	return newInt64("wf-next-event-id", nextEventID)
-}
-
-// WorkflowBeginningFirstEventID returns tag for WorkflowBeginningFirstEventID
-func WorkflowBeginningFirstEventID(beginningFirstEventID int64) Tag {
-	return newInt64("wf-begining-first-event-id", beginningFirstEventID)
-}
-
-// WorkflowEndingNextEventID returns tag for WorkflowEndingNextEventID
-func WorkflowEndingNextEventID(endingNextEventID int64) Tag {
-	return newInt64("wf-ending-next-event-id", endingNextEventID)
 }
 
 // WorkflowResetNextEventID returns tag for WorkflowResetNextEventID
@@ -288,7 +354,11 @@ func WorkflowEventCount(eventCount int) Tag {
 	return newInt("wf-event-count", eventCount)
 }
 
-///////////////////  System tags defined here:  ///////////////////
+func WorkflowEventType(eventType string) Tag {
+	return newStringTag("wf-event-type", eventType)
+}
+
+// /////////////////  System tags defined here:  ///////////////////
 // Tags with pre-define values
 
 // component returns tag for component
@@ -338,6 +408,11 @@ func Service(sv string) Tag {
 	return newStringTag("service", sv)
 }
 
+// DestService returns tag for destination service
+func DestService(sv string) Tag {
+	return newStringTag("dest-service", sv)
+}
+
 // Addresses returns tag for Addresses
 func Addresses(ads []string) Tag {
 	return newObjectTag("addresses", ads)
@@ -366,6 +441,11 @@ func Key(k string) Tag {
 // Name returns tag for Name
 func Name(k string) Tag {
 	return newStringTag("name", k)
+}
+
+// Mode returns tag for Mode
+func Mode(mode string) Tag {
+	return newStringTag("mode", mode)
 }
 
 // Value returns tag for Value
@@ -408,6 +488,11 @@ func StoreError(storeErr error) Tag {
 	return newErrorTag("store-error", storeErr)
 }
 
+// StoreShard returns tag for StoreShard
+func StoreShard(storeShard string) Tag {
+	return newPredefinedStringTag("store-shard", storeShard)
+}
+
 // ClientError returns tag for ClientError
 func ClientError(clientErr error) Tag {
 	return newErrorTag("client-error", clientErr)
@@ -438,6 +523,38 @@ func Bool(b bool) Tag {
 	return newBoolTag("bool", b)
 }
 
+/* Tags for logging manual access */
+
+// RequestCaller returns tag for caller (the name of the service making this request)
+func RequestCaller(callerName string) Tag {
+	return newStringTag("request-caller", callerName)
+}
+
+// ActorID returns tag for the actor ID
+func ActorID(actorID string) Tag {
+	return newStringTag("actor-id", actorID)
+}
+
+// ActorEmail returns tag for the actor's email address
+func ActorEmail(actorEmail string) Tag {
+	return newStringTag("actor-email", actorEmail)
+}
+
+// HandlerCall returns tag for the API name of a request
+func HandlerCall(handlerCall string) Tag {
+	return newStringTag("handler-call", handlerCall)
+}
+
+// RequestBody returns the tag for the API request body
+func RequestBody(requestBody string) Tag {
+	return newStringTag("request-body", requestBody)
+}
+
+// RequestType return tag for the type of request (internal, external)
+func RequestType(requestType string) Tag {
+	return newStringTag("request-type", requestType)
+}
+
 // history engine shard
 
 // ShardID returns tag for ShardID
@@ -453,6 +570,11 @@ func ShardTime(shardTime interface{}) Tag {
 // ShardReplicationAck returns tag for ShardReplicationAck
 func ShardReplicationAck(shardReplicationAck int64) Tag {
 	return newInt64("shard-replication-ack", shardReplicationAck)
+}
+
+// ShardReplicationToken returns information about a particular replication request
+func ShardReplicationToken(token interface{}) Tag {
+	return newObjectTag("shard-replication-token", token)
 }
 
 // PreviousShardRangeID returns tag for PreviousShardRangeID
@@ -550,8 +672,8 @@ func Attempt(attempt int32) Tag {
 }
 
 // AttemptCount returns tag for AttemptCount
-func AttemptCount(attemptCount int64) Tag {
-	return newInt64("attempt-count", attemptCount)
+func AttemptCount(attemptCount int) Tag {
+	return newInt("attempt-count", attemptCount)
 }
 
 // AttemptStart returns tag for AttemptStart
@@ -657,11 +779,15 @@ func TokenLastEventID(id int64) Tag {
 	return newInt64("token-last-event-id", id)
 }
 
-///////////////////  XDC tags defined here: xdc- ///////////////////
+// /////////////////  XDC tags defined here: xdc- ///////////////////
 
 // SourceCluster returns tag for SourceCluster
 func SourceCluster(sourceCluster string) Tag {
 	return newStringTag("xdc-source-cluster", sourceCluster)
+}
+
+func RemoteCluster(remoteCluster string) Tag {
+	return newStringTag("xdc-remote-cluster", remoteCluster)
 }
 
 // PrevActiveCluster returns tag for PrevActiveCluster
@@ -709,7 +835,22 @@ func TokenLastEventVersion(version int64) Tag {
 	return newInt64("xdc-token-last-event-version", version)
 }
 
-///////////////////  Archival tags defined here: archival- ///////////////////
+// ResponseSize returns tag for ResponseSize
+func ResponseSize(size int) Tag {
+	return newInt("response-size", size)
+}
+
+// ResponseTotalSize returns tag for ResponseTotalSize
+func ResponseTotalSize(size int) Tag {
+	return newInt("response-total-size", size)
+}
+
+// ResponseMaxSize returns tag for ResponseMaxSize
+func ResponseMaxSize(size int) Tag {
+	return newInt("response-max-size", size)
+}
+
+// /////////////////  Archival tags defined here: archival- ///////////////////
 // archival request tags
 
 // ArchivalCallerServiceName returns tag for the service name calling archival client
@@ -823,4 +964,60 @@ func ArchivalBlobstoreContextTimeout(blobstoreContextTimeout time.Duration) Tag 
 // VisibilityQuery returns tag for the query for getting visibility records
 func VisibilityQuery(query string) Tag {
 	return newStringTag("visibility-query", query)
+}
+
+// MembershipChangeEvent is a predefined tag for when logging hashring change events,
+// expected to be of type membership.ChangeEvent
+func MembershipChangeEvent(event interface{}) Tag {
+	return newPredefinedDynamicTag("membership-change-event", event)
+}
+
+// Dynamic Uses reflection based logging for arbitrary values
+// for not very performant logging
+func Dynamic(key string, v interface{}) Tag {
+	return newPredefinedDynamicTag(key, v)
+}
+
+func IsolationGroup(group string) Tag {
+	return newStringTag("isolation-group", group)
+}
+
+func PartitionConfig(p map[string]string) Tag {
+	return newObjectTag("partition-config", p)
+}
+
+func PollerGroups(pollers []string) Tag {
+	return newObjectTag("poller-isolation-groups", pollers)
+}
+
+func FallbackIsolationGroup(group string) Tag {
+	return newStringTag("fallback-isolation-group", group)
+}
+
+func PollerGroupsConfiguration(pollers types.IsolationGroupConfiguration) Tag {
+	return newObjectTag("poller-isolation-groups", pollers.ToPartitionList())
+}
+
+func WorkflowIDCacheSize(size int) Tag {
+	return newInt("workflow-id-cache-size", size)
+}
+
+func AsyncWFQueueID(queueID string) Tag {
+	return newStringTag("async-wf-queue-id", queueID)
+}
+
+func GlobalRatelimiterKey(globalKey string) Tag {
+	return newStringTag("global-ratelimit-key", globalKey)
+}
+func GlobalRatelimiterKeyMode(mode string) Tag {
+	return newStringTag("global-ratelimit-key-mode", mode)
+}
+func GlobalRatelimiterIdleCount(count int) Tag {
+	return newInt("global-ratelimit-key-idle-count", count)
+}
+func GlobalRatelimiterCollectionName(name string) Tag {
+	return newStringTag("global-ratelimit-collection", name)
+}
+func GlobalRatelimiterPeer(peer string) Tag {
+	return newStringTag("global-ratelimit-peer", peer)
 }

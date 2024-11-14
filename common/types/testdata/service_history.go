@@ -22,7 +22,6 @@ package testdata
 
 import (
 	"github.com/uber/cadence/common"
-	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -68,13 +67,16 @@ var (
 		StickyTaskListScheduleToStartTimeout: &Duration1,
 		EventStoreVersion:                    EventStoreVersion,
 		CurrentBranchToken:                   BranchToken,
-		WorkflowState:                        common.Int32Ptr(persistence.WorkflowStateRunning),
-		WorkflowCloseState:                   common.Int32Ptr(persistence.WorkflowCloseStatusTimedOut),
+		WorkflowState:                        common.Int32Ptr(1), // persistence.WorkflowStateRunning
+		WorkflowCloseState:                   common.Int32Ptr(6), // persistence.WorkflowCloseStatusTimedOut
 		VersionHistories:                     &VersionHistories,
 		IsStickyTaskListEnabled:              true,
+		HistorySize:                          HistorySizeInBytes,
 	}
 	HistoryGetReplicationMessagesRequest  = AdminGetReplicationMessagesRequest
 	HistoryGetReplicationMessagesResponse = AdminGetReplicationMessagesResponse
+	HistoryCountDLQMessagesRequest        = types.CountDLQMessagesRequest{ForceFetch: true}
+	HistoryCountDLQMessagesResponse       = types.HistoryCountDLQMessagesResponse{Entries: map[types.HistoryDLQCountKey]int64{types.HistoryDLQCountKey{1, "A"}: 10}}
 	HistoryMergeDLQMessagesRequest        = AdminMergeDLQMessagesRequest
 	HistoryMergeDLQMessagesResponse       = AdminMergeDLQMessagesResponse
 	HistoryNotifyFailoverMarkersRequest   = types.NotifyFailoverMarkersRequest{
@@ -100,8 +102,8 @@ var (
 		StickyTaskListScheduleToStartTimeout: &Duration1,
 		CurrentBranchToken:                   BranchToken,
 		VersionHistories:                     &VersionHistories,
-		WorkflowState:                        common.Int32Ptr(persistence.WorkflowStateCorrupted),
-		WorkflowCloseState:                   common.Int32Ptr(persistence.WorkflowCloseStatusTimedOut),
+		WorkflowState:                        common.Int32Ptr(5), // persistence.WorkflowStateCorrupted
+		WorkflowCloseState:                   common.Int32Ptr(6), // persistence.WorkflowCloseStatusTimedOut
 	}
 	HistoryPurgeDLQMessagesRequest = AdminPurgeDLQMessagesRequest
 	HistoryQueryWorkflowRequest    = types.HistoryQueryWorkflowRequest{
@@ -145,6 +147,7 @@ var (
 		InitiatedID:        EventID1,
 		CompletedExecution: &WorkflowExecution,
 		CompletionEvent:    &HistoryEvent_WorkflowExecutionStarted,
+		StartedID:          EventID2,
 	}
 	HistoryRecordDecisionTaskStartedRequest = types.RecordDecisionTaskStartedRequest{
 		DomainUUID:        DomainID,
@@ -169,6 +172,7 @@ var (
 		ScheduledTimestamp:        &Timestamp1,
 		StartedTimestamp:          &Timestamp2,
 		Queries:                   WorkflowQueryMap,
+		HistorySize:               HistorySizeInBytes,
 	}
 	HistoryRefreshWorkflowTasksRequest = types.HistoryRefreshWorkflowTasksRequest{
 		DomainUIID: DomainID,
@@ -238,6 +242,7 @@ var (
 	HistorySignalWithStartWorkflowExecutionRequest = types.HistorySignalWithStartWorkflowExecutionRequest{
 		DomainUUID:             DomainID,
 		SignalWithStartRequest: &SignalWithStartWorkflowExecutionRequest,
+		PartitionConfig:        PartitionConfig,
 	}
 	HistorySignalWithStartWorkflowExecutionResponse = types.StartWorkflowExecutionResponse{
 		RunID: RunID,
@@ -259,6 +264,7 @@ var (
 		ContinuedFailureDetails:         FailureDetails,
 		LastCompletionResult:            Payload1,
 		FirstDecisionTaskBackoffSeconds: &Duration1,
+		PartitionConfig:                 PartitionConfig,
 	}
 	HistoryStartWorkflowExecutionResponse = types.StartWorkflowExecutionResponse{
 		RunID: RunID,

@@ -22,24 +22,29 @@ package rpc
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
+
+	"go.uber.org/yarpc"
+	yarpctls "go.uber.org/yarpc/api/transport/tls"
 
 	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/dynamicconfig"
+	"github.com/uber/cadence/common/log"
+	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/service"
-
-	"go.uber.org/yarpc"
 )
 
 // Params allows to configure rpc.Factory
 type Params struct {
-	ServiceName       string
-	TChannelAddress   string
-	GRPCAddress       string
-	GRPCMaxMsgSize    int
-	HostAddressMapper HostAddressMapper
+	ServiceName     string
+	TChannelAddress string
+	GRPCAddress     string
+	GRPCMaxMsgSize  int
+	HTTP            *httpParams
 
 	InboundTLS  *tls.Config
 	OutboundTLS map[string]*tls.Config
@@ -50,8 +55,15 @@ type Params struct {
 	OutboundsBuilder OutboundsBuilder
 }
 
+type httpParams struct {
+	Address    string
+	Procedures map[string]struct{}
+	TLS        *tls.Config
+	Mode       yarpctls.Mode
+}
+
 // NewParams creates parameters for rpc.Factory from the given config
-func NewParams(serviceName string, config *config.Config, dc *dynamicconfig.Collection) (Params, error) {
+func NewParams(serviceName string, config *config.Config, dc *dynamicconfig.Collection, logger log.Logger, metricsCl metrics.Client) (Params, error) {
 	serviceConfig, err := config.GetServiceConfig(serviceName)
 	if err != nil {
 		return Params{}, err
@@ -78,33 +90,114 @@ func NewParams(serviceName string, config *config.Config, dc *dynamicconfig.Coll
 		}
 	}
 
-	enableGRPCOutbound := dc.GetBoolProperty(dynamicconfig.EnableGRPCOutbound, true)()
+	enableGRPCOutbound := dc.GetBoolProperty(dynamicconfig.EnableGRPCOutbound)()
 
 	publicClientOutbound, err := newPublicClientOutbound(config)
 	if err != nil {
 		return Params{}, fmt.Errorf("public client outbound: %v", err)
 	}
 
+	forwardingRules, err := getForwardingRules(dc)
+	if err != nil {
+		return Params{}, err
+	}
+	if len(forwardingRules) == 0 {
+		// not set, load from static config
+		forwardingRules = config.HeaderForwardingRules
+	}
+	var http *httpParams
+
+	if serviceConfig.RPC.HTTP != nil {
+		if serviceConfig.RPC.HTTP.Port <= 0 {
+			return Params{}, errors.New("HTTP port is not set")
+		}
+		procedureMap := map[string]struct{}{}
+
+		for _, v := range serviceConfig.RPC.HTTP.Procedures {
+			procedureMap[v] = struct{}{}
+		}
+
+		http = &httpParams{
+			Address:    net.JoinHostPort(listenIP.String(), strconv.Itoa(int(serviceConfig.RPC.HTTP.Port))),
+			Procedures: procedureMap,
+		}
+
+		if serviceConfig.RPC.HTTP.TLS.Enabled {
+			httptls, err := serviceConfig.RPC.HTTP.TLS.ToTLSConfig()
+			if err != nil {
+				return Params{}, fmt.Errorf("creating TLS config for HTTP: %w", err)
+			}
+
+			http.TLS = httptls
+			http.Mode = serviceConfig.RPC.HTTP.TLSMode
+		}
+	}
+
 	return Params{
-		ServiceName:       serviceName,
-		TChannelAddress:   net.JoinHostPort(listenIP.String(), strconv.Itoa(serviceConfig.RPC.Port)),
-		GRPCAddress:       net.JoinHostPort(listenIP.String(), strconv.Itoa(serviceConfig.RPC.GRPCPort)),
-		GRPCMaxMsgSize:    serviceConfig.RPC.GRPCMaxMsgSize,
-		HostAddressMapper: NewGRPCPorts(config),
+		ServiceName:     serviceName,
+		HTTP:            http,
+		TChannelAddress: net.JoinHostPort(listenIP.String(), strconv.Itoa(int(serviceConfig.RPC.Port))),
+		GRPCAddress:     net.JoinHostPort(listenIP.String(), strconv.Itoa(int(serviceConfig.RPC.GRPCPort))),
+		GRPCMaxMsgSize:  serviceConfig.RPC.GRPCMaxMsgSize,
 		OutboundsBuilder: CombineOutbounds(
-			NewDirectOutbound(service.History, enableGRPCOutbound, outboundTLS[service.History]),
-			NewDirectOutbound(service.Matching, enableGRPCOutbound, outboundTLS[service.Matching]),
+			NewDirectOutboundBuilder(
+				service.History,
+				enableGRPCOutbound,
+				outboundTLS[service.History],
+				NewDirectPeerChooserFactory(service.History, logger, metricsCl),
+				dc.GetBoolProperty(dynamicconfig.EnableConnectionRetainingDirectChooser),
+			),
+			NewDirectOutboundBuilder(
+				service.Matching,
+				enableGRPCOutbound,
+				outboundTLS[service.Matching],
+				NewDirectPeerChooserFactory(service.Matching, logger, metricsCl),
+				dc.GetBoolProperty(dynamicconfig.EnableConnectionRetainingDirectChooser),
+			),
 			publicClientOutbound,
 		),
 		InboundTLS:  inboundTLS,
 		OutboundTLS: outboundTLS,
 		InboundMiddleware: yarpc.InboundMiddleware{
-			Unary: &InboundMetricsMiddleware{},
+			// order matters: ForwardPartitionConfigMiddleware must be applied after ClientPartitionConfigMiddleware
+			Unary: yarpc.UnaryInboundMiddleware(&PinotComparatorMiddleware{}, &InboundMetricsMiddleware{}, &ClientPartitionConfigMiddleware{}, &ForwardPartitionConfigMiddleware{}),
 		},
 		OutboundMiddleware: yarpc.OutboundMiddleware{
-			Unary: &HeaderForwardingMiddleware{},
+			Unary: yarpc.UnaryOutboundMiddleware(&HeaderForwardingMiddleware{
+				Rules: forwardingRules,
+			}, &ForwardPartitionConfigMiddleware{}),
 		},
 	}, nil
+}
+
+func getForwardingRules(dc *dynamicconfig.Collection) ([]config.HeaderRule, error) {
+	var forwardingRules []config.HeaderRule
+	dynForwarding := dc.GetListProperty(dynamicconfig.HeaderForwardingRules)()
+	if len(dynForwarding) > 0 {
+		for _, f := range dynForwarding {
+			switch v := f.(type) {
+			case config.HeaderRule: // default or correctly typed value
+				forwardingRules = append(forwardingRules, v)
+			case map[string]interface{}: // loaded from generic deserialization, compatible with encoding/json
+				add, aok := v["Add"].(bool)
+				m, mok := v["Match"].(string)
+				if !aok || !mok {
+					return nil, fmt.Errorf("invalid generic types for header forwarding rule: %#v", v)
+				}
+				r, err := regexp.Compile(m)
+				if err != nil {
+					return nil, fmt.Errorf("invalid match regex in header forwarding rule: %q, err: %w", m, err)
+				}
+				forwardingRules = append(forwardingRules, config.HeaderRule{
+					Add:   add,
+					Match: r,
+				})
+			default: // unknown
+				return nil, fmt.Errorf("unrecognized dynamic header forwarding type: %T", v)
+			}
+		}
+	}
+	return forwardingRules, nil
 }
 
 func getListenIP(config config.RPC) (net.IP, error) {

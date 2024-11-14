@@ -20,9 +20,7 @@
 
 package testdata
 
-import (
-	"github.com/uber/cadence/common/types"
-)
+import "github.com/uber/cadence/common/types"
 
 const (
 	DomainID          = "DomainID"
@@ -47,6 +45,8 @@ const (
 
 	FailoverVersion1 = 301
 	FailoverVersion2 = 302
+
+	ErrorReason = "ErrorReason"
 )
 
 var (
@@ -78,6 +78,24 @@ var (
 		HistoryArchivalURI:                     HistoryArchivalURI,
 		VisibilityArchivalStatus:               &ArchivalStatus,
 		VisibilityArchivalURI:                  VisibilityArchivalURI,
+		IsolationGroups: &types.IsolationGroupConfiguration{
+			"zone-1": {
+				Name:  "zone-1",
+				State: types.IsolationGroupStateHealthy,
+			},
+			"zone-2": {
+				Name:  "zone-2",
+				State: types.IsolationGroupStateDrained,
+			},
+		},
+		AsyncWorkflowConfig: &types.AsyncWorkflowConfiguration{
+			Enabled:   true,
+			QueueType: "custom",
+			QueueConfig: &types.DataBlob{
+				EncodingType: types.EncodingTypeThriftRW.Ptr(),
+				Data:         []byte("custom queue config"),
+			},
+		},
 	}
 	DomainReplicationConfiguration = types.DomainReplicationConfiguration{
 		ActiveClusterName: ClusterName1,

@@ -27,8 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uber/cadence/common/service"
-
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -42,6 +40,7 @@ import (
 	"github.com/uber/cadence/common/metrics"
 	mmocks "github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/service"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/engine"
@@ -56,7 +55,6 @@ type (
 		controller             *gomock.Controller
 		mockResource           *resource.Test
 		mockHistoryEngine      *engine.MockEngine
-		mockClusterMetadata    *cluster.MockMetadata
 		mockMembershipResolver *membership.MockResolver
 
 		hostInfo          membership.HostInfo
@@ -78,14 +76,13 @@ func (s *controllerSuite) SetupTest() {
 	s.Assertions = require.New(s.T())
 
 	s.controller = gomock.NewController(s.T())
-	s.mockResource = resource.NewTest(s.controller, metrics.History)
+	s.mockResource = resource.NewTest(s.T(), s.controller, metrics.History)
 	s.mockEngineFactory = NewMockEngineFactory(s.controller)
 
 	s.mockHistoryEngine = engine.NewMockEngine(s.controller)
 
 	s.mockShardManager = s.mockResource.ShardMgr
 	s.mockMembershipResolver = s.mockResource.MembershipResolver
-	s.mockClusterMetadata = s.mockResource.ClusterMetadata
 	s.hostInfo = s.mockResource.GetHostInfo()
 
 	s.logger = s.mockResource.Logger
@@ -157,9 +154,6 @@ func (s *controllerSuite) TestAcquireShardSuccess() {
 					TransferProcessingQueueStates: &types.ProcessingQueueStates{
 						StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 					},
-					CrossClusterProcessingQueueStates: &types.ProcessingQueueStates{
-						StatesByCluster: make(map[string][]*types.ProcessingQueueState),
-					},
 					TimerProcessingQueueStates: &types.ProcessingQueueStates{
 						StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 					},
@@ -174,9 +168,6 @@ func (s *controllerSuite) TestAcquireShardSuccess() {
 		}
 	}
 
-	// when shard is initialized, it will use the 2 mock function below to initialize the "current" time of each cluster
-	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestSingleDCClusterInfo).AnyTimes()
 	s.shardController.acquireShards()
 	count := 0
 	for _, shardID := range myShards {
@@ -247,9 +238,6 @@ func (s *controllerSuite) TestAcquireShardsConcurrently() {
 					TransferProcessingQueueStates: &types.ProcessingQueueStates{
 						StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 					},
-					CrossClusterProcessingQueueStates: &types.ProcessingQueueStates{
-						StatesByCluster: make(map[string][]*types.ProcessingQueueState),
-					},
 					TimerProcessingQueueStates: &types.ProcessingQueueStates{
 						StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 					},
@@ -264,9 +252,6 @@ func (s *controllerSuite) TestAcquireShardsConcurrently() {
 		}
 	}
 
-	// when shard is initialized, it will use the 2 mock function below to initialize the "current" time of each cluster
-	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestSingleDCClusterInfo).AnyTimes()
 	s.shardController.acquireShards()
 	count := 0
 	for _, shardID := range myShards {
@@ -344,9 +329,6 @@ func (s *controllerSuite) TestAcquireShardRenewSuccess() {
 				TransferProcessingQueueStates: &types.ProcessingQueueStates{
 					StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 				},
-				CrossClusterProcessingQueueStates: &types.ProcessingQueueStates{
-					StatesByCluster: make(map[string][]*types.ProcessingQueueState),
-				},
 				TimerProcessingQueueStates: &types.ProcessingQueueStates{
 					StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 				},
@@ -357,9 +339,6 @@ func (s *controllerSuite) TestAcquireShardRenewSuccess() {
 		}).Return(nil).Once()
 	}
 
-	// when shard is initialized, it will use the 2 mock function below to initialize the "current" time of each cluster
-	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestSingleDCClusterInfo).AnyTimes()
 	s.shardController.acquireShards()
 
 	for shardID := 0; shardID < numShards; shardID++ {
@@ -426,9 +405,6 @@ func (s *controllerSuite) TestAcquireShardRenewLookupFailed() {
 				TransferProcessingQueueStates: &types.ProcessingQueueStates{
 					StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 				},
-				CrossClusterProcessingQueueStates: &types.ProcessingQueueStates{
-					StatesByCluster: make(map[string][]*types.ProcessingQueueState),
-				},
 				TimerProcessingQueueStates: &types.ProcessingQueueStates{
 					StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 				},
@@ -439,9 +415,6 @@ func (s *controllerSuite) TestAcquireShardRenewLookupFailed() {
 		}).Return(nil).Once()
 	}
 
-	// when shard is initialized, it will use the 2 mock function below to initialize the "current" time of each cluster
-	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestSingleDCClusterInfo).AnyTimes()
 	s.shardController.acquireShards()
 
 	for shardID := 0; shardID < numShards; shardID++ {
@@ -467,9 +440,6 @@ func (s *controllerSuite) TestHistoryEngineClosed() {
 
 	s.mockMembershipResolver.EXPECT().Subscribe(service.History, shardControllerMembershipUpdateListenerName,
 		gomock.Any()).Return(nil).AnyTimes()
-	// when shard is initialized, it will use the 2 mock function below to initialize the "current" time of each cluster
-	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestSingleDCClusterInfo).AnyTimes()
 	s.shardController.Start()
 	var workerWG sync.WaitGroup
 	for w := 0; w < 10; w++ {
@@ -554,9 +524,6 @@ func (s *controllerSuite) TestShardControllerClosed() {
 	}
 
 	s.mockMembershipResolver.EXPECT().Subscribe(service.History, shardControllerMembershipUpdateListenerName, gomock.Any()).Return(nil).AnyTimes()
-	// when shard is initialized, it will use the 2 mock function below to initialize the "current" time of each cluster
-	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestSingleDCClusterInfo).AnyTimes()
 	s.shardController.Start()
 
 	var workerWG sync.WaitGroup
@@ -654,9 +621,6 @@ func (s *controllerSuite) setupMocksForAcquireShard(shardID int, mockEngine *eng
 				cluster.TestAlternativeClusterName: alternativeClusterTimerAck,
 			},
 			TransferProcessingQueueStates: &types.ProcessingQueueStates{
-				StatesByCluster: make(map[string][]*types.ProcessingQueueState),
-			},
-			CrossClusterProcessingQueueStates: &types.ProcessingQueueStates{
 				StatesByCluster: make(map[string][]*types.ProcessingQueueState),
 			},
 			TimerProcessingQueueStates: &types.ProcessingQueueStates{

@@ -23,36 +23,32 @@ package task
 import (
 	"sync"
 
+	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/quotas"
-	"github.com/uber/cadence/common/task"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 )
 
 var (
-	highTaskPriority    = task.GetTaskPriority(task.HighPriorityClass, task.DefaultPrioritySubclass)
-	defaultTaskPriority = task.GetTaskPriority(task.DefaultPriorityClass, task.DefaultPrioritySubclass)
-	lowTaskPriority     = task.GetTaskPriority(task.LowPriorityClass, task.DefaultPrioritySubclass)
+	highTaskPriority    = common.GetTaskPriority(common.HighPriorityClass, common.DefaultPrioritySubclass)
+	defaultTaskPriority = common.GetTaskPriority(common.DefaultPriorityClass, common.DefaultPrioritySubclass)
+	lowTaskPriority     = common.GetTaskPriority(common.LowPriorityClass, common.DefaultPrioritySubclass)
 )
 
-type (
-	priorityAssignerImpl struct {
-		sync.RWMutex
+type priorityAssignerImpl struct {
+	sync.RWMutex
 
-		currentClusterName string
-		domainCache        cache.DomainCache
-		config             *config.Config
-		logger             log.Logger
-		scope              metrics.Scope
-		rateLimiters       map[string]quotas.Limiter
-	}
-)
-
-var _ PriorityAssigner = (*priorityAssignerImpl)(nil)
+	currentClusterName string
+	domainCache        cache.DomainCache
+	config             *config.Config
+	logger             log.Logger
+	scope              metrics.Scope
+	rateLimiters       *quotas.Collection
+}
 
 // NewPriorityAssigner creates a new task priority assigner
 func NewPriorityAssigner(
@@ -68,14 +64,14 @@ func NewPriorityAssigner(
 		config:             config,
 		logger:             logger,
 		scope:              metricClient.Scope(metrics.TaskPriorityAssignerScope),
-		rateLimiters:       make(map[string]quotas.Limiter),
+		rateLimiters: quotas.NewCollection(quotas.NewSimpleDynamicRateLimiterFactory(
+			config.TaskProcessRPS,
+		)),
 	}
 }
 
-func (a *priorityAssignerImpl) Assign(
-	queueTask Task,
-) error {
-	if priority := queueTask.Priority(); priority != task.NoPriority {
+func (a *priorityAssignerImpl) Assign(queueTask Task) error {
+	if priority := queueTask.Priority(); priority != noPriority {
 		if priority != lowTaskPriority && queueTask.GetAttempt() > a.config.TaskCriticalRetryCount() {
 			// automatically lower the priority if task attempt exceeds certain threshold
 			queueTask.SetPriority(lowTaskPriority)
@@ -113,7 +109,7 @@ func (a *priorityAssignerImpl) Assign(
 	// for case 2 and 3 the task will be a no-op in most cases, also give it a high priority so that
 	// it can be quickly verified/acked and won't prevent the ack level in the processor from advancing
 	// (especially for active processor)
-	if !a.getRateLimiter(domainName).Allow() {
+	if !a.rateLimiters.For(domainName).Allow() {
 		queueTask.SetPriority(defaultTaskPriority)
 		taggedScope := a.scope.Tagged(metrics.DomainTag(domainName))
 		switch queueType {
@@ -135,9 +131,7 @@ func (a *priorityAssignerImpl) Assign(
 //  1. domain name
 //  2. if domain is active
 //  3. error, if any
-func (a *priorityAssignerImpl) getDomainInfo(
-	domainID string,
-) (string, bool, error) {
+func (a *priorityAssignerImpl) getDomainInfo(domainID string) (string, bool, error) {
 	domainEntry, err := a.domainCache.GetDomainByID(domainID)
 	if err != nil {
 		if _, ok := err.(*types.EntityNotExistsError); !ok {
@@ -154,30 +148,4 @@ func (a *priorityAssignerImpl) getDomainInfo(
 		return domainEntry.GetInfo().Name, false, nil
 	}
 	return domainEntry.GetInfo().Name, true, nil
-}
-
-func (a *priorityAssignerImpl) getRateLimiter(
-	domainName string,
-) quotas.Limiter {
-	a.RLock()
-	if limiter, ok := a.rateLimiters[domainName]; ok {
-		a.RUnlock()
-		return limiter
-	}
-	a.RUnlock()
-
-	limiter := quotas.NewDynamicRateLimiter(
-		func() float64 {
-			return float64(a.config.TaskProcessRPS(domainName))
-		},
-	)
-
-	a.Lock()
-	defer a.Unlock()
-	if existingLimiter, ok := a.rateLimiters[domainName]; ok {
-		return existingLimiter
-	}
-
-	a.rateLimiters[domainName] = limiter
-	return limiter
 }

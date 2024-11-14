@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/cache"
+	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
@@ -36,9 +38,6 @@ import (
 )
 
 const (
-	DefaultScannerGetOrphanTasksPageSize          = 1000
-	DefaultScannerMaxTasksProcessedPerTasklistJob = 256
-
 	executorMaxDeferredTasks = 10000
 	taskListBatchSize        = 32 // maximum number of task list we process concurrently
 	taskBatchSize            = 16
@@ -50,18 +49,25 @@ type (
 	Scavenger struct {
 		ctx                      context.Context
 		db                       p.TaskManager
+		cache                    cache.DomainCache
 		executor                 executor.Executor
 		scope                    metrics.Scope
 		logger                   log.Logger
 		stats                    stats
 		status                   int32
-		stopC                    chan struct{}
-		stopWG                   sync.WaitGroup
 		getOrphanTasksPageSizeFn dynamicconfig.IntPropertyFn
 		taskBatchSizeFn          dynamicconfig.IntPropertyFn
 		maxTasksPerJobFn         dynamicconfig.IntPropertyFn
 		cleanOrphans             dynamicconfig.BoolPropertyFn
 		pollInterval             time.Duration
+		timeSource               clock.TimeSource
+
+		// stopC is used to signal the scavenger to stop
+		stopC chan struct{}
+		// stopWG is used to wait for the scavenger to stop
+		stopWG sync.WaitGroup
+		// stoppedC is closed once the scavenger is stopped
+		stopped chan struct{}
 	}
 
 	stats struct {
@@ -102,19 +108,20 @@ type (
 // returned object. Calling the Start() method will result in one
 // complete iteration over all of the task lists in the system. For
 // each task list, the scavenger will attempt
-//  - deletion of expired tasks in the task lists
-//  - deletion of task list itself, if there are no tasks and the task list hasn't been updated for a grace period
+//   - deletion of expired tasks in the task lists
+//   - deletion of task list itself, if there are no tasks and the task list hasn't been updated for a grace period
 //
 // The scavenger will retry on all persistence errors infinitely and will only stop under
 // two conditions
-//  - either all task lists are processed successfully (or)
-//  - Stop() method is called to stop the scavenger
+//   - either all task lists are processed successfully (or)
+//   - Stop() method is called to stop the scavenger
 func NewScavenger(
 	ctx context.Context,
 	db p.TaskManager,
 	metricsClient metrics.Client,
 	logger log.Logger,
 	opts *Options,
+	cache cache.DomainCache,
 ) *Scavenger {
 	taskExecutor := executor.NewFixedSizePoolExecutor(
 		taskListBatchSize,
@@ -137,7 +144,7 @@ func NewScavenger(
 	getOrphanTasksPageSize := opts.GetOrphanTasksPageSizeFn
 	if getOrphanTasksPageSize == nil {
 		getOrphanTasksPageSize = func(opts ...dynamicconfig.FilterOption) int {
-			return DefaultScannerGetOrphanTasksPageSize
+			return dynamicconfig.ScannerGetOrphanTasksPageSize.DefaultInt()
 		}
 	}
 
@@ -151,7 +158,7 @@ func NewScavenger(
 	maxTasksPerJobFn := opts.MaxTasksPerJobFn
 	if maxTasksPerJobFn == nil {
 		maxTasksPerJobFn = func(opts ...dynamicconfig.FilterOption) int {
-			return DefaultScannerMaxTasksProcessedPerTasklistJob
+			return dynamicconfig.ScannerMaxTasksProcessedPerTasklistJob.DefaultInt()
 		}
 	}
 
@@ -159,19 +166,21 @@ func NewScavenger(
 	if pollInterval == 0 {
 		pollInterval = time.Minute
 	}
-
 	return &Scavenger{
 		ctx:                      ctx,
 		db:                       db,
+		cache:                    cache,
 		scope:                    metricsClient.Scope(metrics.TaskListScavengerScope),
 		logger:                   logger,
 		stopC:                    make(chan struct{}),
+		stopped:                  make(chan struct{}),
 		executor:                 taskExecutor,
 		cleanOrphans:             cleanOrphans,
 		taskBatchSizeFn:          taskBatchSizeFn,
 		pollInterval:             pollInterval,
 		maxTasksPerJobFn:         maxTasksPerJobFn,
 		getOrphanTasksPageSizeFn: getOrphanTasksPageSize,
+		timeSource:               clock.NewRealTimeSource(),
 	}
 }
 
@@ -199,6 +208,7 @@ func (s *Scavenger) Stop() {
 	s.executor.Stop()
 	s.stopWG.Wait()
 	s.logger.Info("Tasklist scavenger stopped")
+	close(s.stopped)
 }
 
 // Alive returns true if the scavenger is still running
@@ -250,9 +260,11 @@ func (s *Scavenger) process(taskListInfo *p.TaskListInfo) executor.TaskStatus {
 
 func (s *Scavenger) awaitExecutor() {
 	outstanding := s.executor.TaskCount()
+	ticker := s.timeSource.NewTicker(s.pollInterval)
+	defer ticker.Stop()
 	for outstanding > 0 {
 		select {
-		case <-time.After(s.pollInterval):
+		case <-ticker.Chan():
 			outstanding = s.executor.TaskCount()
 			s.scope.UpdateGauge(metrics.TaskListOutstandingCount, float64(outstanding))
 		case <-s.stopC:

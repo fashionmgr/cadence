@@ -31,7 +31,7 @@ import (
 
 	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/metrics"
 	t "github.com/uber/cadence/common/task"
 	"github.com/uber/cadence/service/history/task"
@@ -59,7 +59,7 @@ func (s *splitPolicySuite) SetupTest() {
 
 	s.controller = gomock.NewController(s.T())
 
-	s.logger = loggerimpl.NewLoggerForTest(s.Suite)
+	s.logger = testlogger.New(s.Suite.T())
 	s.metricsScope = metrics.NewClient(tally.NoopScope, metrics.History).Scope(metrics.TimerQueueProcessorScope)
 }
 
@@ -91,7 +91,7 @@ func (s *splitPolicySuite) TestPendingTaskSplitPolicy() {
 
 	testCases := []struct {
 		currentState             ProcessingQueueState
-		numPendingTasksPerDomain map[string]int //domainID -> number of pending tasks
+		numPendingTasksPerDomain map[string]int // domainID -> number of pending tasks
 		expectedNewStates        []ProcessingQueueState
 	}{
 		{
@@ -565,7 +565,7 @@ func (s *splitPolicySuite) TestRandomSplitPolicy() {
 	testCases := []struct {
 		currentState             ProcessingQueueState
 		splitProbability         float64
-		numPendingTasksPerDomain map[string]int //domainID -> number of pending tasks
+		numPendingTasksPerDomain map[string]int // domainID -> number of pending tasks
 		expectedNewStates        []ProcessingQueueState
 	}{
 		{

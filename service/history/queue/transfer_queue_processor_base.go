@@ -22,6 +22,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,7 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	hcommon "github.com/uber/cadence/service/history/common"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
@@ -45,7 +47,6 @@ const (
 
 var (
 	loadQueueTaskThrottleRetryDelay = 5 * time.Second
-
 	persistenceOperationRetryPolicy = common.CreatePersistenceRetryPolicy()
 )
 
@@ -75,6 +76,9 @@ type (
 
 		// for validating if the queue failed to load any tasks
 		validator *transferQueueValidator
+
+		processQueueCollectionsFn func()
+		updateAckLevelFn          func() (bool, task.Key, error)
 	}
 )
 
@@ -112,7 +116,6 @@ func newTransferQueueProcessorBase(
 
 	transferQueueProcessorBase := &transferQueueProcessorBase{
 		processorBase: processorBase,
-
 		taskInitializer: func(taskInfo task.Info) task.Task {
 			return task.NewTransferTask(
 				shard,
@@ -126,23 +129,23 @@ func newTransferQueueProcessorBase(
 				shard.GetConfig().TaskCriticalRetryCount,
 			)
 		},
-
-		notifyCh:  make(chan struct{}, 1),
-		processCh: make(chan struct{}, 1),
-
-		backoffTimer:  make(map[int]*time.Timer),
-		shouldProcess: make(map[int]bool),
-
+		notifyCh:         make(chan struct{}, 1),
+		processCh:        make(chan struct{}, 1),
+		backoffTimer:     make(map[int]*time.Timer),
+		shouldProcess:    make(map[int]bool),
 		lastSplitTime:    time.Time{},
 		lastMaxReadLevel: 0,
 	}
+
+	transferQueueProcessorBase.processQueueCollectionsFn = transferQueueProcessorBase.processQueueCollections
+	transferQueueProcessorBase.updateAckLevelFn = transferQueueProcessorBase.updateAckLevel
 
 	if shard.GetConfig().EnableDebugMode && options.EnableValidator() {
 		transferQueueProcessorBase.validator = newTransferQueueValidator(
 			transferQueueProcessorBase,
 			options.ValidationInterval,
 			logger,
-			metricsClient.Scope(options.MetricScope),
+			processorBase.metricsScope,
 		)
 	}
 
@@ -196,25 +199,22 @@ func (t *transferQueueProcessorBase) Stop() {
 	}
 	t.processingLock.Unlock()
 
-	if success := common.AwaitWaitGroup(&t.shutdownWG, time.Minute); !success {
-		t.logger.Warn("", tag.LifeCycleStopTimedout)
+	if success := common.AwaitWaitGroup(&t.shutdownWG, gracefulShutdownTimeout); !success {
+		t.logger.Warn("transferQueueProcessorBase timed out on shut down", tag.LifeCycleStopTimedout)
 	}
 
 	t.redispatcher.Stop()
 }
 
-func (t *transferQueueProcessorBase) notifyNewTask(
-	executionInfo *persistence.WorkflowExecutionInfo,
-	transferTasks []persistence.Task,
-) {
+func (t *transferQueueProcessorBase) notifyNewTask(info *hcommon.NotifyTaskInfo) {
 	select {
 	case t.notifyCh <- struct{}{}:
 	default:
 	}
 
-	if executionInfo != nil && t.validator != nil {
+	if info.ExecutionInfo != nil && t.validator != nil {
 		// executionInfo will be nil when notifyNewTask is called to trigger a scan, for example during domain failover or sync shard.
-		t.validator.addTasks(executionInfo, transferTasks)
+		t.validator.addTasks(info)
 	}
 }
 
@@ -295,11 +295,10 @@ func (t *transferQueueProcessorBase) processorPump() {
 	))
 	defer maxPollTimer.Stop()
 
-processorPumpLoop:
 	for {
 		select {
 		case <-t.shutdownCh:
-			break processorPumpLoop
+			return
 		case <-t.notifyCh:
 			// notify all queue collections as they are waiting for the notification when there's
 			// no more task to process. For non-default queue, if we choose to do periodic polling
@@ -313,13 +312,14 @@ processorPumpLoop:
 			))
 		case <-t.processCh:
 			maxRedispatchQueueSize := t.options.MaxRedispatchQueueSize()
-			if t.redispatcher.Size() > maxRedispatchQueueSize {
-				// has too many pending tasks in re-dispatch queue, block loading tasks from persistence
+			if redispathSize := t.redispatcher.Size(); redispathSize > maxRedispatchQueueSize {
+				t.logger.Debugf("Transfer queue has too many pending tasks in re-dispatch queue: %v > maxRedispatchQueueSize: %v, block loading tasks from persistence", redispathSize, maxRedispatchQueueSize)
 				t.redispatcher.Redispatch(maxRedispatchQueueSize)
-				if t.redispatcher.Size() > maxRedispatchQueueSize {
+				if redispathSize := t.redispatcher.Size(); redispathSize > maxRedispatchQueueSize {
 					// if redispatcher still has a large number of tasks
 					// this only happens when system is under very high load
 					// we should backoff here instead of keeping submitting tasks to task processor
+					t.logger.Debugf("Transfer queue still has too many pending tasks in re-dispatch queue: %v > maxRedispatchQueueSize: %v, backing off for %v", redispathSize, maxRedispatchQueueSize, t.options.PollBackoffInterval())
 					time.Sleep(backoff.JitDuration(
 						t.options.PollBackoffInterval(),
 						t.options.PollBackoffIntervalJitterCoefficient(),
@@ -330,15 +330,20 @@ processorPumpLoop:
 				case t.processCh <- struct{}{}:
 				default:
 				}
-				continue processorPumpLoop
+			} else {
+				t.processQueueCollectionsFn()
 			}
-
-			t.processQueueCollections()
 		case <-updateAckTimer.C:
-			processFinished, _, err := t.updateAckLevel()
-			if err == shard.ErrShardClosed || (err == nil && processFinished) {
-				go t.Stop()
-				break processorPumpLoop
+			processFinished, _, err := t.updateAckLevelFn()
+			var errShardClosed *shard.ErrShardClosed
+			if errors.As(err, &errShardClosed) || (err == nil && processFinished) {
+				if !t.options.EnableGracefulSyncShutdown() {
+					go t.Stop()
+					return
+				}
+
+				t.Stop()
+				return
 			}
 			updateAckTimer.Reset(backoff.JitDuration(
 				t.options.UpdateAckInterval(),
@@ -410,11 +415,16 @@ func (t *transferQueueProcessorBase) processQueueCollections() {
 			t.readyForProcess(level) // re-enqueue the event
 			continue
 		}
+		t.logger.Debug("load transfer tasks from database",
+			tag.ReadLevel(readLevel.(transferTaskKey).taskID),
+			tag.MaxLevel(maxReadLevel.(transferTaskKey).taskID),
+			tag.Counter(len(transferTaskInfos)))
 
 		tasks := make(map[task.Key]task.Task)
 		taskChFull := false
 		for _, taskInfo := range transferTaskInfos {
 			if !domainFilter.Filter(taskInfo.GetDomainID()) {
+				t.logger.Debug("transfer task filtered", tag.TaskID(taskInfo.GetTaskID()))
 				continue
 			}
 
@@ -437,6 +447,10 @@ func (t *transferQueueProcessorBase) processQueueCollections() {
 		}
 		queueCollection.AddTasks(tasks, newReadLevel)
 		if t.validator != nil {
+			t.logger.Debug("ack transfer tasks",
+				tag.ReadLevel(readLevel.(transferTaskKey).taskID),
+				tag.MaxLevel(newReadLevel.(transferTaskKey).taskID),
+				tag.Counter(len(tasks)))
 			t.validator.ackTasks(level, readLevel, newReadLevel, tasks)
 		}
 
@@ -534,9 +548,7 @@ func (t *transferQueueProcessorBase) readTasks(
 	return response.Tasks, len(response.NextPageToken) != 0, nil
 }
 
-func newTransferTaskKey(
-	taskID int64,
-) task.Key {
+func newTransferTaskKey(taskID int64) task.Key {
 	return transferTaskKey{
 		taskID: taskID,
 	}
@@ -569,6 +581,7 @@ func newTransferQueueProcessorOptions(
 		PollBackoffIntervalJitterCoefficient: config.QueueProcessorPollBackoffIntervalJitterCoefficient,
 		EnableValidator:                      config.TransferProcessorEnableValidator,
 		ValidationInterval:                   config.TransferProcessorValidationInterval,
+		EnableGracefulSyncShutdown:           config.QueueProcessorEnableGracefulSyncShutdown,
 	}
 
 	if isFailover {

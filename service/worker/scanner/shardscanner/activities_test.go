@@ -65,15 +65,15 @@ func TestActivitiesSuite(t *testing.T) {
 }
 
 func (s *activitiesSuite) SetupSuite() {
-	activity.Register(ScannerConfigActivity)
-	activity.Register(FixerCorruptedKeysActivity)
-	activity.Register(ScanShardActivity)
-	activity.Register(FixShardActivity)
+	activity.Register(scannerConfigActivity)
+	activity.Register(fixerCorruptedKeysActivity)
+	activity.Register(scanShardActivity)
+	activity.Register(fixShardActivity)
 }
 
 func (s *activitiesSuite) SetupTest() {
 	s.controller = gomock.NewController(s.T())
-	s.mockResource = resource.NewTest(s.controller, metrics.Worker)
+	s.mockResource = resource.NewTest(s.T(), s.controller, metrics.Worker)
 	domainCache := cache.NewMockDomainCache(s.controller)
 	domainCache.EXPECT().GetDomainName(gomock.Any()).Return("test-domain", nil).AnyTimes()
 	s.mockResource.DomainCache = domainCache
@@ -88,7 +88,7 @@ func (s *activitiesSuite) TestScanShardActivity() {
 	testCases := []struct {
 		params       ScanShardActivityParams
 		wantErr      bool
-		managerHook  func(ctx context.Context, pr persistence.Retryer, params ScanShardActivityParams) invariant.Manager
+		managerHook  func(ctx context.Context, pr persistence.Retryer, params ScanShardActivityParams, cache cache.DomainCache) invariant.Manager
 		itHook       func(ctx context.Context, pr persistence.Retryer, params ScanShardActivityParams) pagination.Iterator
 		workflowName string
 	}{
@@ -96,7 +96,7 @@ func (s *activitiesSuite) TestScanShardActivity() {
 			params: ScanShardActivityParams{
 				Shards: []int{0},
 			},
-			managerHook: func(ctx context.Context, pr persistence.Retryer, params ScanShardActivityParams) invariant.Manager {
+			managerHook: func(ctx context.Context, pr persistence.Retryer, params ScanShardActivityParams, cache cache.DomainCache) invariant.Manager {
 				manager := invariant.NewMockManager(s.controller)
 				manager.EXPECT().RunChecks(gomock.Any(), gomock.Any()).
 					AnyTimes().
@@ -135,7 +135,9 @@ func (s *activitiesSuite) TestScanShardActivity() {
 	for _, tc := range testCases {
 
 		env := s.NewTestActivityEnvironment()
-		hooks, _ := NewScannerHooks(tc.managerHook, tc.itHook)
+		hooks, _ := NewScannerHooks(tc.managerHook, tc.itHook, func(scanner ScannerContext) CustomScannerConfig {
+			return nil // no config overrides
+		})
 		sc := NewShardScannerContext(s.mockResource, &ScannerConfig{
 			ScannerHooks: func() *ScannerHooks { return hooks },
 		})
@@ -143,7 +145,7 @@ func (s *activitiesSuite) TestScanShardActivity() {
 		env.SetWorkerOptions(worker.Options{
 			BackgroundActivityContext: ctx,
 		})
-		report, err := env.ExecuteActivity(ScanShardActivity, tc.params)
+		report, err := env.ExecuteActivity(scanShardActivity, tc.params)
 		if tc.wantErr {
 			s.Error(err)
 			break
@@ -185,7 +187,7 @@ func (s *activitiesSuite) TestFixShardActivity() {
 				},
 				ResolvedFixerWorkflowConfig: ResolvedFixerWorkflowConfig{},
 			},
-			managerHook: func(ctx context.Context, pr persistence.Retryer, p FixShardActivityParams) invariant.Manager {
+			managerHook: func(ctx context.Context, pr persistence.Retryer, p FixShardActivityParams, cache cache.DomainCache) invariant.Manager {
 				manager := invariant.NewMockManager(s.controller)
 				manager.EXPECT().RunFixes(gomock.Any(), gomock.Any()).
 					AnyTimes().
@@ -246,7 +248,7 @@ func (s *activitiesSuite) TestFixShardActivity() {
 			env.SetWorkerOptions(worker.Options{
 				BackgroundActivityContext: NewFixerContext(context.Background(), testWorkflowName, fc),
 			})
-			report, execErr := env.ExecuteActivity(FixShardActivity, tc.params)
+			report, execErr := env.ExecuteActivity(fixShardActivity, tc.params)
 			if tc.wantErr {
 				s.Error(execErr)
 			} else {
@@ -358,7 +360,7 @@ func (s *activitiesSuite) TestScannerConfigActivity() {
 		if tc.addHook {
 			cfg.ScannerHooks = func() *ScannerHooks {
 				return &ScannerHooks{
-					GetScannerConfig: func(scanner Context) CustomScannerConfig {
+					GetScannerConfig: func(scanner ScannerContext) CustomScannerConfig {
 						return map[string]string{"test-key": "test-value"}
 					},
 				}
@@ -374,7 +376,7 @@ func (s *activitiesSuite) TestScannerConfigActivity() {
 		},
 		)
 
-		resolvedValue, err := env.ExecuteActivity(ScannerConfigActivity, tc.params)
+		resolvedValue, err := env.ExecuteActivity(scannerConfigActivity, tc.params)
 		s.NoError(err)
 		var resolved ResolvedScannerWorkflowConfig
 		s.NoError(resolvedValue.Get(&resolved))
@@ -427,7 +429,7 @@ func (s *activitiesSuite) TestFixerCorruptedKeysActivity() {
 		QueryResult: queryResultData,
 	}, nil)
 	env := s.getFixerActivityEnvironment()
-	fixerResultValue, err := env.ExecuteActivity(FixerCorruptedKeysActivity, FixerCorruptedKeysActivityParams{})
+	fixerResultValue, err := env.ExecuteActivity(fixerCorruptedKeysActivity, FixerCorruptedKeysActivityParams{})
 	s.NoError(err)
 	fixerResult := &FixerCorruptedKeysActivityResult{}
 	s.NoError(fixerResultValue.Get(&fixerResult))
@@ -480,7 +482,7 @@ func (s *activitiesSuite) TestFixerCorruptedKeysActivity_Fails_WhenNoSuitableExe
 	s.mockResource.SDKClient.EXPECT().ListClosedWorkflowExecutions(gomock.Any(), gomock.Any(), gomock.Any()).Times(1).Return(response, nil)
 
 	env := s.getFixerActivityEnvironment()
-	fixerResultValue, err := env.ExecuteActivity(FixerCorruptedKeysActivity, FixerCorruptedKeysActivityParams{})
+	fixerResultValue, err := env.ExecuteActivity(fixerCorruptedKeysActivity, FixerCorruptedKeysActivityParams{})
 	s.Nil(fixerResultValue)
 	s.EqualError(err, "failed to find a recent scanner workflow execution with ContinuedAsNew status")
 }

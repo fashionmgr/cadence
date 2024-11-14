@@ -18,6 +18,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination transmissionTaskHandler_mock.go
+
 package domain
 
 import (
@@ -104,6 +106,8 @@ func (domainReplicator *domainReplicatorImpl) HandleTransmissionTask(
 			VisibilityArchivalStatus:               config.VisibilityArchivalStatus.Ptr(),
 			VisibilityArchivalURI:                  config.VisibilityArchivalURI,
 			BadBinaries:                            &config.BadBinaries,
+			IsolationGroups:                        &config.IsolationGroups,
+			AsyncWorkflowConfig:                    &config.AsyncWorkflowConfig,
 		},
 		ReplicationConfig: &types.DomainReplicationConfiguration{
 			ActiveClusterName: replicationConfig.ActiveClusterName,

@@ -1,7 +1,6 @@
 - persistence:
     dbname: integration_active_es
   clustergroupmetadata:
-    enableGlobalDomain: true
     failoverVersionIncrement: 10
     primaryClusterName: "active-es"
     currentClusterName: "active-es"
@@ -27,6 +26,8 @@
   historyconfig:
     numhistoryshards: 1
     numhistoryhosts: 1
+  matchingconfig:
+    nummatchinghosts: 1
   messagingclientconfig:
     usemock: false
     kafkaconfig:
@@ -68,7 +69,6 @@
 - persistence:
     dbname: integration_standby_es
   clustergroupmetadata:
-    enableGlobalDomain: true
     failoverVersionIncrement: 10
     primaryClusterName: "active-es"
     currentClusterName: "standby-es"
@@ -94,6 +94,8 @@
   historyconfig:
     numhistoryshards: 1
     numhistoryhosts: 1
+  matchingconfig:
+    nummatchinghosts: 1
   messagingclientconfig:
     usemock: false
     kafkaconfig:

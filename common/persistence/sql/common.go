@@ -27,20 +27,20 @@ import (
 	"encoding/gob"
 	"fmt"
 
-	"github.com/uber/cadence/common/persistence/serialization"
-
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/persistence"
+	p "github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/persistence/serialization"
 	"github.com/uber/cadence/common/persistence/sql/sqlplugin"
 	"github.com/uber/cadence/common/types"
 )
 
-// TODO: Rename all SQL Managers to Stores
 type sqlStore struct {
 	db     sqlplugin.DB
 	logger log.Logger
 	parser serialization.Parser
+	dc     *p.DynamicConfiguration
 }
 
 func (m *sqlStore) GetName() string {
@@ -53,8 +53,12 @@ func (m *sqlStore) Close() {
 	}
 }
 
+func (m *sqlStore) useAsyncTransaction() bool {
+	return m.db.SupportsAsyncTransaction() && m.dc != nil && m.dc.EnableSQLAsyncTransaction()
+}
+
 func (m *sqlStore) txExecute(ctx context.Context, dbShardID int, operation string, f func(tx sqlplugin.Tx) error) error {
-	tx, err := m.db.BeginTx(dbShardID, ctx)
+	tx, err := m.db.BeginTx(ctx, dbShardID)
 	if err != nil {
 		return convertCommonErrors(m.db, operation, "Failed to start transaction.", err)
 	}
@@ -105,7 +109,7 @@ func serializePageToken(offset int64) []byte {
 
 func deserializePageToken(payload []byte) (int64, error) {
 	if len(payload) != 8 {
-		return 0, fmt.Errorf("Invalid token of %v length", len(payload))
+		return 0, fmt.Errorf("invalid token of %v length", len(payload))
 	}
 	return int64(binary.LittleEndian.Uint64(payload)), nil
 }
@@ -129,7 +133,7 @@ func convertCommonErrors(
 	}
 	if errChecker.IsNotFoundError(err) {
 		return &types.EntityNotExistsError{
-			Message: fmt.Sprintf("%v failed. %s Error: %v ", operation, message, err),
+			Message: fmt.Sprintf("%v failed. %s Error: %v", operation, message, err),
 		}
 	}
 

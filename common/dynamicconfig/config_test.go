@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -41,24 +42,32 @@ func TestConfigSuite(t *testing.T) {
 	suite.Run(t, s)
 }
 
-func (s *configSuite) SetupSuite() {
+func (s *configSuite) SetupTest() {
 	s.client = NewInMemoryClient().(*inMemoryClient)
 	logger := log.NewNoop()
 	s.cln = NewCollection(s.client, logger)
 }
 
 func (s *configSuite) TestGetProperty() {
-	key := TestGetPropertyKey
-	value := s.cln.GetProperty(key, "a")
-	s.Equal("a", value())
+	key := TestGetStringPropertyKey
+	value := s.cln.GetProperty(key)
+	s.Equal(key.DefaultValue(), value())
+	s.client.SetValue(key, "b")
+	s.Equal("b", value())
+}
+
+func (s *configSuite) TestGetStringProperty() {
+	key := TestGetStringPropertyKey
+	value := s.cln.GetStringProperty(key)
+	s.Equal(key.DefaultValue(), value())
 	s.client.SetValue(key, "b")
 	s.Equal("b", value())
 }
 
 func (s *configSuite) TestGetIntProperty() {
 	key := TestGetIntPropertyKey
-	value := s.cln.GetIntProperty(key, 10)
-	s.Equal(10, value())
+	value := s.cln.GetIntProperty(key)
+	s.Equal(key.DefaultInt(), value())
 	s.client.SetValue(key, 50)
 	s.Equal(50, value())
 }
@@ -66,19 +75,58 @@ func (s *configSuite) TestGetIntProperty() {
 func (s *configSuite) TestGetIntPropertyFilteredByDomain() {
 	key := TestGetIntPropertyFilteredByDomainKey
 	domain := "testDomain"
-	value := s.cln.GetIntPropertyFilteredByDomain(key, 10)
-	s.Equal(10, value(domain))
+	value := s.cln.GetIntPropertyFilteredByDomain(key)
+	s.Equal(key.DefaultInt(), value(domain))
 	s.client.SetValue(key, 50)
 	s.Equal(50, value(domain))
+}
+
+func (s *configSuite) TestGetIntPropertyFilteredByWorkflowType() {
+	key := TestGetIntPropertyFilteredByWorkflowTypeKey
+	domain := "testDomain"
+	workflowType := "testWorkflowType"
+	value := s.cln.GetIntPropertyFilteredByWorkflowType(key)
+	s.Equal(key.DefaultInt(), value(domain, workflowType))
+	s.client.SetValue(key, 50)
+	s.Equal(50, value(domain, workflowType))
+}
+
+func (s *configSuite) TestGetIntPropertyFilteredByShardID() {
+	key := TestGetIntPropertyFilteredByShardIDKey
+	shardID := 1
+	value := s.cln.GetIntPropertyFilteredByShardID(key)
+	s.Equal(key.DefaultInt(), value(shardID))
+	s.client.SetValue(key, 10)
+	s.Equal(10, value(shardID))
 }
 
 func (s *configSuite) TestGetStringPropertyFnWithDomainFilter() {
 	key := DefaultEventEncoding
 	domain := "testDomain"
-	value := s.cln.GetStringPropertyFilteredByDomain(key, "abc")
-	s.Equal("abc", value(domain))
+	value := s.cln.GetStringPropertyFilteredByDomain(key)
+	s.Equal(key.DefaultString(), value(domain))
 	s.client.SetValue(key, "efg")
 	s.Equal("efg", value(domain))
+}
+
+func (s *configSuite) TestGetStringPropertyFnByTaskListInfo() {
+	key := TasklistLoadBalancerStrategy
+	domain := "testDomain"
+	taskList := "testTaskList"
+	taskType := 0
+	value := s.cln.GetStringPropertyFilteredByTaskListInfo(key)
+	s.Equal(key.DefaultString(), value(domain, taskList, taskType))
+	s.client.SetValue(key, "round-robin")
+	s.Equal("round-robin", value(domain, taskList, taskType))
+}
+
+func (s *configSuite) TestGetStringPropertyFilteredByRatelimitKey() {
+	key := FrontendGlobalRatelimiterMode
+	ratelimitKey := "user:testDomain"
+	value := s.cln.GetStringPropertyFilteredByRatelimitKey(key)
+	s.Equal(key.DefaultString(), value(ratelimitKey))
+	s.client.SetValue(key, "fake-mode")
+	s.Equal("fake-mode", value(ratelimitKey))
 }
 
 func (s *configSuite) TestGetIntPropertyFilteredByTaskListInfo() {
@@ -86,24 +134,33 @@ func (s *configSuite) TestGetIntPropertyFilteredByTaskListInfo() {
 	domain := "testDomain"
 	taskList := "testTaskList"
 	taskType := 0
-	value := s.cln.GetIntPropertyFilteredByTaskListInfo(key, 10)
-	s.Equal(10, value(domain, taskList, taskType))
+	value := s.cln.GetIntPropertyFilteredByTaskListInfo(key)
+	s.Equal(key.DefaultInt(), value(domain, taskList, taskType))
 	s.client.SetValue(key, 50)
 	s.Equal(50, value(domain, taskList, taskType))
 }
 
 func (s *configSuite) TestGetFloat64Property() {
 	key := TestGetFloat64PropertyKey
-	value := s.cln.GetFloat64Property(key, 0.1)
-	s.Equal(0.1, value())
+	value := s.cln.GetFloat64Property(key)
+	s.Equal(key.DefaultFloat(), value())
 	s.client.SetValue(key, 0.01)
 	s.Equal(0.01, value())
 }
 
+func (s *configSuite) TestGetFloat64PropertyFilteredByShardID() {
+	key := TestGetFloat64PropertyFilteredByShardIDKey
+	shardID := 1
+	value := s.cln.GetFloat64PropertyFilteredByShardID(key)
+	s.Equal(key.DefaultFloat(), value(shardID))
+	s.client.SetValue(key, 0.01)
+	s.Equal(0.01, value(shardID))
+}
+
 func (s *configSuite) TestGetBoolProperty() {
 	key := TestGetBoolPropertyKey
-	value := s.cln.GetBoolProperty(key, true)
-	s.Equal(true, value())
+	value := s.cln.GetBoolProperty(key)
+	s.Equal(key.DefaultBool(), value())
 	s.client.SetValue(key, false)
 	s.Equal(false, value())
 }
@@ -111,10 +168,29 @@ func (s *configSuite) TestGetBoolProperty() {
 func (s *configSuite) TestGetBoolPropertyFilteredByDomainID() {
 	key := TestGetBoolPropertyFilteredByDomainIDKey
 	domainID := "testDomainID"
-	value := s.cln.GetBoolPropertyFilteredByDomainID(key, true)
-	s.Equal(true, value(domainID))
+	value := s.cln.GetBoolPropertyFilteredByDomainID(key)
+	s.Equal(key.DefaultBool(), value(domainID))
 	s.client.SetValue(key, false)
 	s.Equal(false, value(domainID))
+}
+
+func (s *configSuite) TestGetBoolPropertyFilteredByDomain() {
+	key := TestGetBoolPropertyFilteredByDomainKey
+	domain := "testDomain"
+	value := s.cln.GetBoolPropertyFilteredByDomain(key)
+	s.Equal(key.DefaultBool(), value(domain))
+	s.client.SetValue(key, true)
+	s.Equal(true, value(domain))
+}
+
+func (s *configSuite) TestGetBoolPropertyFilteredByDomainIDAndWorkflowID() {
+	key := TestGetBoolPropertyFilteredByDomainIDAndWorkflowIDKey
+	domainID := "testDomainID"
+	workflowID := "testWorkflowID"
+	value := s.cln.GetBoolPropertyFilteredByDomainIDAndWorkflowID(key)
+	s.Equal(key.DefaultBool(), value(domainID, workflowID))
+	s.client.SetValue(key, true)
+	s.Equal(true, value(domainID, workflowID))
 }
 
 func (s *configSuite) TestGetBoolPropertyFilteredByTaskListInfo() {
@@ -122,16 +198,16 @@ func (s *configSuite) TestGetBoolPropertyFilteredByTaskListInfo() {
 	domain := "testDomain"
 	taskList := "testTaskList"
 	taskType := 0
-	value := s.cln.GetBoolPropertyFilteredByTaskListInfo(key, false)
-	s.Equal(false, value(domain, taskList, taskType))
+	value := s.cln.GetBoolPropertyFilteredByTaskListInfo(key)
+	s.Equal(key.DefaultBool(), value(domain, taskList, taskType))
 	s.client.SetValue(key, true)
 	s.Equal(true, value(domain, taskList, taskType))
 }
 
 func (s *configSuite) TestGetDurationProperty() {
 	key := TestGetDurationPropertyKey
-	value := s.cln.GetDurationProperty(key, time.Second)
-	s.Equal(time.Second, value())
+	value := s.cln.GetDurationProperty(key)
+	s.Equal(key.DefaultDuration(), value())
 	s.client.SetValue(key, time.Minute)
 	s.Equal(time.Minute, value())
 }
@@ -139,10 +215,28 @@ func (s *configSuite) TestGetDurationProperty() {
 func (s *configSuite) TestGetDurationPropertyFilteredByDomain() {
 	key := TestGetDurationPropertyFilteredByDomainKey
 	domain := "testDomain"
-	value := s.cln.GetDurationPropertyFilteredByDomain(key, time.Second)
-	s.Equal(time.Second, value(domain))
+	value := s.cln.GetDurationPropertyFilteredByDomain(key)
+	s.Equal(key.DefaultDuration(), value(domain))
 	s.client.SetValue(key, time.Minute)
 	s.Equal(time.Minute, value(domain))
+}
+
+func (s *configSuite) TestGetDurationPropertyFilteredByDomainID() {
+	key := TestGetDurationPropertyFilteredByDomainIDKey
+	domain := "testDomainID"
+	value := s.cln.GetDurationPropertyFilteredByDomainID(key)
+	s.Equal(key.DefaultDuration(), value(domain))
+	s.client.SetValue(key, time.Minute)
+	s.Equal(time.Minute, value(domain))
+}
+
+func (s *configSuite) TestGetDurationPropertyFilteredByShardID() {
+	key := TestGetDurationPropertyFilteredByShardID
+	shardID := 1
+	value := s.cln.GetDurationPropertyFilteredByShardID(key)
+	s.Equal(key.DefaultDuration(), value(shardID))
+	s.client.SetValue(key, time.Minute)
+	s.Equal(time.Minute, value(shardID))
 }
 
 func (s *configSuite) TestGetDurationPropertyFilteredByTaskListInfo() {
@@ -150,10 +244,20 @@ func (s *configSuite) TestGetDurationPropertyFilteredByTaskListInfo() {
 	domain := "testDomain"
 	taskList := "testTaskList"
 	taskType := 0
-	value := s.cln.GetDurationPropertyFilteredByTaskListInfo(key, time.Second)
-	s.Equal(time.Second, value(domain, taskList, taskType))
+	value := s.cln.GetDurationPropertyFilteredByTaskListInfo(key)
+	s.Equal(key.DefaultDuration(), value(domain, taskList, taskType))
 	s.client.SetValue(key, time.Minute)
 	s.Equal(time.Minute, value(domain, taskList, taskType))
+}
+
+func (s *configSuite) TestGetDurationPropertyFilteredByWorkflowType() {
+	key := TestGetDurationPropertyFilteredByWorkflowTypeKey
+	domain := "testDomain"
+	workflowType := "testWorkflowType"
+	value := s.cln.GetDurationPropertyFilteredByWorkflowType(key)
+	s.Equal(key.DefaultDuration(), value(domain, workflowType))
+	s.client.SetValue(key, time.Minute)
+	s.Equal(time.Minute, value(domain, workflowType))
 }
 
 func (s *configSuite) TestGetMapProperty() {
@@ -161,17 +265,28 @@ func (s *configSuite) TestGetMapProperty() {
 	val := map[string]interface{}{
 		"testKey": 123,
 	}
-	value := s.cln.GetMapProperty(key, val)
-	s.Equal(val, value())
+	value := s.cln.GetMapProperty(key)
+	s.Equal(key.DefaultMap(), value())
 	val["testKey"] = "321"
 	s.client.SetValue(key, val)
 	s.Equal(val, value())
 	s.Equal("321", value()["testKey"])
 }
 
+func (s *configSuite) TestGetListProperty() {
+	key := TestGetListPropertyKey
+	arr := []interface{}{}
+	value := s.cln.GetListProperty(key)
+	s.Equal(key.DefaultList(), value())
+	arr = append(arr, 1)
+	s.client.SetValue(key, arr)
+	s.Equal(1, len(value()))
+	s.Equal(1, value()[0])
+}
+
 func (s *configSuite) TestUpdateConfig() {
 	key := TestGetBoolPropertyKey
-	value := s.cln.GetBoolProperty(key, true)
+	value := s.cln.GetBoolProperty(key)
 	err := s.client.UpdateValue(key, false)
 	s.NoError(err)
 	s.Equal(false, value())
@@ -181,10 +296,35 @@ func (s *configSuite) TestUpdateConfig() {
 }
 
 func TestDynamicConfigKeyIsMapped(t *testing.T) {
-	for i := UnknownKey; i < LastKeyForTest; i++ {
-		key, ok := Keys[i]
-		require.True(t, ok)
-		require.NotEmpty(t, key)
+	for i := UnknownIntKey + 1; i < LastIntKey; i++ {
+		key, ok := IntKeys[i]
+		require.True(t, ok, "missing IntKey: %d", i)
+		require.NotEmpty(t, key, "empty IntKey: %d", i)
+	}
+	for i := UnknownBoolKey + 1; i < LastBoolKey; i++ {
+		key, ok := BoolKeys[i]
+		require.True(t, ok, "missing BoolKey: %d", i)
+		require.NotEmpty(t, key, "empty BoolKey: %d", i)
+	}
+	for i := UnknownFloatKey + 1; i < LastFloatKey; i++ {
+		key, ok := FloatKeys[i]
+		require.True(t, ok, "missing FloatKey: %d", i)
+		require.NotEmpty(t, key, "empty FloatKey: %d", i)
+	}
+	for i := UnknownStringKey + 1; i < LastStringKey; i++ {
+		key, ok := StringKeys[i]
+		require.True(t, ok, "missing StringKey: %d", i)
+		require.NotEmpty(t, key, "empty StringKey: %d", i)
+	}
+	for i := UnknownDurationKey + 1; i < LastDurationKey; i++ {
+		key, ok := DurationKeys[i]
+		require.True(t, ok, "missing DurationKey: %d", i)
+		require.NotEmpty(t, key, "empty DurationKey: %d", i)
+	}
+	for i := UnknownMapKey + 1; i < LastMapKey; i++ {
+		key, ok := MapKeys[i]
+		require.True(t, ok, "missing MapKey: %d", i)
+		require.NotEmpty(t, key, "empty MapKey: %d", i)
 	}
 }
 
@@ -195,36 +335,35 @@ func TestDynamicConfigFilterTypeIsMapped(t *testing.T) {
 	}
 }
 
-func BenchmarkLogValue(b *testing.B) {
-	keys := []Key{
-		HistorySizeLimitError,
-		MatchingThrottledLogRPS,
-		MatchingIdleTasklistCheckInterval,
-	}
-	values := []interface{}{
-		1024 * 1024,
-		0.1,
-		30 * time.Second,
-	}
-	filters := map[Filter]interface{}{
-		ClusterName: "development",
-		DomainName:  "domainName",
-	}
-	cmpFuncs := []func(interface{}, interface{}) bool{
-		intCompareEquals,
-		float64CompareEquals,
-		durationCompareEquals,
-	}
+func TestDynamicConfigFilterTypeIsParseable(t *testing.T) {
+	allFilters := map[Filter]int{}
+	for idx, filterString := range filters { // TestDynamicConfigFilterTypeIsMapped ensures this is a complete list
+		// all filter-strings must parse to unique filters
+		parsed := ParseFilter(filterString)
+		prev, ok := allFilters[parsed]
+		assert.False(t, ok, "%q is already mapped to the same filter type as %q", filterString, filters[prev])
+		allFilters[parsed] = idx
 
-	collection := NewCollection(NewInMemoryClient(), log.NewNoop())
-	// pre-warm the collection logValue map
-	for i := range keys {
-		collection.logValue(keys[i], filters, values[i], values[i], cmpFuncs[i])
-	}
-
-	for i := 0; i < b.N; i++ {
-		for i := range keys {
-			collection.logValue(keys[i], filters, values[i], values[i], cmpFuncs[i])
+		// otherwise, only "unknown" should map to "unknown".
+		// ParseFilter should probably be re-implemented to simply use a map that is shared with the definitions
+		// so values cannot get out of sync, but for now this is just asserting what is currently built.
+		if idx == 0 {
+			assert.Equalf(t, UnknownFilter, ParseFilter(filterString), "first filter string should have parsed as unknown: %v", filterString)
+			// unknown filter string is likely safe to change and then should be updated here, but otherwise this ensures the logic isn't entirely position-dependent.
+			require.Equalf(t, "unknownFilter", filterString, "expected first filter to be 'unknownFilter', but it was %v", filterString)
+		} else {
+			assert.NotEqualf(t, UnknownFilter, ParseFilter(filterString), "failed to parse filter: %s, make sure it is in ParseFilter's switch statement", filterString)
 		}
 	}
+}
+
+func TestDynamicConfigFilterStringsCorrectly(t *testing.T) {
+	for _, filterString := range filters {
+		// filter-string-parsing and the resulting filter's String() must match
+		parsed := ParseFilter(filterString)
+		assert.Equal(t, filterString, parsed.String(), "filters need to String() correctly as some impls rely on it")
+	}
+	// should not be possible normally, but improper casting could trigger it
+	badFilter := Filter(len(filters))
+	assert.Equal(t, UnknownFilter.String(), badFilter.String(), "filters with indexes outside the list of known strings should String() to the unknown filter type")
 }

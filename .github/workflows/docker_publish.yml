@@ -6,7 +6,7 @@ name: Publish Docker image
 # events but only for the master branch
 on:
   release:
-    types: [ published ]
+    types: [ released ]
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -17,8 +17,7 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v2
       - name: Push to Docker Hub (server build)
-        if: "!github.event.release.prerelease"
-        uses: docker/build-push-action@v1
+        uses: docker/build-push-action@v2
         with:
           username: ${{ secrets.CADENCE_SERVER_DOCKERHUB_USERNAME }}
           password: ${{ secrets.CADENCE_SERVER_DOCKERHUB_TOKEN }}
@@ -32,11 +31,10 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v2
       - name: Push to Docker Hub (auto-setup build)
-        if: "!github.event.release.prerelease"
-        uses: docker/build-push-action@v1
+        uses: docker/build-push-action@v2
         with:
           username: ${{ secrets.CADENCE_SERVER_DOCKERHUB_USERNAME }}
           password: ${{ secrets.CADENCE_SERVER_DOCKERHUB_TOKEN }}
           repository: ubercadence/server
           build_args: TARGET=auto-setup
-          tags: ${{ github.event.release.tag_name }}-auto-setup, latestRelease-auto-setup
+          tags: ${{ github.event.release.tag_name }}-auto-setup, latestrelease-auto-setup

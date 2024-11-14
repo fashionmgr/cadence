@@ -22,6 +22,7 @@ package proto
 
 import (
 	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
+
 	historyv1 "github.com/uber/cadence/.gen/proto/history/v1"
 	sharedv1 "github.com/uber/cadence/.gen/proto/shared/v1"
 	"github.com/uber/cadence/common"
@@ -337,6 +338,7 @@ func FromHistoryGetMutableStateResponse(t *types.GetMutableStateResponse) *histo
 		WorkflowCloseState:                   FromWorkflowExecutionCloseStatus(workflowCloseState),
 		VersionHistories:                     FromVersionHistories(t.VersionHistories),
 		IsStickyTaskListEnabled:              t.IsStickyTaskListEnabled,
+		HistorySize:                          t.HistorySize,
 	}
 }
 
@@ -363,6 +365,7 @@ func ToHistoryGetMutableStateResponse(t *historyv1.GetMutableStateResponse) *typ
 		VersionHistories:                     ToVersionHistories(t.VersionHistories),
 		IsStickyTaskListEnabled:              t.IsStickyTaskListEnabled,
 		IsWorkflowRunning:                    t.WorkflowState == sharedv1.WorkflowState_WORKFLOW_STATE_RUNNING,
+		HistorySize:                          t.HistorySize,
 	}
 }
 
@@ -401,6 +404,42 @@ func ToHistoryGetReplicationMessagesResponse(t *historyv1.GetReplicationMessages
 	}
 	return &types.GetReplicationMessagesResponse{
 		MessagesByShard: ToReplicationMessagesMap(t.ShardMessages),
+	}
+}
+
+func FromHistoryCountDLQMessagesRequest(t *types.CountDLQMessagesRequest) *historyv1.CountDLQMessagesRequest {
+	if t == nil {
+		return nil
+	}
+	return &historyv1.CountDLQMessagesRequest{
+		ForceFetch: t.ForceFetch,
+	}
+}
+
+func ToHistoryCountDLQMessagesRequest(t *historyv1.CountDLQMessagesRequest) *types.CountDLQMessagesRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.CountDLQMessagesRequest{
+		ForceFetch: t.ForceFetch,
+	}
+}
+
+func FromHistoryCountDLQMessagesResponse(t *types.HistoryCountDLQMessagesResponse) *historyv1.CountDLQMessagesResponse {
+	if t == nil {
+		return nil
+	}
+	return &historyv1.CountDLQMessagesResponse{
+		Entries: FromHistoryDLQCountEntryMap(t.Entries),
+	}
+}
+
+func ToHistoryCountDLQMessagesResponse(t *historyv1.CountDLQMessagesResponse) *types.HistoryCountDLQMessagesResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.HistoryCountDLQMessagesResponse{
+		Entries: ToHistoryDLQCountEntryMap(t.Entries),
 	}
 }
 
@@ -794,6 +833,7 @@ func FromHistoryRecordChildExecutionCompletedRequest(t *types.RecordChildExecuti
 		InitiatedId:        t.InitiatedID,
 		CompletedExecution: FromWorkflowExecution(t.CompletedExecution),
 		CompletionEvent:    FromHistoryEvent(t.CompletionEvent),
+		StartedId:          t.StartedID,
 	}
 }
 
@@ -807,6 +847,7 @@ func ToHistoryRecordChildExecutionCompletedRequest(t *historyv1.RecordChildExecu
 		InitiatedID:        t.InitiatedId,
 		CompletedExecution: ToWorkflowExecution(t.CompletedExecution),
 		CompletionEvent:    ToHistoryEvent(t.CompletionEvent),
+		StartedID:          t.StartedId,
 	}
 }
 
@@ -857,6 +898,7 @@ func FromHistoryRecordDecisionTaskStartedResponse(t *types.RecordDecisionTaskSta
 		ScheduledTime:             unixNanoToTime(t.ScheduledTimestamp),
 		StartedTime:               unixNanoToTime(t.StartedTimestamp),
 		Queries:                   FromWorkflowQueryMap(t.Queries),
+		HistorySize:               t.HistorySize,
 	}
 }
 
@@ -879,6 +921,7 @@ func ToHistoryRecordDecisionTaskStartedResponse(t *historyv1.RecordDecisionTaskS
 		ScheduledTimestamp:        timeToUnixNano(t.ScheduledTime),
 		StartedTimestamp:          timeToUnixNano(t.StartedTime),
 		Queries:                   ToWorkflowQueryMap(t.Queries),
+		HistorySize:               t.HistorySize,
 	}
 }
 
@@ -1235,8 +1278,9 @@ func FromHistorySignalWithStartWorkflowExecutionRequest(t *types.HistorySignalWi
 		return nil
 	}
 	return &historyv1.SignalWithStartWorkflowExecutionRequest{
-		Request:  FromSignalWithStartWorkflowExecutionRequest(t.SignalWithStartRequest),
-		DomainId: t.DomainUUID,
+		Request:         FromSignalWithStartWorkflowExecutionRequest(t.SignalWithStartRequest),
+		DomainId:        t.DomainUUID,
+		PartitionConfig: t.PartitionConfig,
 	}
 }
 
@@ -1247,6 +1291,7 @@ func ToHistorySignalWithStartWorkflowExecutionRequest(t *historyv1.SignalWithSta
 	return &types.HistorySignalWithStartWorkflowExecutionRequest{
 		SignalWithStartRequest: ToSignalWithStartWorkflowExecutionRequest(t.Request),
 		DomainUUID:             t.DomainId,
+		PartitionConfig:        t.PartitionConfig,
 	}
 }
 
@@ -1306,6 +1351,7 @@ func FromHistoryStartWorkflowExecutionRequest(t *types.HistoryStartWorkflowExecu
 		ContinuedFailure:         FromFailure(t.ContinuedFailureReason, t.ContinuedFailureDetails),
 		LastCompletionResult:     FromPayload(t.LastCompletionResult),
 		FirstDecisionTaskBackoff: secondsToDuration(t.FirstDecisionTaskBackoffSeconds),
+		PartitionConfig:          t.PartitionConfig,
 	}
 }
 
@@ -1324,6 +1370,7 @@ func ToHistoryStartWorkflowExecutionRequest(t *historyv1.StartWorkflowExecutionR
 		ContinuedFailureDetails:         ToFailureDetails(t.ContinuedFailure),
 		LastCompletionResult:            ToPayload(t.LastCompletionResult),
 		FirstDecisionTaskBackoffSeconds: durationToSeconds(t.FirstDecisionTaskBackoff),
+		PartitionConfig:                 t.PartitionConfig,
 	}
 }
 
@@ -1522,5 +1569,54 @@ func ToHistoryRespondCrossClusterTasksCompletedResponse(t *historyv1.RespondCros
 	}
 	return &types.RespondCrossClusterTasksCompletedResponse{
 		Tasks: ToCrossClusterTaskRequestArray(t.Tasks),
+	}
+}
+
+func FromHistoryResetStickyTaskListResponse(t *types.HistoryResetStickyTaskListResponse) *historyv1.ResetStickyTaskListResponse {
+	if t == nil {
+		return nil
+	}
+	return &historyv1.ResetStickyTaskListResponse{}
+}
+
+func ToHistoryResetStickyTaskListResponse(t *historyv1.ResetStickyTaskListResponse) *types.HistoryResetStickyTaskListResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.HistoryResetStickyTaskListResponse{}
+}
+
+func FromHistoryRatelimitUpdateRequest(t *types.RatelimitUpdateRequest) *historyv1.RatelimitUpdateRequest {
+	if t == nil {
+		return nil
+	}
+	return &historyv1.RatelimitUpdateRequest{
+		Data: FromAny(t.Any),
+	}
+}
+func ToHistoryRatelimitUpdateRequest(t *historyv1.RatelimitUpdateRequest) *types.RatelimitUpdateRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.RatelimitUpdateRequest{
+		Any: ToAny(t.Data),
+	}
+}
+
+func FromHistoryRatelimitUpdateResponse(t *types.RatelimitUpdateResponse) *historyv1.RatelimitUpdateResponse {
+	if t == nil {
+		return nil
+	}
+	return &historyv1.RatelimitUpdateResponse{
+		Data: FromAny(t.Any),
+	}
+}
+
+func ToHistoryRatelimitUpdateResponse(t *historyv1.RatelimitUpdateResponse) *types.RatelimitUpdateResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.RatelimitUpdateResponse{
+		Any: ToAny(t.Data),
 	}
 }

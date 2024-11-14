@@ -31,8 +31,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/tools/common/schema"
 )
 
@@ -59,8 +59,7 @@ type (
 func (tb *DBTestBase) SetupSuiteBase(db DB) {
 	tb.Assertions = require.New(tb.T()) // Have to define our overridden assertions in the test setup. If we did it earlier, tb.T() will return nil
 	var err error
-	tb.Log, err = loggerimpl.NewDevelopment()
-	tb.Require().NoError(err)
+	tb.Log = testlogger.New(tb.T())
 	rand := rand.New(rand.NewSource(time.Now().UnixNano()))
 	tb.DBName = fmt.Sprintf("db_client_test_%v", rand.Int63())
 	err = db.CreateDatabase(tb.DBName)
@@ -88,7 +87,10 @@ func (tb *DBTestBase) RunParseFileTest(content string) {
 
 	_, err = cqlFile.WriteString(content)
 	tb.NoError(err)
-	stmts, err := schema.ParseFile(cqlFile.Name())
+	offset, err := cqlFile.Seek(0, 0)
+	tb.NoError(err)
+	tb.Equal(0, int(offset))
+	stmts, err := schema.ParseFile(cqlFile)
 	tb.Nil(err)
 	tb.Equal(2, len(stmts), "wrong number of sql statements")
 }

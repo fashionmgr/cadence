@@ -31,7 +31,7 @@ import (
 
 	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/task"
@@ -65,6 +65,7 @@ func (s *queueTaskProcessorSuite) SetupTest() {
 
 	s.controller = gomock.NewController(s.T())
 	s.mockShard = shard.NewTestContext(
+		s.T(),
 		s.controller,
 		&persistence.ShardInfo{
 			ShardID: 10,
@@ -75,7 +76,7 @@ func (s *queueTaskProcessorSuite) SetupTest() {
 	s.mockPriorityAssigner = NewMockPriorityAssigner(s.controller)
 
 	s.metricsClient = metrics.NewClient(tally.NoopScope, metrics.History)
-	s.logger = loggerimpl.NewLoggerForTest(s.Suite)
+	s.logger = testlogger.New(s.Suite.T())
 
 	s.processor = s.newTestQueueTaskProcessor()
 }
@@ -103,9 +104,11 @@ func (s *queueTaskProcessorSuite) TestGetOrCreateShardTaskScheduler_ProcessorNot
 
 func (s *queueTaskProcessorSuite) TestGetOrCreateShardTaskScheduler_ShardProcessorAlreadyExists() {
 	mockScheduler := task.NewMockScheduler(s.controller)
+	mockScheduler.EXPECT().Stop().Times(1)
 	s.processor.shardSchedulers[s.mockShard] = mockScheduler
 
 	s.processor.Start()
+	defer s.processor.Stop()
 	scheduler, err := s.processor.getOrCreateShardTaskScheduler(s.mockShard)
 	s.NoError(err)
 	s.Equal(mockScheduler, scheduler)
@@ -115,6 +118,7 @@ func (s *queueTaskProcessorSuite) TestGetOrCreateShardTaskScheduler_ShardProcess
 	s.Empty(s.processor.shardSchedulers)
 
 	s.processor.Start()
+	defer s.processor.Stop()
 	scheduler, err := s.processor.getOrCreateShardTaskScheduler(s.mockShard)
 	s.NoError(err)
 
@@ -142,6 +146,7 @@ func (s *queueTaskProcessorSuite) TestStartStop() {
 
 	for i := 0; i != 10; i++ {
 		mockShard := shard.NewTestContext(
+			s.T(),
 			s.controller,
 			&persistence.ShardInfo{
 				ShardID: 10,
@@ -205,7 +210,7 @@ func (s *queueTaskProcessorSuite) TestTrySubmit_Fail() {
 }
 
 func (s *queueTaskProcessorSuite) TestNewSchedulerOptions_UnknownSchedulerType() {
-	options, err := newSchedulerOptions(0, 100, dynamicconfig.GetIntPropertyFn(10), 1, nil)
+	options, err := task.NewSchedulerOptions(0, 100, dynamicconfig.GetIntPropertyFn(10), 1, nil)
 	s.Error(err)
 	s.Nil(options)
 }

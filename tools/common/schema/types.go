@@ -22,8 +22,11 @@ package schema
 
 import (
 	"fmt"
+	"io/fs"
 	"regexp"
 )
+
+//go:generate mockgen -source $GOFILE -destination schema_client_mock.go -package schema github.com/uber/cadence/tools/common/schema SchemaClient
 
 type (
 	// ConfigError is an error type that
@@ -36,7 +39,7 @@ type (
 	UpdateConfig struct {
 		DBName        string
 		TargetVersion string
-		SchemaDir     string
+		SchemaFS      fs.FS
 		IsDryRun      bool
 	}
 	// SetupConfig holds the config
@@ -76,10 +79,16 @@ const (
 	CLIOptUser = "user"
 	// CLIOptPassword is the cli option for password
 	CLIOptPassword = "password"
+	// CLIOptAllowedAuthenticatorsis the cli option for cassandra allowed authenticators
+	CLIOptAllowedAuthenticators = "allowed-authenticators"
 	// CLIOptTimeout is the cli option for timeout
 	CLIOptTimeout = "timeout"
+	// CLIOptConnectTimeout is the cli option for connection timeout
+	CLIOptConnectTimeout = "connect-timeout"
 	// CLIOptKeyspace is the cli option for keyspace
 	CLIOptKeyspace = "keyspace"
+	// CLIOptDatabase is the cli option for datacenter
+	CLIOptDatacenter = "datacenter"
 	// CLIOptDatabase is the cli option for database
 	CLIOptDatabase = "database"
 	// CLIOptPluginName is the cli option for plugin name
@@ -108,43 +117,49 @@ const (
 	CLIOptProtoVersion = "protocol-version"
 
 	// CLIFlagEndpoint is the cli flag for endpoint
-	CLIFlagEndpoint = CLIOptEndpoint + ", ep"
+	CLIFlagEndpoint = CLIOptEndpoint
 	// CLIFlagPort is the cli flag for port
-	CLIFlagPort = CLIOptPort + ", p"
+	CLIFlagPort = CLIOptPort
 	// CLIFlagUser is the cli flag for user
-	CLIFlagUser = CLIOptUser + ", u"
+	CLIFlagUser = CLIOptUser
 	// CLIFlagPassword is the cli flag for password
-	CLIFlagPassword = CLIOptPassword + ", pw"
+	CLIFlagPassword = CLIOptPassword
+	// CLIFlagAllowedAuthenticators is the cli flag for whitelisting custom authenticators
+	CLIFlagAllowedAuthenticators = CLIOptAllowedAuthenticators
+	// CLIFlagConnectTimeout is the cli flag for connection timeout
+	CLIFlagConnectTimeout = CLIOptConnectTimeout
 	// CLIFlagTimeout is the cli flag for timeout
-	CLIFlagTimeout = CLIOptTimeout + ", t"
+	CLIFlagTimeout = CLIOptTimeout
 	// CLIFlagKeyspace is the cli flag for keyspace
-	CLIFlagKeyspace = CLIOptKeyspace + ", k"
+	CLIFlagKeyspace = CLIOptKeyspace
+	// CLIFlagDatacenter is the cli flag for datacenter
+	CLIFlagDatacenter = CLIOptDatacenter
 	// CLIFlagDatabase is the cli flag for database
-	CLIFlagDatabase = CLIOptDatabase + ", db"
+	CLIFlagDatabase = CLIOptDatabase
 	// CLIFlagPluginName is the cli flag for plugin name
-	CLIFlagPluginName = CLIOptPluginName + ", pl"
+	CLIFlagPluginName = CLIOptPluginName
 	// CLIFlagConnectAttributes allows arbitrary connect attributes
-	CLIFlagConnectAttributes = CLIOptConnectAttributes + ", ca"
+	CLIFlagConnectAttributes = CLIOptConnectAttributes
 	// CLIFlagVersion is the cli flag for version
-	CLIFlagVersion = CLIOptVersion + ", v"
+	CLIFlagVersion = CLIOptVersion
 	// CLIFlagSchemaFile is the cli flag for schema file
-	CLIFlagSchemaFile = CLIOptSchemaFile + ", f"
+	CLIFlagSchemaFile = CLIOptSchemaFile
 	// CLIFlagOverwrite is the cli flag for overwrite
-	CLIFlagOverwrite = CLIOptOverwrite + ", o"
+	CLIFlagOverwrite = CLIOptOverwrite
 	// CLIFlagDisableVersioning is the cli flag for disabling versioning
-	CLIFlagDisableVersioning = CLIOptDisableVersioning + ", d"
+	CLIFlagDisableVersioning = CLIOptDisableVersioning
 	// CLIFlagTargetVersion is the cli flag for target version
-	CLIFlagTargetVersion = CLIOptTargetVersion + ", v"
+	CLIFlagTargetVersion = CLIOptTargetVersion
 	// CLIFlagDryrun is the cli flag for dryrun
 	CLIFlagDryrun = CLIOptDryrun
 	// CLIFlagSchemaDir is the cli flag for schema directory
-	CLIFlagSchemaDir = CLIOptSchemaDir + ", d"
+	CLIFlagSchemaDir = CLIOptSchemaDir
 	// CLIFlagReplicationFactor is the cli flag for replication factor
-	CLIFlagReplicationFactor = CLIOptReplicationFactor + ", rf"
+	CLIFlagReplicationFactor = CLIOptReplicationFactor
 	// CLIFlagQuiet is the cli flag for quiet mode
-	CLIFlagQuiet = CLIOptQuiet + ", q"
+	CLIFlagQuiet = CLIOptQuiet
 	// CLIFlagProtoVersion is the cli flag for protocol version
-	CLIFlagProtoVersion = CLIOptProtoVersion + ", pv"
+	CLIFlagProtoVersion = CLIOptProtoVersion
 
 	// CLIFlagEnableTLS enables cassandra client TLS
 	CLIFlagEnableTLS = "tls"
@@ -156,6 +171,9 @@ const (
 	CLIFlagTLSCaFile = "tls-ca-file"
 	// CLIFlagTLSEnableHostVerification enables tls host verification (tls must be enabled)
 	CLIFlagTLSEnableHostVerification = "tls-enable-host-verification"
+	// CLIFlagTLSServerName is the Server Name Indication to verify the hostname on the returned certificates.
+	// It is also included in the client's handshake to support virtual hosting unless it is an IP address.
+	CLIFlagTLSServerName = "tls-server-name"
 )
 
 var rmspaceRegex = regexp.MustCompile(`\s+`)

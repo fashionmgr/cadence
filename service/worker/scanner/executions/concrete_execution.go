@@ -24,13 +24,16 @@ package executions
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
 	cclient "go.uber.org/cadence/client"
 	"go.uber.org/cadence/workflow"
+	"go.uber.org/zap"
 
 	"github.com/uber/cadence/common/blobstore"
+	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/pagination"
 	"github.com/uber/cadence/common/persistence"
@@ -53,67 +56,78 @@ const (
 
 // ConcreteScannerWorkflow starts concrete executions scanner.
 func ConcreteScannerWorkflow(ctx workflow.Context, params shardscanner.ScannerWorkflowParams) error {
+	logger := workflow.GetLogger(ctx)
+	logger.Info("Starting ConcreteExecutionsScannerWorkflow", zap.Any("Params", params))
+
 	wf, err := shardscanner.NewScannerWorkflow(ctx, ConcreteExecutionsScannerWFTypeName, params)
 	if err != nil {
+		logger.Error("Failed to create new scanner workflow", zap.Error(err))
 		return err
 	}
 
-	return wf.Start(ctx)
+	err = wf.Start(ctx)
+	if err != nil {
+		logger.Error("Failed to start scanner workflow", zap.Error(err))
+	}
+	return err
 }
 
 // ConcreteFixerWorkflow starts concrete executions fixer.
-func ConcreteFixerWorkflow(
-	ctx workflow.Context,
-	params shardscanner.FixerWorkflowParams,
-) error {
+func ConcreteFixerWorkflow(ctx workflow.Context, params shardscanner.FixerWorkflowParams) error {
+	logger := workflow.GetLogger(ctx)
+	logger.Info("Starting ConcreteExecutionsFixerWorkflow", zap.Any("Params", params))
 
 	wf, err := shardscanner.NewFixerWorkflow(ctx, ConcreteExecutionsFixerWFTypeName, params)
 	if err != nil {
+		logger.Error("Failed to create new fixer workflow", zap.Error(err))
 		return err
 	}
 
-	return wf.Start(ctx)
-}
-
-//ConcreteExecutionHooks provides hooks for concrete executions scanner
-func ConcreteExecutionHooks() *shardscanner.ScannerHooks {
-	h, err := shardscanner.NewScannerHooks(ScannerManager, ScannerIterator)
+	err = wf.Start(ctx)
 	if err != nil {
-		return nil
+		logger.Error("Failed to start fixer workflow", zap.Error(err))
 	}
-	h.SetConfig(ConcreteExecutionConfig)
-
-	return h
+	return err
 }
 
-// ConcreteExecutionFixerHooks provides hooks needed for concrete executions fixer.
-func ConcreteExecutionFixerHooks() *shardscanner.FixerHooks {
-	h, err := shardscanner.NewFixerHooks(FixerManager, FixerIterator)
+// concreteExecutionScannerHooks provides hooks for concrete executions scanner
+func concreteExecutionScannerHooks() *shardscanner.ScannerHooks {
+	h, err := shardscanner.NewScannerHooks(concreteExecutionScannerManager, concreteExecutionScannerIterator, concreteExecutionCustomScannerConfig)
 	if err != nil {
 		return nil
 	}
 	return h
 }
 
-// ScannerManager provides invariant manager for concrete execution scanner
-func ScannerManager(
+// concreteExecutionFixerHooks provides hooks needed for concrete executions fixer.
+func concreteExecutionFixerHooks() *shardscanner.FixerHooks {
+	h, err := shardscanner.NewFixerHooks(concreteExecutionFixerManager, concreteExecutionFixerIterator, concreteExecutionCustomFixerConfig)
+	if err != nil {
+		return nil
+	}
+	return h
+}
+
+// concreteExecutionScannerManager provides invariant manager for concrete execution scanner
+func concreteExecutionScannerManager(
 	ctx context.Context,
 	pr persistence.Retryer,
 	params shardscanner.ScanShardActivityParams,
+	domainCache cache.DomainCache,
 ) invariant.Manager {
 
 	collections := ParseCollections(params.ScannerConfig)
 
 	var ivs []invariant.Invariant
-	for _, fn := range ConcreteExecutionType.ToInvariants(collections) {
-		ivs = append(ivs, fn(pr))
+	for _, fn := range ConcreteExecutionType.ToInvariants(collections, zap.NewNop()) {
+		ivs = append(ivs, fn(pr, domainCache))
 	}
 
 	return invariant.NewInvariantManager(ivs)
 }
 
-// ScannerIterator provides iterator for concrete execution scanner.
-func ScannerIterator(
+// concreteExecutionScannerIterator provides iterator for concrete execution scanner.
+func concreteExecutionScannerIterator(
 	ctx context.Context,
 	pr persistence.Retryer,
 	params shardscanner.ScanShardActivityParams,
@@ -123,55 +137,86 @@ func ScannerIterator(
 
 }
 
-// FixerIterator provides iterator for concrete execution fixer.
-func FixerIterator(ctx context.Context, client blobstore.Client, keys store.Keys, _ shardscanner.FixShardActivityParams) store.ScanOutputIterator {
+// concreteExecutionFixerIterator provides iterator for concrete execution fixer.
+func concreteExecutionFixerIterator(ctx context.Context, client blobstore.Client, keys store.Keys, _ shardscanner.FixShardActivityParams) store.ScanOutputIterator {
 	return store.NewBlobstoreIterator(ctx, client, keys, ConcreteExecutionType.ToBlobstoreEntity())
 }
 
-// FixerManager provides invariant manager for concrete execution fixer.
-func FixerManager(_ context.Context, pr persistence.Retryer, _ shardscanner.FixShardActivityParams) invariant.Manager {
-	var ivs []invariant.Invariant
+// concreteExecutionFixerManager provides invariant manager for concrete execution fixer.
+func concreteExecutionFixerManager(_ context.Context, pr persistence.Retryer, params shardscanner.FixShardActivityParams, domainCache cache.DomainCache) invariant.Manager {
+	// convert to invariants.
+	// this may produce an empty list if it all fixers are intentionally disabled,
+	// or if the list came from a previous version of the server which lacked this config.
 	var collections []invariant.Collection
+	for k, v := range params.EnabledInvariants {
+		if v == strconv.FormatBool(true) {
+			ivc, err := invariant.CollectionString(k)
+			if err != nil {
+				panic(fmt.Sprintf("invalid collection name: %v", err)) // error includes the name
+			}
+			collections = append(collections, ivc)
+		}
+	}
 
-	collections = append(collections, invariant.CollectionHistory, invariant.CollectionMutableState)
-
-	for _, fn := range ConcreteExecutionType.ToInvariants(collections) {
-		ivs = append(ivs, fn(pr))
+	var ivs []invariant.Invariant
+	for _, fn := range ConcreteExecutionType.ToInvariants(collections, zap.NewNop()) {
+		ivs = append(ivs, fn(pr, domainCache))
 	}
 	return invariant.NewInvariantManager(ivs)
 }
 
-// ConcreteExecutionConfig resolves dynamic config for concrete executions scanner.
-func ConcreteExecutionConfig(ctx shardscanner.Context) shardscanner.CustomScannerConfig {
+// concreteExecutionCustomScannerConfig resolves dynamic config for concrete executions scanner.
+func concreteExecutionCustomScannerConfig(ctx shardscanner.ScannerContext) shardscanner.CustomScannerConfig {
 	res := shardscanner.CustomScannerConfig{}
 
-	if ctx.Config.DynamicCollection.GetBoolProperty(dynamicconfig.ConcreteExecutionsScannerInvariantCollectionHistory, true)() {
+	if ctx.Config.DynamicCollection.GetBoolProperty(dynamicconfig.ConcreteExecutionsScannerInvariantCollectionHistory)() {
 		res[invariant.CollectionHistory.String()] = strconv.FormatBool(true)
 	}
-	if ctx.Config.DynamicCollection.GetBoolProperty(dynamicconfig.ConcreteExecutionsScannerInvariantCollectionMutableState, true)() {
+	if ctx.Config.DynamicCollection.GetBoolProperty(dynamicconfig.ConcreteExecutionsScannerInvariantCollectionMutableState)() {
 		res[invariant.CollectionMutableState.String()] = strconv.FormatBool(true)
+	}
+	if ctx.Config.DynamicCollection.GetBoolProperty(dynamicconfig.ConcreteExecutionsScannerInvariantCollectionStale)() {
+		res[invariant.CollectionStale.String()] = strconv.FormatBool(true)
 	}
 
 	return res
 }
 
-// ConcreteExecutionScannerConfig configures concrete execution scanner
-func ConcreteExecutionScannerConfig(dc *dynamicconfig.Collection) *shardscanner.ScannerConfig {
+// concreteExecutionCustomFixerConfig resolves dynamic config for concrete executions scanner.
+func concreteExecutionCustomFixerConfig(ctx shardscanner.FixerContext) shardscanner.CustomScannerConfig {
+	res := shardscanner.CustomScannerConfig{}
+
+	// unlike scanner, fixer expects keys to exist when both true and false, to differentiate from pre-config behavior
+	res[invariant.CollectionHistory.String()] = strconv.FormatBool(
+		ctx.Config.DynamicCollection.GetBoolProperty(dynamicconfig.ConcreteExecutionsFixerInvariantCollectionHistory)(),
+	)
+	res[invariant.CollectionMutableState.String()] = strconv.FormatBool(
+		ctx.Config.DynamicCollection.GetBoolProperty(dynamicconfig.ConcreteExecutionsFixerInvariantCollectionMutableState)(),
+	)
+	res[invariant.CollectionStale.String()] = strconv.FormatBool(
+		ctx.Config.DynamicCollection.GetBoolProperty(dynamicconfig.ConcreteExecutionsFixerInvariantCollectionStale)(),
+	)
+
+	return res
+}
+
+// ConcreteExecutionConfig configures concrete execution scanner
+func ConcreteExecutionConfig(dc *dynamicconfig.Collection) *shardscanner.ScannerConfig {
 	return &shardscanner.ScannerConfig{
 		ScannerWFTypeName: ConcreteExecutionsScannerWFTypeName,
 		FixerWFTypeName:   ConcreteExecutionsFixerWFTypeName,
 		DynamicParams: shardscanner.DynamicParams{
-			ScannerEnabled:          dc.GetBoolProperty(dynamicconfig.ConcreteExecutionsScannerEnabled, false),
-			FixerEnabled:            dc.GetBoolProperty(dynamicconfig.ConcreteExecutionFixerEnabled, false),
-			Concurrency:             dc.GetIntProperty(dynamicconfig.ConcreteExecutionsScannerConcurrency, 25),
-			PageSize:                dc.GetIntProperty(dynamicconfig.ConcreteExecutionsScannerPersistencePageSize, 1000),
-			BlobstoreFlushThreshold: dc.GetIntProperty(dynamicconfig.ConcreteExecutionsScannerBlobstoreFlushThreshold, 100),
-			ActivityBatchSize:       dc.GetIntProperty(dynamicconfig.ConcreteExecutionsScannerActivityBatchSize, 25),
-			AllowDomain:             dc.GetBoolPropertyFilteredByDomain(dynamicconfig.ConcreteExecutionFixerDomainAllow, false),
+			ScannerEnabled:          dc.GetBoolProperty(dynamicconfig.ConcreteExecutionsScannerEnabled),
+			FixerEnabled:            dc.GetBoolProperty(dynamicconfig.ConcreteExecutionFixerEnabled),
+			Concurrency:             dc.GetIntProperty(dynamicconfig.ConcreteExecutionsScannerConcurrency),
+			PageSize:                dc.GetIntProperty(dynamicconfig.ConcreteExecutionsScannerPersistencePageSize),
+			BlobstoreFlushThreshold: dc.GetIntProperty(dynamicconfig.ConcreteExecutionsScannerBlobstoreFlushThreshold),
+			ActivityBatchSize:       dc.GetIntProperty(dynamicconfig.ConcreteExecutionsScannerActivityBatchSize),
+			AllowDomain:             dc.GetBoolPropertyFilteredByDomain(dynamicconfig.ConcreteExecutionFixerDomainAllow),
 		},
 		DynamicCollection: dc,
-		ScannerHooks:      ConcreteExecutionHooks,
-		FixerHooks:        ConcreteExecutionFixerHooks,
+		ScannerHooks:      concreteExecutionScannerHooks,
+		FixerHooks:        concreteExecutionFixerHooks,
 		StartWorkflowOptions: cclient.StartWorkflowOptions{
 			ID:                           concreteExecutionsScannerWFID,
 			TaskList:                     concreteExecutionsScannerTaskListName,

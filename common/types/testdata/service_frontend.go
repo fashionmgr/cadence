@@ -298,10 +298,11 @@ var (
 		WorkerVersionInfo: &WorkerVersionInfo,
 	}
 	RequestCancelWorkflowExecutionRequest = types.RequestCancelWorkflowExecutionRequest{
-		Domain:            DomainName,
-		WorkflowExecution: &WorkflowExecution,
-		Identity:          Identity,
-		RequestID:         RequestID,
+		Domain:              DomainName,
+		WorkflowExecution:   &WorkflowExecution,
+		Identity:            Identity,
+		RequestID:           RequestID,
+		FirstExecutionRunID: RunID,
 	}
 	StartWorkflowExecutionRequest = types.StartWorkflowExecutionRequest{
 		Domain:                              DomainName,
@@ -319,11 +320,16 @@ var (
 		Memo:                                &Memo,
 		SearchAttributes:                    &SearchAttributes,
 		Header:                              &Header,
+		FirstRunAtTimeStamp:                 &Timestamp1,
 	}
 	StartWorkflowExecutionResponse = types.StartWorkflowExecutionResponse{
 		RunID: RunID,
 	}
-	SignalWorkflowExecutionRequest = types.SignalWorkflowExecutionRequest{
+	StartWorkflowExecutionAsyncRequest = types.StartWorkflowExecutionAsyncRequest{
+		StartWorkflowExecutionRequest: &StartWorkflowExecutionRequest,
+	}
+	StartWorkflowExecutionAsyncResponse = types.StartWorkflowExecutionAsyncResponse{}
+	SignalWorkflowExecutionRequest      = types.SignalWorkflowExecutionRequest{
 		Domain:            DomainName,
 		WorkflowExecution: &WorkflowExecution,
 		SignalName:        SignalName,
@@ -351,8 +357,13 @@ var (
 		Memo:                                &Memo,
 		SearchAttributes:                    &SearchAttributes,
 		Header:                              &Header,
+		FirstRunAtTimestamp:                 &Timestamp1,
 	}
-	ResetWorkflowExecutionRequest = types.ResetWorkflowExecutionRequest{
+	SignalWithStartWorkflowExecutionAsyncRequest = types.SignalWithStartWorkflowExecutionAsyncRequest{
+		SignalWithStartWorkflowExecutionRequest: &SignalWithStartWorkflowExecutionRequest,
+	}
+	SignalWithStartWorkflowExecutionAsyncResponse = types.SignalWithStartWorkflowExecutionAsyncResponse{}
+	ResetWorkflowExecutionRequest                 = types.ResetWorkflowExecutionRequest{
 		Domain:                DomainName,
 		WorkflowExecution:     &WorkflowExecution,
 		Reason:                Reason,
@@ -364,11 +375,12 @@ var (
 		RunID: RunID,
 	}
 	TerminateWorkflowExecutionRequest = types.TerminateWorkflowExecutionRequest{
-		Domain:            DomainName,
-		WorkflowExecution: &WorkflowExecution,
-		Reason:            Reason,
-		Details:           Payload1,
-		Identity:          Identity,
+		Domain:              DomainName,
+		WorkflowExecution:   &WorkflowExecution,
+		Reason:              Reason,
+		Details:             Payload1,
+		Identity:            Identity,
+		FirstExecutionRunID: RunID,
 	}
 	DescribeWorkflowExecutionRequest = types.DescribeWorkflowExecutionRequest{
 		Domain:    DomainName,
@@ -380,6 +392,14 @@ var (
 		PendingActivities:      PendingActivityInfoArray,
 		PendingChildren:        PendingChildExecutionInfoArray,
 		PendingDecision:        &PendingDecisionInfo,
+	}
+	DiagnoseWorkflowExecutionRequest = types.DiagnoseWorkflowExecutionRequest{
+		Domain:            DomainName,
+		WorkflowExecution: &WorkflowExecution,
+	}
+	DiagnoseWorkflowExecutionResponse = types.DiagnoseWorkflowExecutionResponse{
+		Domain:                      DomainName,
+		DiagnosticWorkflowExecution: &WorkflowExecution,
 	}
 	QueryWorkflowRequest = types.QueryWorkflowRequest{
 		Domain:                DomainName,
@@ -399,8 +419,9 @@ var (
 		IncludeTaskListStatus: true,
 	}
 	DescribeTaskListResponse = types.DescribeTaskListResponse{
-		Pollers:        PollerInfoArray,
-		TaskListStatus: &TaskListStatus,
+		Pollers:         PollerInfoArray,
+		TaskListStatus:  &TaskListStatus,
+		PartitionConfig: &TaskListPartitionConfig,
 	}
 	ListTaskListPartitionsRequest = types.ListTaskListPartitionsRequest{
 		Domain:   DomainName,

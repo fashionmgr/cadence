@@ -24,11 +24,15 @@ package authorization
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
+	"reflect"
+	"strings"
 
 	clientworker "go.uber.org/cadence/worker"
 
+	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -49,6 +53,7 @@ const (
 )
 
 type (
+	domainData map[string]string
 	// Attributes is input for authority to make decision.
 	// It can be extended in future if required auth on resources like WorkflowType and TaskList
 	Attributes struct {
@@ -58,6 +63,7 @@ type (
 		WorkflowType *types.WorkflowType
 		TaskList     *types.TaskList
 		Permission   Permission
+		RequestBody  FilteredRequestBody // request object except for data inputs (PII)
 	}
 
 	// Result is result from authority.
@@ -85,15 +91,79 @@ func NewPermission(permission string) Permission {
 	}
 }
 
+func (d domainData) Groups(groupType string) []string {
+	res, ok := d[groupType]
+	if !ok {
+		return nil
+	}
+	return strings.Split(res, groupSeparator)
+}
+
 // Authorizer is an interface for authorization
 type Authorizer interface {
 	Authorize(ctx context.Context, attributes *Attributes) (Result, error)
 }
 
 func GetAuthProviderClient(privateKey string) (clientworker.AuthorizationProvider, error) {
-	pk, err := ioutil.ReadFile(privateKey)
+	pk, err := os.ReadFile(privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("invalid private key path %s", privateKey)
 	}
 	return clientworker.NewAdminJwtAuthorizationProvider(pk), nil
+}
+
+// FilteredRequestBody request object except for data inputs (PII)
+type FilteredRequestBody interface {
+	SerializeForLogging() (string, error)
+}
+
+type simpleRequestLogWrapper struct {
+	request interface{}
+}
+
+func (f *simpleRequestLogWrapper) SerializeForLogging() (string, error) {
+	// We have to check if the request is a typed nil. In the interface we have to handle typed nils.
+	// The reflection check  is slow but this function is doing json marshalling, so performance
+	// shouldn't be an issue.
+	if f.request == nil || reflect.ValueOf(f.request).IsNil() {
+		return "", nil
+	}
+
+	res, err := json.Marshal(f.request)
+	if err != nil {
+		return "", err
+	}
+
+	return string(res), nil
+}
+
+func NewFilteredRequestBody(request interface{}) FilteredRequestBody {
+	return &simpleRequestLogWrapper{request}
+}
+
+func validatePermission(claims *JWTClaims, attributes *Attributes, data domainData) error {
+	if (attributes.Permission < PermissionRead) || (attributes.Permission > PermissionAdmin) {
+		return fmt.Errorf("permission %v is not supported", attributes.Permission)
+	}
+
+	allowedGroups := map[string]bool{}
+	// groups that allowed by domain configuration(in domainData)
+	// write groups are always checked
+	for _, g := range data.Groups(common.DomainDataKeyForWriteGroups) {
+		allowedGroups[g] = true
+	}
+
+	if attributes.Permission == PermissionRead {
+		for _, g := range data.Groups(common.DomainDataKeyForReadGroups) {
+			allowedGroups[g] = true
+		}
+	}
+
+	for _, jwtGroup := range claims.GetGroups() {
+		if _, ok := allowedGroups[jwtGroup]; ok {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("token doesn't have the right permission, jwt groups: %v, allowed groups: %v", claims.GetGroups(), allowedGroups)
 }

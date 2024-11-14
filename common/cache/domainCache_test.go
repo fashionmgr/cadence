@@ -25,7 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	"github.com/pborman/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -34,12 +36,12 @@ import (
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/cluster"
-	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/testing/testdatagen"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -48,12 +50,10 @@ type (
 		suite.Suite
 		*require.Assertions
 
-		clusterMetadata *mocks.ClusterMetadata
-		metadataMgr     *mocks.MetadataManager
+		metadataMgr *mocks.MetadataManager
 
-		domainCache *domainCache
+		domainCache *DefaultDomainCache
 		logger      log.Logger
-		now         time.Time
 	}
 )
 
@@ -72,19 +72,17 @@ func (s *domainCacheSuite) TearDownSuite() {
 func (s *domainCacheSuite) SetupTest() {
 	s.Assertions = require.New(s.T())
 
-	s.logger = loggerimpl.NewLoggerForTest(s.Suite)
-	s.clusterMetadata = &mocks.ClusterMetadata{}
+	s.logger = testlogger.New(s.Suite.T())
+
 	s.metadataMgr = &mocks.MetadataManager{}
 	metricsClient := metrics.NewClient(tally.NoopScope, metrics.History)
-	s.domainCache = NewDomainCache(s.metadataMgr, s.clusterMetadata, metricsClient, s.logger).(*domainCache)
+	s.domainCache = NewDomainCache(s.metadataMgr, cluster.GetTestClusterMetadata(true), metricsClient, s.logger)
 
-	s.now = time.Now()
-	s.domainCache.timeSource = clock.NewEventTimeSource().Update(s.now)
+	s.domainCache.timeSource = clock.NewMockedTimeSource()
 }
 
 func (s *domainCacheSuite) TearDownTest() {
 	s.domainCache.Stop()
-	s.clusterMetadata.AssertExpectations(s.T())
 	s.metadataMgr.AssertExpectations(s.T())
 }
 
@@ -96,7 +94,22 @@ func (s *domainCacheSuite) TestListDomain() {
 			Retention: 1,
 			BadBinaries: types.BadBinaries{
 				Binaries: map[string]*types.BadBinaryInfo{},
-			}},
+			},
+			AsyncWorkflowConfig: types.AsyncWorkflowConfiguration{
+				Enabled:             true,
+				PredefinedQueueName: "test-async-wf-queue",
+			},
+			IsolationGroups: types.IsolationGroupConfiguration{
+				"zone-1": {
+					Name:  "zone-1",
+					State: types.IsolationGroupStateDrained,
+				},
+				"zone-2": {
+					Name:  "zone-2",
+					State: types.IsolationGroupStateHealthy,
+				},
+			},
+		},
 		ReplicationConfig: &persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestCurrentClusterName,
 			Clusters: []*persistence.ClusterReplicationConfig{
@@ -154,7 +167,6 @@ func (s *domainCacheSuite) TestListDomain() {
 	pageToken := []byte("some random page token")
 
 	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
@@ -197,7 +209,6 @@ func (s *domainCacheSuite) TestListDomain() {
 }
 
 func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByName() {
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	domainNotificationVersion := int64(999999) // make this notification version really large for test
 	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
 	domainRecord := &persistence.GetDomainResponse{
@@ -241,7 +252,6 @@ func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByName() {
 }
 
 func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByID() {
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	domainNotificationVersion := int64(999999) // make this notification version really large for test
 	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
 	domainRecord := &persistence.GetDomainResponse{
@@ -279,119 +289,62 @@ func (s *domainCacheSuite) TestGetDomain_NonLoaded_GetByID() {
 	s.Equal(entry, entryByID)
 }
 
-func (s *domainCacheSuite) TestGetActiveDomainEntry_LocalDomain() {
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
-	domainNotificationVersion := int64(999999) // make this notification version really large for test
-	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
-
-	domainRecord := &persistence.GetDomainResponse{
-		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "some random domain name", Data: map[string]string{}},
-		Config: &persistence.DomainConfig{
-			Retention: 1,
-			BadBinaries: types.BadBinaries{
-				Binaries: map[string]*types.BadBinaryInfo{},
-			},
+func Test_IsActiveIn(t *testing.T) {
+	tests := []struct {
+		msg              string
+		isGlobalDomain   bool
+		currentCluster   string
+		activeCluster    string
+		failoverDeadline *int64
+		expectIsActive   bool
+		expectedErr      error
+	}{
+		{
+			msg:            "local domain",
+			isGlobalDomain: false,
+			expectIsActive: true,
 		},
-		ReplicationConfig: &persistence.DomainReplicationConfig{
-			ActiveClusterName: cluster.TestCurrentClusterName,
-			Clusters: []*persistence.ClusterReplicationConfig{
-				{ClusterName: cluster.TestCurrentClusterName},
-			},
+		{
+			msg:              "global pending active domain",
+			isGlobalDomain:   true,
+			failoverDeadline: common.Int64Ptr(time.Now().Unix()),
+			expectedErr:      &types.DomainNotActiveError{Message: "Domain: test-domain is pending active in cluster: .", DomainName: "test-domain", CurrentCluster: "", ActiveCluster: ""},
 		},
-		IsGlobalDomain: false,
+		{
+			msg:            "global domain on active cluster",
+			isGlobalDomain: true,
+			currentCluster: "A",
+			activeCluster:  "A",
+			expectIsActive: true,
+		},
+		{
+			msg:            "global domain on passive cluster",
+			isGlobalDomain: true,
+			currentCluster: "A",
+			activeCluster:  "B",
+			expectedErr:    &types.DomainNotActiveError{Message: "Domain: test-domain is active in cluster: B, while current cluster A is a standby cluster.", DomainName: "test-domain", CurrentCluster: "A", ActiveCluster: "B"},
+		},
 	}
-	domainID := domainRecord.Info.ID
-	expectedEntry := s.buildEntryFromRecord(domainRecord)
-	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{ID: domainID}).Return(domainRecord, nil).Once()
-	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
-		PageSize:      domainCacheRefreshPageSize,
-		NextPageToken: nil,
-	}).Return(&persistence.ListDomainsResponse{
-		Domains:       []*persistence.GetDomainResponse{domainRecord},
-		NextPageToken: nil,
-	}, nil).Once()
+	for _, tt := range tests {
+		t.Run(tt.msg, func(t *testing.T) {
+			domain := NewDomainCacheEntryForTest(
+				&persistence.DomainInfo{Name: "test-domain"},
+				nil,
+				tt.isGlobalDomain,
+				&persistence.DomainReplicationConfig{ActiveClusterName: tt.activeCluster},
+				0,
+				tt.failoverDeadline,
+				0,
+				0,
+				0,
+			)
 
-	entry, err := s.domainCache.GetActiveDomainByID(domainID)
-	s.NoError(err)
-	s.Equal(expectedEntry, entry)
-}
+			isActive, err := domain.IsActiveIn(tt.currentCluster)
 
-func (s *domainCacheSuite) TestGetActiveDomainEntry_ActiveGlobalDomain() {
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
-	s.clusterMetadata.On("GetCurrentClusterName").Return(cluster.TestCurrentClusterName)
-	domainNotificationVersion := int64(999999) // make this notification version really large for test
-	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
-
-	domainRecord := &persistence.GetDomainResponse{
-		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "some random domain name", Data: map[string]string{}},
-		Config: &persistence.DomainConfig{
-			Retention: 1,
-			BadBinaries: types.BadBinaries{
-				Binaries: map[string]*types.BadBinaryInfo{},
-			},
-		},
-		ReplicationConfig: &persistence.DomainReplicationConfig{
-			ActiveClusterName: cluster.TestCurrentClusterName,
-			Clusters: []*persistence.ClusterReplicationConfig{
-				{ClusterName: cluster.TestCurrentClusterName},
-				{ClusterName: cluster.TestAlternativeClusterName},
-			},
-		},
-		IsGlobalDomain: true,
+			assert.Equal(t, tt.expectIsActive, isActive)
+			assert.Equal(t, tt.expectedErr, err)
+		})
 	}
-	domainID := domainRecord.Info.ID
-	expectedEntry := s.buildEntryFromRecord(domainRecord)
-	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{ID: domainID}).Return(domainRecord, nil).Once()
-	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
-		PageSize:      domainCacheRefreshPageSize,
-		NextPageToken: nil,
-	}).Return(&persistence.ListDomainsResponse{
-		Domains:       []*persistence.GetDomainResponse{domainRecord},
-		NextPageToken: nil,
-	}, nil).Once()
-
-	entry, err := s.domainCache.GetActiveDomainByID(domainID)
-	s.NoError(err)
-	s.Equal(expectedEntry, entry)
-}
-
-func (s *domainCacheSuite) TestGetActiveDomainEntry_PassiveGlobalDomain() {
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
-	s.clusterMetadata.On("GetCurrentClusterName").Return(cluster.TestCurrentClusterName)
-	domainNotificationVersion := int64(999999) // make this notification version really large for test
-	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
-
-	domainRecord := &persistence.GetDomainResponse{
-		Info: &persistence.DomainInfo{ID: uuid.New(), Name: "some random domain name", Data: map[string]string{}},
-		Config: &persistence.DomainConfig{
-			Retention: 1,
-			BadBinaries: types.BadBinaries{
-				Binaries: map[string]*types.BadBinaryInfo{},
-			},
-		},
-		ReplicationConfig: &persistence.DomainReplicationConfig{
-			ActiveClusterName: cluster.TestAlternativeClusterName,
-			Clusters: []*persistence.ClusterReplicationConfig{
-				{ClusterName: cluster.TestCurrentClusterName},
-				{ClusterName: cluster.TestAlternativeClusterName},
-			},
-		},
-		IsGlobalDomain: true,
-	}
-	domainID := domainRecord.Info.ID
-	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{ID: domainID}).Return(domainRecord, nil).Once()
-	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
-		PageSize:      domainCacheRefreshPageSize,
-		NextPageToken: nil,
-	}).Return(&persistence.ListDomainsResponse{
-		Domains:       []*persistence.GetDomainResponse{domainRecord},
-		NextPageToken: nil,
-	}, nil).Once()
-
-	entry, err := s.domainCache.GetActiveDomainByID(domainID)
-	s.Error(err)
-	s.IsType(&types.DomainNotActiveError{}, err)
-	s.NotNil(entry)
 }
 
 func (s *domainCacheSuite) TestRegisterCallback_CatchUp() {
@@ -441,7 +394,6 @@ func (s *domainCacheSuite) TestRegisterCallback_CatchUp() {
 	domainNotificationVersion++
 
 	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil).Once()
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
@@ -519,7 +471,6 @@ func (s *domainCacheSuite) TestUpdateCache_TriggerCallBack() {
 	domainNotificationVersion++
 
 	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil).Once()
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	s.metadataMgr.On("ListDomains", mock.Anything, &persistence.ListDomainsRequest{
 		PageSize:      domainCacheRefreshPageSize,
 		NextPageToken: nil,
@@ -593,7 +544,7 @@ func (s *domainCacheSuite) TestUpdateCache_TriggerCallBack() {
 		NextPageToken: nil,
 	}, nil).Once()
 
-	s.domainCache.timeSource.(*clock.EventTimeSource).Update(s.now.Add(domainCacheMinRefreshInterval))
+	s.domainCache.timeSource.(clock.MockedTimeSource).Advance(domainCacheMinRefreshInterval)
 	s.Nil(s.domainCache.refreshDomains())
 
 	// the order matters here: the record 2 got updated first, thus with a lower notification version
@@ -605,7 +556,6 @@ func (s *domainCacheSuite) TestUpdateCache_TriggerCallBack() {
 }
 
 func (s *domainCacheSuite) TestGetTriggerListAndUpdateCache_ConcurrentAccess() {
-	s.clusterMetadata.On("IsGlobalDomainEnabled").Return(true)
 	domainNotificationVersion := int64(999999) // make this notification version really large for test
 	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: domainNotificationVersion}, nil)
 	id := uuid.New()
@@ -659,8 +609,418 @@ func (s *domainCacheSuite) TestGetTriggerListAndUpdateCache_ConcurrentAccess() {
 	waitGroup.Wait()
 }
 
+func (s *domainCacheSuite) TestGetCacheSize() {
+	testCache := newDomainCache()
+	testCache.Put("testDomainID", &DomainCacheEntry{
+		info: &persistence.DomainInfo{ID: "testDomainID", Name: "testDomain"},
+	})
+
+	s.domainCache.cacheByID.Store(testCache)
+
+	s.domainCache.cacheNameToID.Store(testCache)
+
+	byName, byID := s.domainCache.GetCacheSize()
+
+	s.Equal(int64(1), byName)
+	s.Equal(int64(1), byID)
+}
+
+func (s *domainCacheSuite) TestStart_Stop() {
+	mockTimeSource := clock.NewMockedTimeSource()
+	s.domainCache.timeSource = mockTimeSource
+
+	s.domainCache.lastRefreshTime = mockTimeSource.Now()
+
+	domainID := uuid.New()
+	domainName := "some random domain name"
+
+	s.Equal(domainCacheInitialized, s.domainCache.status)
+
+	s.Equal(0, len(s.domainCache.GetAllDomain()))
+
+	s.domainCache.Start()
+
+	// testing noop
+	s.domainCache.Start()
+
+	mockTimeSource.BlockUntil(1)
+
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: 4}, nil).Once()
+
+	domainResponse := &persistence.GetDomainResponse{
+		Info: &persistence.DomainInfo{ID: domainID, Name: domainName, Data: make(map[string]string)},
+		Config: &persistence.DomainConfig{
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
+			},
+		},
+		ReplicationConfig: &persistence.DomainReplicationConfig{
+			ActiveClusterName: cluster.TestCurrentClusterName,
+		},
+		FailoverVersion:     124,
+		NotificationVersion: 3,
+	}
+
+	listDomainsResponse := &persistence.ListDomainsResponse{
+		Domains: []*persistence.GetDomainResponse{domainResponse},
+	}
+
+	s.metadataMgr.On("ListDomains", mock.Anything, mock.Anything).Return(listDomainsResponse, nil).Once()
+
+	mockTimeSource.Advance(DomainCacheRefreshInterval)
+
+	s.Equal(domainCacheStarted, s.domainCache.status)
+
+	// need to wait for the go routine to make progress and update the cache
+	time.Sleep(200 * time.Millisecond)
+
+	allDomains := s.domainCache.GetAllDomain()
+	s.Equal(1, len(allDomains))
+	s.Equal(domainID, allDomains[domainID].GetInfo().ID)
+	s.Equal(int64(124), allDomains[domainID].GetFailoverVersion())
+
+	s.domainCache.Stop()
+	s.Equal(domainCacheStopped, s.domainCache.status)
+}
+
+func (s *domainCacheSuite) TestStart_Error() {
+	mockLogger := &log.MockLogger{}
+	s.domainCache.logger = mockLogger
+
+	s.Equal(domainCacheInitialized, s.domainCache.status)
+
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(nil, assert.AnError).Once()
+	mockLogger.On("Fatal", "Unable to initialize domain cache", mock.Anything).Once()
+
+	s.domainCache.Start()
+}
+
+func (s *domainCacheSuite) TestUnregisterDomainChangeCallback() {
+	s.domainCache.prepareCallbacks = map[int]PrepareCallbackFn{
+		1: func() {},
+	}
+	s.domainCache.callbacks = map[int]CallbackFn{
+		1: func([]*DomainCacheEntry) {},
+	}
+
+	s.domainCache.UnregisterDomainChangeCallback(1)
+	s.Empty(s.domainCache.prepareCallbacks)
+	s.Empty(s.domainCache.callbacks)
+}
+
+func (s *domainCacheSuite) TestGetDomain_Error() {
+	entry, err := s.domainCache.GetDomain("")
+	s.Nil(entry)
+	s.ErrorContains(err, "Domain name is empty")
+}
+
+func (s *domainCacheSuite) TestGetDomainByID_Error() {
+	entry, err := s.domainCache.GetDomainByID("")
+	s.Nil(entry)
+	s.ErrorContains(err, "DomainID is empty.")
+}
+
+func (s *domainCacheSuite) TestGetDomainID() {
+	entry, err := s.domainCache.GetDomainID("")
+	s.Empty(entry)
+	s.ErrorContains(err, "Domain name is empty")
+
+	domainName := "testDomain"
+	domainID := "testDomainID"
+
+	testCache := newDomainCache()
+	domainEntry := &DomainCacheEntry{
+		info: &persistence.DomainInfo{ID: domainID, Name: domainName},
+		config: &persistence.DomainConfig{
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
+			},
+		},
+		replicationConfig: &persistence.DomainReplicationConfig{
+			ActiveClusterName: cluster.TestCurrentClusterName,
+		},
+		initialized: true,
+	}
+	testCache.Put(domainName, domainID)
+	testCache.Put(domainID, domainEntry)
+
+	s.domainCache.cacheByID.Store(testCache)
+
+	s.domainCache.cacheNameToID.Store(testCache)
+
+	entry, err = s.domainCache.GetDomainID(domainName)
+
+	s.Nil(err)
+	s.Equal(domainID, entry)
+}
+
+func (s *domainCacheSuite) TestGetDomainName() {
+	domainName := "testDomain"
+	domainID := "testDomainID"
+
+	testCache := newDomainCache()
+	domainEntry := &DomainCacheEntry{
+		info: &persistence.DomainInfo{ID: domainID, Name: domainName},
+		config: &persistence.DomainConfig{
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
+			},
+		},
+		replicationConfig: &persistence.DomainReplicationConfig{
+			ActiveClusterName: cluster.TestCurrentClusterName,
+		},
+		initialized: true,
+	}
+	testCache.Put(domainName, domainID)
+	testCache.Put(domainID, domainEntry)
+
+	s.domainCache.cacheByID.Store(testCache)
+
+	s.domainCache.cacheNameToID.Store(testCache)
+
+	entry, err := s.domainCache.GetDomainName(domainID)
+
+	s.Nil(err)
+	s.Equal(domainName, entry)
+}
+
+func (s *domainCacheSuite) TestGetDomainName_Error() {
+	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{Name: "", ID: ""}).Return(nil, assert.AnError).Once()
+
+	entry, err := s.domainCache.GetDomainName("")
+	s.Empty(entry)
+	s.ErrorIs(err, assert.AnError)
+}
+
+func (s *domainCacheSuite) Test_updateIDToDomainCache_Error() {
+	domainCacheEntry := &DomainCacheEntry{
+		info: &persistence.DomainInfo{ID: "testDomainID", Name: "testDomain"},
+	}
+	newCache := NewMockCache(gomock.NewController(s.T()))
+
+	newCache.EXPECT().PutIfNotExist("testDomainID", &DomainCacheEntry{}).Return(false, assert.AnError).Times(1)
+
+	triggerCallback, entry, err := s.domainCache.updateIDToDomainCache(newCache, "testDomainID", domainCacheEntry)
+
+	s.False(triggerCallback)
+	s.Nil(entry)
+	s.ErrorIs(err, assert.AnError)
+}
+
+func (s *domainCacheSuite) Test_getDomain_Error_checkDomainExists() {
+	domainName := "testDomain"
+
+	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{Name: domainName, ID: ""}).Return(nil, assert.AnError).Once()
+
+	entry, err := s.domainCache.getDomain(domainName)
+
+	s.Nil(entry)
+	s.ErrorIs(err, assert.AnError)
+}
+
+func (s *domainCacheSuite) Test_getDomain_Error_refreshDomainsLocked() {
+	domainName := "testDomain"
+
+	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{Name: domainName, ID: ""}).Return(nil, nil).Once()
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(nil, assert.AnError).Once()
+
+	entry, err := s.domainCache.getDomain(domainName)
+
+	s.Nil(entry)
+	s.ErrorIs(err, assert.AnError)
+}
+
+func (s *domainCacheSuite) Test_getDomain_cacheHitAfterRefreshLockLocked() {
+	domainName := "testDomain"
+	domainID := "testDomainID"
+
+	testCache := newDomainCache()
+	domainEntry := &DomainCacheEntry{
+		info: &persistence.DomainInfo{ID: domainID, Name: domainName, Data: map[string]string{"k1": "v1"}},
+		config: &persistence.DomainConfig{
+			BadBinaries: types.BadBinaries{
+				Binaries: map[string]*types.BadBinaryInfo{},
+			},
+		},
+		replicationConfig: &persistence.DomainReplicationConfig{
+			ActiveClusterName: cluster.TestCurrentClusterName,
+		},
+		initialized: true,
+	}
+
+	testCache.Put(domainName, domainID)
+	testCache.Put(domainID, domainEntry)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	go func() {
+		defer s.domainCache.refreshLock.Unlock()
+		// to test the cache hit after refresh lock is locked, need to ensure that the domain cache is added after the first cache hit check
+		// force a lock to ensure that the code will block on the lock, wait for the first cache hit check, add the domain cache
+		// and then release the lock
+		s.domainCache.refreshLock.Lock()
+		wg.Done()
+		time.Sleep(200 * time.Millisecond)
+		s.domainCache.cacheByID.Store(testCache)
+		s.domainCache.cacheNameToID.Store(testCache)
+	}()
+
+	wg.Wait()
+
+	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{Name: domainName, ID: ""}).Return(nil, nil).Once()
+
+	entry, err := s.domainCache.getDomain(domainName)
+
+	s.Nil(err)
+	// because the code makes deep copies, it's not possible to compare all the pointers directly
+	s.Equal(domainEntry.info.Name, entry.info.Name)
+	s.Equal(domainEntry.info.ID, entry.info.ID)
+	s.Equal(1, len(entry.info.Data))
+	s.Equal("v1", entry.info.Data["k1"])
+}
+
+func (s *domainCacheSuite) Test_getDomainByID_refreshDomainsLockedError() {
+	domainID := "testDomainID"
+
+	s.metadataMgr.On("GetDomain", mock.Anything, &persistence.GetDomainRequest{Name: "", ID: domainID}).Return(nil, nil).Once()
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(nil, assert.AnError).Once()
+
+	entry, err := s.domainCache.getDomainByID(domainID, false)
+
+	s.Nil(entry)
+	s.ErrorIs(err, assert.AnError)
+}
+
+func (s *domainCacheSuite) Test_refreshLoop_domainCacheRefreshedError() {
+	mockedTimeSource := clock.NewMockedTimeSource()
+
+	s.domainCache.timeSource = mockedTimeSource
+
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(nil, assert.AnError).Twice()
+
+	go func() {
+		mockedTimeSource.BlockUntil(1)
+		mockedTimeSource.Advance(DomainCacheRefreshInterval)
+		mockedTimeSource.BlockUntil(2)
+		mockedTimeSource.Advance(DomainCacheRefreshFailureRetryInterval)
+		s.domainCache.shutdownChan <- struct{}{}
+	}()
+
+	s.domainCache.refreshLoop()
+}
+
+func (s *domainCacheSuite) Test_refreshDomainsLocked_IntervalTooShort() {
+	mockedTimeSource := clock.NewMockedTimeSource()
+
+	s.domainCache.timeSource = mockedTimeSource
+
+	s.domainCache.lastRefreshTime = mockedTimeSource.Now()
+
+	err := s.domainCache.refreshDomainsLocked()
+	s.NoError(err)
+}
+
+func (s *domainCacheSuite) Test_refreshDomainsLocked_ListDomainsError() {
+	s.metadataMgr.On("GetMetadata", mock.Anything).Return(&persistence.GetMetadataResponse{NotificationVersion: 0}, nil).Once()
+	s.metadataMgr.On("ListDomains", mock.Anything, mock.Anything).Return(nil, assert.AnError).Once()
+
+	err := s.domainCache.refreshDomainsLocked()
+	s.ErrorIs(err, assert.AnError)
+}
+
+func (s *domainCacheSuite) TestDomainCacheEntry_Getters() {
+	gen := testdatagen.New(s.T())
+
+	entry := DomainCacheEntry{}
+
+	gen.Fuzz(&entry)
+
+	s.Equal(entry.info, entry.GetInfo())
+	s.Equal(entry.config, entry.GetConfig())
+	s.Equal(entry.replicationConfig, entry.GetReplicationConfig())
+	s.Equal(entry.failoverNotificationVersion, entry.GetFailoverNotificationVersion())
+	s.Equal(entry.notificationVersion, entry.GetNotificationVersion())
+	s.Equal(entry.failoverVersion, entry.GetFailoverVersion())
+	s.Equal(entry.previousFailoverVersion, entry.GetPreviousFailoverVersion())
+	s.Equal(entry.failoverEndTime, entry.GetFailoverEndTime())
+	s.Equal(entry.isGlobalDomain, entry.IsGlobalDomain())
+	s.Equal(entry.configVersion, entry.GetConfigVersion())
+}
+
+func (s *domainCacheSuite) TestDomainCacheEntry_IsDomainPendingActive() {
+	//	Local domain
+	entry := CreateDomainCacheEntry("domainName")
+
+	s.False(entry.IsDomainPendingActive())
+
+	//	Global domain not pending active
+
+	entry.isGlobalDomain = true
+
+	s.False(entry.IsDomainPendingActive())
+
+	//	Global domain pending active
+
+	entry.failoverEndTime = common.Int64Ptr(time.Now().Unix() + 100)
+
+	s.True(entry.IsDomainPendingActive())
+}
+
+func (s *domainCacheSuite) TestDomainCacheEntry_GetReplicationPolicy() {
+	entry := &DomainCacheEntry{
+		replicationConfig: &persistence.DomainReplicationConfig{
+			ActiveClusterName: "active",
+			Clusters: []*persistence.ClusterReplicationConfig{
+				{ClusterName: "active"},
+				{ClusterName: "standby"},
+			},
+		},
+	}
+
+	s.Equal(ReplicationPolicyOneCluster, entry.GetReplicationPolicy())
+
+	entry.isGlobalDomain = true
+
+	s.Equal(ReplicationPolicyMultiCluster, entry.GetReplicationPolicy())
+}
+
+func (s *domainCacheSuite) TestDomainCacheEntry_HasReplicationCluster() {
+	entry := &DomainCacheEntry{
+		replicationConfig: &persistence.DomainReplicationConfig{
+			ActiveClusterName: "active",
+			Clusters: []*persistence.ClusterReplicationConfig{
+				{ClusterName: "active"},
+				{ClusterName: "standby"},
+			},
+		},
+	}
+
+	s.True(entry.HasReplicationCluster("active"))
+	s.True(entry.HasReplicationCluster("standby"))
+	s.False(entry.HasReplicationCluster("other"))
+}
+
+func (s *domainCacheSuite) TestDomainCacheEntry_IsDeprecatedOrDeleted() {
+	entry := &DomainCacheEntry{
+		info: &persistence.DomainInfo{
+			Status: persistence.DomainStatusDeprecated,
+		},
+	}
+
+	s.True(entry.IsDeprecatedOrDeleted())
+
+	entry.info.Status = persistence.DomainStatusDeleted
+
+	s.True(entry.IsDeprecatedOrDeleted())
+
+	entry.info.Status = persistence.DomainStatusRegistered
+
+	s.False(entry.IsDeprecatedOrDeleted())
+}
+
 func (s *domainCacheSuite) buildEntryFromRecord(record *persistence.GetDomainResponse) *DomainCacheEntry {
-	newEntry := newDomainCacheEntry(s.clusterMetadata)
+	newEntry := &DomainCacheEntry{}
 	newEntry.info = &*record.Info
 	newEntry.config = &*record.Config
 	newEntry.replicationConfig = &persistence.DomainReplicationConfig{
@@ -762,35 +1122,72 @@ func Test_IsSampledForLongerRetention(t *testing.T) {
 	require.False(t, d.IsSampledForLongerRetention(wid))
 }
 
-func Test_DomainCacheEntry_GetDomainNotActiveErr(t *testing.T) {
-	clusterMetadata := cluster.NewMetadata(
-		loggerimpl.NewNopLogger(),
-		dynamicconfig.GetBoolPropertyFn(true),
-		int64(10),
-		cluster.TestCurrentClusterName,
-		cluster.TestCurrentClusterName,
-		cluster.TestAllClusterInfo,
-	)
-	domainEntry := NewGlobalDomainCacheEntryForTest(
-		&persistence.DomainInfo{Name: "test-domain"},
-		nil,
-		&persistence.DomainReplicationConfig{
-			ActiveClusterName: cluster.TestCurrentClusterName,
-			Clusters: []*persistence.ClusterReplicationConfig{
-				{ClusterName: cluster.TestCurrentClusterName},
-				{ClusterName: cluster.TestAlternativeClusterName},
-			},
+func Test_GetActiveDomainByID(t *testing.T) {
+	nonExistingUUID := uuid.New()
+	activeDomainUUID := uuid.New()
+	passiveDomainUUID := uuid.New()
+
+	activeDomain := NewGlobalDomainCacheEntryForTest(&persistence.DomainInfo{ID: activeDomainUUID, Name: "active"}, nil, &persistence.DomainReplicationConfig{ActiveClusterName: "A"}, 0)
+	passiveDomain := NewGlobalDomainCacheEntryForTest(&persistence.DomainInfo{ID: passiveDomainUUID, Name: "passive"}, nil, &persistence.DomainReplicationConfig{ActiveClusterName: "B"}, 0)
+
+	tests := []struct {
+		msg          string
+		domainID     string
+		expectDomain *DomainCacheEntry
+		expectedErr  error
+	}{
+		{
+			msg:         "invalid UUID",
+			domainID:    "invalid",
+			expectedErr: &types.BadRequestError{Message: "Invalid domain UUID."},
 		},
-		1234,
-		clusterMetadata,
-	)
+		{
+			msg:         "non existing domain",
+			domainID:    nonExistingUUID,
+			expectedErr: assert.AnError,
+		},
+		{
+			msg:          "active domain",
+			domainID:     activeDomainUUID,
+			expectDomain: activeDomain,
+		},
+		{
+			msg:          "passive domain",
+			domainID:     passiveDomainUUID,
+			expectDomain: passiveDomain,
+			expectedErr:  &types.DomainNotActiveError{Message: "Domain: passive is active in cluster: B, while current cluster A is a standby cluster.", DomainName: "passive", CurrentCluster: "A", ActiveCluster: "B"},
+		},
+	}
 
-	require.Nil(t, domainEntry.GetDomainNotActiveErr())
+	for _, tt := range tests {
+		t.Run(tt.msg, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			cache := NewMockDomainCache(ctrl)
+			cache.EXPECT().GetDomainByID(nonExistingUUID).Return(nil, assert.AnError).AnyTimes()
+			cache.EXPECT().GetDomainByID(activeDomainUUID).Return(activeDomain, nil).AnyTimes()
+			cache.EXPECT().GetDomainByID(passiveDomainUUID).Return(passiveDomain, nil).AnyTimes()
 
-	// update to become not active
-	domainEntry.replicationConfig.ActiveClusterName = cluster.TestAlternativeClusterName
-	err := domainEntry.GetDomainNotActiveErr()
-	require.NotNil(t, err)
-	_, ok := err.(*types.DomainNotActiveError)
-	require.True(t, ok)
+			domain, err := GetActiveDomainByID(cache, "A", tt.domainID)
+
+			assert.Equal(t, tt.expectDomain, domain)
+			assert.Equal(t, tt.expectedErr, err)
+		})
+	}
+}
+
+func Test_WithTimeSource(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	metadataMgr := &mocks.MetadataManager{}
+
+	timeSource := clock.NewRealTimeSource()
+	domainCache := NewDomainCache(metadataMgr, cluster.GetTestClusterMetadata(true), metrics.NewClient(tally.NoopScope, metrics.History), log.NewNoop(), WithTimeSource(timeSource))
+
+	assert.Equal(t, timeSource, domainCache.timeSource)
+}
+
+func Test_NewLocalDomainCacheEntryForTest(t *testing.T) {
+	domain := NewLocalDomainCacheEntryForTest(&persistence.DomainInfo{Name: "test-domain"}, nil, "targetCluster")
+	assert.False(t, domain.IsGlobalDomain())
 }

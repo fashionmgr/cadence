@@ -22,6 +22,7 @@ package persistencetests
 
 import (
 	"context"
+	"log"
 	"math"
 	"math/rand"
 	"os"
@@ -31,9 +32,7 @@ import (
 	"time"
 
 	"github.com/pborman/uuid"
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 
 	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
@@ -48,8 +47,7 @@ import (
 type (
 	// HistoryV2PersistenceSuite contains history persistence tests
 	HistoryV2PersistenceSuite struct {
-		suite.Suite
-		TestBase
+		*TestBase
 		// override suite.Suite.Assertions with require.Assertions; this means that s.NotNil(nil) will stop the test,
 		// not merely log an error
 		*require.Assertions
@@ -103,7 +101,7 @@ func (s *HistoryV2PersistenceSuite) TearDownSuite() {
 // TestGenUUIDs testing  uuid.New() can generate unique UUID
 func (s *HistoryV2PersistenceSuite) TestGenUUIDs() {
 	wg := sync.WaitGroup{}
-	m := sync.Map{}
+	m := &sync.Map{}
 	concurrency := 1000
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
@@ -127,7 +125,7 @@ func (s *HistoryV2PersistenceSuite) TestScanAllTrees() {
 	if os.Getenv("SKIP_SCAN_HISTORY") != "" {
 		s.T().Skipf("GetAllHistoryTreeBranches not supported in %v", s.TaskMgr.GetName())
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), largeTestContextTimeout)
 	defer cancel()
 
 	resp, err := s.HistoryV2Mgr.GetAllHistoryTreeBranches(ctx, &p.GetAllHistoryTreeBranchesRequest{
@@ -159,7 +157,7 @@ func (s *HistoryV2PersistenceSuite) TestScanAllTrees() {
 		})
 		s.Nil(err)
 		for _, br := range resp.Branches {
-			if trees[br.TreeID] == true {
+			if trees[br.TreeID] {
 				delete(trees, br.TreeID)
 
 				s.True(br.ForkTime.UnixNano() > 0)
@@ -235,7 +233,7 @@ func (s *HistoryV2PersistenceSuite) TestReadBranchByPagination() {
 	resp, err := s.HistoryV2Mgr.ReadHistoryBranch(ctx, req)
 	s.Nil(err)
 	s.Equal(4, len(resp.HistoryEvents))
-	s.Equal(int64(6), resp.HistoryEvents[0].GetEventID())
+	s.Equal(int64(6), resp.HistoryEvents[0].ID)
 
 	events = s.genRandomEvents([]int64{10}, 4)
 	err = s.appendNewNode(ctx, bi, events, 8)
@@ -379,7 +377,7 @@ func (s *HistoryV2PersistenceSuite) TestConcurrentlyCreateAndAppendBranches() {
 	treeID := uuid.New()
 	wg := sync.WaitGroup{}
 	concurrency := 20
-	m := sync.Map{}
+	m := &sync.Map{}
 
 	// test create new branch along with appending new nodes
 	for i := 0; i < concurrency; i++ {
@@ -540,8 +538,8 @@ func (s *HistoryV2PersistenceSuite) TestConcurrentlyForkAndAppendBranches() {
 	s.Nil(err)
 	s.Equal((concurrency)+1, len(events))
 
-	level1ID := sync.Map{}
-	level1Br := sync.Map{}
+	level1ID := &sync.Map{}
+	level1Br := &sync.Map{}
 	// test forking from master branch and append nodes
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
@@ -590,7 +588,7 @@ func (s *HistoryV2PersistenceSuite) TestConcurrentlyForkAndAppendBranches() {
 	branches = s.descTreeByToken(ctx, masterBr)
 	s.Equal(concurrency, len(branches))
 	forkOnLevel1 := int32(0)
-	level2Br := sync.Map{}
+	level2Br := &sync.Map{}
 	wg = sync.WaitGroup{}
 
 	// test forking for second level of branch
@@ -689,14 +687,14 @@ func (s *HistoryV2PersistenceSuite) TestConcurrentlyForkAndAppendBranches() {
 
 }
 
-func (s *HistoryV2PersistenceSuite) getBranchByKey(m sync.Map, k int) []byte {
+func (s *HistoryV2PersistenceSuite) getBranchByKey(m *sync.Map, k int) []byte {
 	v, ok := m.Load(k)
 	s.Equal(true, ok)
 	br := v.([]byte)
 	return br
 }
 
-func (s *HistoryV2PersistenceSuite) getIDByKey(m sync.Map, k int) int64 {
+func (s *HistoryV2PersistenceSuite) getIDByKey(m *sync.Map, k int) int64 {
 	v, ok := m.Load(k)
 	s.Equal(true, ok)
 	id := v.(int64)
@@ -708,7 +706,7 @@ func (s *HistoryV2PersistenceSuite) genRandomEvents(eventIDs []int64, version in
 
 	timestamp := time.Now().UnixNano()
 	for _, eid := range eventIDs {
-		e := &types.HistoryEvent{EventID: eid, Version: version, Timestamp: int64Ptr(timestamp)}
+		e := &types.HistoryEvent{ID: eid, Version: version, Timestamp: int64Ptr(timestamp)}
 		events = append(events, e)
 	}
 
@@ -731,7 +729,7 @@ func (s *HistoryV2PersistenceSuite) deleteHistoryBranch(ctx context.Context, bra
 	beginNodeID := persistenceutils.GetBeginNodeID(*branch)
 	brsToDelete := append(branch.Ancestors, &types.HistoryBranchRange{
 		BranchID:    branch.BranchID,
-		BeginNodeID: common.Int64Ptr(beginNodeID),
+		BeginNodeID: beginNodeID,
 	})
 
 	branches := s.descTreeByToken(ctx, branchToken)
@@ -745,20 +743,20 @@ func (s *HistoryV2PersistenceSuite) deleteHistoryBranch(ctx context.Context, bra
 	minNodeID := beginNodeID
 	for i := len(brsToDelete) - 1; i >= 0; i-- {
 		br := brsToDelete[i]
-		maxReferredEndNodeID, ok := validBRsMaxEndNode[*br.BranchID]
+		maxReferredEndNodeID, ok := validBRsMaxEndNode[br.BranchID]
 		if ok {
 			minNodeID = maxReferredEndNodeID
 			break
 		} else {
-			minNodeID = *br.BeginNodeID
+			minNodeID = br.BeginNodeID
 		}
 	}
-
+	domainName := s.DomainManager.GetName()
 	op := func() error {
-		var err error
-		err = s.HistoryV2Mgr.DeleteHistoryBranch(ctx, &p.DeleteHistoryBranchRequest{
+		err := s.HistoryV2Mgr.DeleteHistoryBranch(ctx, &p.DeleteHistoryBranchRequest{
 			BranchToken: branchToken,
 			ShardID:     common.IntPtr(s.ShardInfo.ShardID),
+			DomainName:  domainName,
 		})
 		return err
 	}
@@ -777,9 +775,11 @@ func (s *HistoryV2PersistenceSuite) deleteHistoryBranch(ctx context.Context, bra
 
 // persistence helper
 func (s *HistoryV2PersistenceSuite) descTreeByToken(ctx context.Context, br []byte) []*workflow.HistoryBranch {
+	domainName := s.DomainManager.GetName()
 	resp, err := s.HistoryV2Mgr.GetHistoryTree(ctx, &p.GetHistoryTreeRequest{
 		BranchToken: br,
 		ShardID:     common.IntPtr(s.ShardInfo.ShardID),
+		DomainName:  domainName,
 	})
 	s.Nil(err)
 	return resp.Branches
@@ -805,6 +805,7 @@ func (s *HistoryV2PersistenceSuite) readWithError(ctx context.Context, branch []
 
 	// use small page size to enforce pagination
 	randPageSize := 2
+	domainName := s.DomainManager.GetName()
 	res := make([]*types.HistoryEvent, 0)
 	token := []byte{}
 	for {
@@ -815,6 +816,7 @@ func (s *HistoryV2PersistenceSuite) readWithError(ctx context.Context, branch []
 			PageSize:      randPageSize,
 			NextPageToken: token,
 			ShardID:       common.IntPtr(s.ShardInfo.ShardID),
+			DomainName:    domainName,
 		})
 		if err != nil {
 			return nil, err
@@ -854,7 +856,7 @@ func (s *HistoryV2PersistenceSuite) appendNewBranchAndFirstNode(ctx context.Cont
 func (s *HistoryV2PersistenceSuite) append(ctx context.Context, branch []byte, events []*types.HistoryEvent, txnID int64, isNewBranch bool, branchInfo string) error {
 
 	var resp *p.AppendHistoryNodesResponse
-
+	domainName := s.DomainManager.GetName()
 	op := func() error {
 		var err error
 		resp, err = s.HistoryV2Mgr.AppendHistoryNodes(ctx, &p.AppendHistoryNodesRequest{
@@ -865,6 +867,7 @@ func (s *HistoryV2PersistenceSuite) append(ctx context.Context, branch []byte, e
 			TransactionID: txnID,
 			Encoding:      pickRandomEncoding(),
 			ShardID:       common.IntPtr(s.ShardInfo.ShardID),
+			DomainName:    domainName,
 		})
 		return err
 	}
@@ -872,7 +875,7 @@ func (s *HistoryV2PersistenceSuite) append(ctx context.Context, branch []byte, e
 	if err := throttleRetry.Do(ctx, op); err != nil {
 		return err
 	}
-	s.True(resp.Size > 0)
+	s.True(len(resp.DataBlob.Data) > 0)
 
 	return nil
 }
@@ -881,7 +884,7 @@ func (s *HistoryV2PersistenceSuite) append(ctx context.Context, branch []byte, e
 func (s *HistoryV2PersistenceSuite) fork(ctx context.Context, forkBranch []byte, forkNodeID int64) ([]byte, error) {
 
 	bi := []byte{}
-
+	domainName := s.DomainManager.GetName()
 	op := func() error {
 		var err error
 		resp, err := s.HistoryV2Mgr.ForkHistoryBranch(ctx, &p.ForkHistoryBranchRequest{
@@ -889,6 +892,7 @@ func (s *HistoryV2PersistenceSuite) fork(ctx context.Context, forkBranch []byte,
 			ForkNodeID:      forkNodeID,
 			Info:            testForkRunID,
 			ShardID:         common.IntPtr(s.ShardInfo.ShardID),
+			DomainName:      domainName,
 		})
 		if resp != nil {
 			bi = resp.NewBranchToken

@@ -49,6 +49,9 @@ const (
 	CadenceServiceName = "cadence-frontend"
 	// CanaryServiceName is the default service name for cadence canary
 	CanaryServiceName = "cadence-canary"
+	// CrossClusterCanaryModeFull is a canary testing mode which tests all permutations of
+	// the cross-cluster/domain feature
+	CrossClusterCanaryModeFull = "test-all"
 )
 
 type (
@@ -63,15 +66,17 @@ type (
 
 	// Canary contains the configuration for canary tests
 	Canary struct {
-		Domains  []string `yaml:"domains"`
-		Excludes []string `yaml:"excludes"`
-		Cron     Cron     `yaml:"cron"`
+		CrossClusterTestMode string   `yaml:"crossClusterTestMode"`
+		CanaryDomainClusters []string `yaml:"canaryDomainClusters"` // the clusters to set for each domain
+		Domains              []string `yaml:"domains"`
+		Excludes             []string `yaml:"excludes"`
+		Cron                 Cron     `yaml:"cron"`
 	}
 
 	// Cron contains configuration for the cron workflow for canary
 	Cron struct {
 		CronSchedule         string        `yaml:"cronSchedule"`         // default to "@every 30s"
-		CronExecutionTimeout time.Duration `yaml:"cronExecutionTimeout"` //default to 18 minutes
+		CronExecutionTimeout time.Duration `yaml:"cronExecutionTimeout"` // default to 18 minutes
 		StartJobTimeout      time.Duration `yaml:"startJobTimeout"`      // default to 9 minutes
 	}
 
@@ -82,6 +87,8 @@ type (
 		ThriftHostNameAndPort string `yaml:"host"`
 		// gRPC host name and port
 		GRPCHostNameAndPort string `yaml:"address"`
+		// TLS cert file if TLS is enabled on the Cadence server
+		TLSCAFile string `yaml:"tlsCaFile"`
 	}
 )
 

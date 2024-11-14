@@ -89,11 +89,17 @@ func uploadHistoryActivity(ctx context.Context, request ArchiveRequest) (err err
 	if err == nil {
 		return nil
 	}
-	if err.Error() == errUploadNonRetriable.Error() {
-		logger.Error(carchiver.ArchiveNonRetriableErrorMsg, tag.ArchivalArchiveFailReason("got non-retryable error from history archiver"))
+	if errors.Is(err, errUploadNonRetriable) {
+		logger.Error(carchiver.ArchiveNonRetriableErrorMsg,
+			tag.ArchivalArchiveFailReason("got non-retryable error from history archiver"),
+			tag.Error(err),
+		)
 		return errUploadNonRetriable
 	}
-	logger.Error(carchiver.ArchiveTransientErrorMsg, tag.ArchivalArchiveFailReason("got retryable error from history archiver"), tag.Error(err))
+	logger.Error(carchiver.ArchiveTransientErrorMsg,
+		tag.ArchivalArchiveFailReason("got retryable error from history archiver"),
+		tag.Error(err),
+	)
 	return err
 }
 
@@ -113,6 +119,7 @@ func deleteHistoryActivity(ctx context.Context, request ArchiveRequest) (err err
 	err = container.HistoryV2Manager.DeleteHistoryBranch(ctx, &persistence.DeleteHistoryBranchRequest{
 		BranchToken: request.BranchToken,
 		ShardID:     common.IntPtr(request.ShardID),
+		DomainName:  request.DomainName,
 	})
 	if err == nil {
 		return nil

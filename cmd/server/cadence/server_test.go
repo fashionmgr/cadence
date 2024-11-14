@@ -29,15 +29,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/config"
+	"github.com/uber/cadence/common/dynamicconfig"
+	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql"
+	"github.com/uber/cadence/common/resource"
+	"github.com/uber/cadence/common/service"
+	"github.com/uber/cadence/testflags"
+	"github.com/uber/cadence/tools/cassandra"
+
 	_ "github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra"              // needed to load cassandra plugin
 	_ "github.com/uber/cadence/common/persistence/nosql/nosqlplugin/cassandra/gocql/public" // needed to load the default gocql client
-	"github.com/uber/cadence/common/service"
-	"github.com/uber/cadence/tools/cassandra"
 )
 
 type ServerSuite struct {
@@ -46,6 +54,7 @@ type ServerSuite struct {
 }
 
 func TestServerSuite(t *testing.T) {
+	testflags.RequireCassandra(t)
 	suite.Run(t, new(ServerSuite))
 }
 
@@ -63,7 +72,7 @@ func (s *ServerSuite) TestServerStartup() {
 	rootDir := "../../../"
 	configDir := constructPathIfNeed(rootDir, "config")
 
-	log.Printf("Loading config; env=%v,zone=%v,configDir=%v\n", env, zone, configDir)
+	s.T().Logf("Loading config; env=%v,zone=%v,configDir=%v\n", env, zone, configDir)
 
 	var cfg config.Config
 	err := config.Load(env, configDir, zone, &cfg)
@@ -83,7 +92,7 @@ func (s *ServerSuite) TestServerStartup() {
 		cfg.Persistence.DataStores[cfg.Persistence.VisibilityStore] = ds
 	}
 
-	log.Printf("config=\n%v\n", cfg.String())
+	s.T().Logf("config=\n%v\n", cfg.String())
 
 	cfg.DynamicConfig.FileBased.Filepath = constructPathIfNeed(rootDir, cfg.DynamicConfig.FileBased.Filepath)
 
@@ -91,7 +100,7 @@ func (s *ServerSuite) TestServerStartup() {
 		log.Fatalf("config validation failed: %v", err)
 	}
 	// cassandra schema version validation
-	if err := cassandra.VerifyCompatibleVersion(cfg.Persistence); err != nil {
+	if err := cassandra.VerifyCompatibleVersion(cfg.Persistence, gocql.All); err != nil {
 		log.Fatal("cassandra schema version compatibility check failed: ", err)
 	}
 
@@ -109,4 +118,36 @@ func (s *ServerSuite) TestServerStartup() {
 	for _, daemon := range daemons {
 		daemon.Stop()
 	}
+}
+
+func TestSettingGettingZonalIsolationGroupsFromIG(t *testing.T) {
+
+	ctrl := gomock.NewController(t)
+	client := dynamicconfig.NewMockClient(ctrl)
+	client.EXPECT().GetListValue(dynamicconfig.AllIsolationGroups, gomock.Any()).Return([]interface{}{
+		"zone-1", "zone-2",
+	}, nil)
+
+	dc := dynamicconfig.NewCollection(client, loggerimpl.NewNopLogger())
+
+	assert.NotPanics(t, func() {
+		fn := getFromDynamicConfig(resource.Params{
+			Logger: loggerimpl.NewNopLogger(),
+		}, dc)
+		out := fn()
+		assert.Equal(t, []string{"zone-1", "zone-2"}, out)
+	})
+}
+
+func TestSettingGettingZonalIsolationGroupsFromIGError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	client := dynamicconfig.NewMockClient(ctrl)
+	client.EXPECT().GetListValue(dynamicconfig.AllIsolationGroups, gomock.Any()).Return(nil, assert.AnError)
+	dc := dynamicconfig.NewCollection(client, loggerimpl.NewNopLogger())
+
+	assert.NotPanics(t, func() {
+		getFromDynamicConfig(resource.Params{
+			Logger: loggerimpl.NewNopLogger(),
+		}, dc)()
+	})
 }

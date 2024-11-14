@@ -74,7 +74,7 @@ func (r *eventsReapplierImpl) ReapplyEvents(
 	for _, event := range historyEvents {
 		switch event.GetEventType() {
 		case types.EventTypeWorkflowExecutionSignaled:
-			dedupResource := definition.NewEventReappliedID(runID, event.GetEventID(), event.GetVersion())
+			dedupResource := definition.NewEventReappliedID(runID, event.ID, event.Version)
 			if msBuilder.IsResourceDuplicated(dedupResource) {
 				// skip already applied event
 				continue
@@ -100,10 +100,11 @@ func (r *eventsReapplierImpl) ReapplyEvents(
 			signal.GetSignalName(),
 			signal.GetInput(),
 			signal.GetIdentity(),
+			"", // Do not set requestID for requests reapplied, because they have already been applied previously
 		); err != nil {
 			return nil, err
 		}
-		deDupResource := definition.NewEventReappliedID(runID, event.GetEventID(), event.GetVersion())
+		deDupResource := definition.NewEventReappliedID(runID, event.ID, event.Version)
 		msBuilder.UpdateDuplicatedResource(deDupResource)
 	}
 	return reappliedEvents, nil

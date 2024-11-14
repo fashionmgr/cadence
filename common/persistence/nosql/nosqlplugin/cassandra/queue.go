@@ -28,21 +28,7 @@ import (
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin"
 )
 
-const (
-	templateEnqueueMessageQuery             = `INSERT INTO queue (queue_type, message_id, message_payload) VALUES(?, ?, ?) IF NOT EXISTS`
-	templateGetLastMessageIDQuery           = `SELECT message_id FROM queue WHERE queue_type=? ORDER BY message_id DESC LIMIT 1`
-	templateGetMessagesQuery                = `SELECT message_id, message_payload FROM queue WHERE queue_type = ? and message_id > ? LIMIT ?`
-	templateGetMessagesFromDLQQuery         = `SELECT message_id, message_payload FROM queue WHERE queue_type = ? and message_id > ? and message_id <= ?`
-	templateRangeDeleteMessagesBeforeQuery  = `DELETE FROM queue WHERE queue_type = ? and message_id < ?`
-	templateRangeDeleteMessagesBetweenQuery = `DELETE FROM queue WHERE queue_type = ? and message_id > ? and message_id <= ?`
-	templateDeleteMessageQuery              = `DELETE FROM queue WHERE queue_type = ? and message_id = ?`
-	templateGetQueueMetadataQuery           = `SELECT cluster_ack_level, version FROM queue_metadata WHERE queue_type = ?`
-	templateInsertQueueMetadataQuery        = `INSERT INTO queue_metadata (queue_type, cluster_ack_level, version) VALUES(?, ?, ?) IF NOT EXISTS`
-	templateUpdateQueueMetadataQuery        = `UPDATE queue_metadata SET cluster_ack_level = ?, version = ? WHERE queue_type = ? IF version = ?`
-	templateGetQueueSizeQuery               = `SELECT COUNT(1) AS count FROM queue WHERE queue_type=?`
-)
-
-//Insert message into queue, return error if failed or already exists
+// Insert message into queue, return error if failed or already exists
 // Must return ConditionFailure error if row already exists
 func (db *cdb) InsertIntoQueue(
 	ctx context.Context,
@@ -156,7 +142,7 @@ func (db *cdb) DeleteMessagesBefore(
 	exclusiveBeginMessageID int64,
 ) error {
 	query := db.session.Query(templateRangeDeleteMessagesBeforeQuery, queueType, exclusiveBeginMessageID).WithContext(ctx)
-	return query.Exec()
+	return db.executeWithConsistencyAll(query)
 }
 
 // Delete all messages in a range between exclusiveBeginMessageID and inclusiveEndMessageID
@@ -167,7 +153,7 @@ func (db *cdb) DeleteMessagesInRange(
 	inclusiveEndMessageID int64,
 ) error {
 	query := db.session.Query(templateRangeDeleteMessagesBetweenQuery, queueType, exclusiveBeginMessageID, inclusiveEndMessageID).WithContext(ctx)
-	return query.Exec()
+	return db.executeWithConsistencyAll(query)
 }
 
 // Delete one message
@@ -177,7 +163,7 @@ func (db *cdb) DeleteMessage(
 	messageID int64,
 ) error {
 	query := db.session.Query(templateDeleteMessageQuery, queueType, messageID).WithContext(ctx)
-	return query.Exec()
+	return db.executeWithConsistencyAll(query)
 }
 
 // Insert an empty metadata row, starting from a version
@@ -266,16 +252,10 @@ func (db *cdb) GetQueueSize(
 	return result["count"].(int64), nil
 }
 
-func getMessagePayload(
-	message map[string]interface{},
-) []byte {
-
+func getMessagePayload(message map[string]interface{}) []byte {
 	return message["message_payload"].([]byte)
 }
 
-func getMessageID(
-	message map[string]interface{},
-) int64 {
-
+func getMessageID(message map[string]interface{}) int64 {
 	return message["message_id"].(int64)
 }

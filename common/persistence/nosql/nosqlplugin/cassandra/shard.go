@@ -31,75 +31,12 @@ import (
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin"
 )
 
-const (
-	templateShardType = `{` +
-		`shard_id: ?, ` +
-		`owner: ?, ` +
-		`range_id: ?, ` +
-		`stolen_since_renew: ?, ` +
-		`updated_at: ?, ` +
-		`replication_ack_level: ?, ` +
-		`transfer_ack_level: ?, ` +
-		`timer_ack_level: ?, ` +
-		`cluster_transfer_ack_level: ?, ` +
-		`cluster_timer_ack_level: ?, ` +
-		`transfer_processing_queue_states: ?, ` +
-		`transfer_processing_queue_states_encoding: ?, ` +
-		`cross_cluster_processing_queue_states: ?, ` +
-		`cross_cluster_processing_queue_states_encoding: ?, ` +
-		`timer_processing_queue_states: ?, ` +
-		`timer_processing_queue_states_encoding: ?, ` +
-		`domain_notification_version: ?, ` +
-		`cluster_replication_level: ?, ` +
-		`replication_dlq_ack_level: ?, ` +
-		`pending_failover_markers: ?, ` +
-		`pending_failover_markers_encoding: ? ` +
-		`}`
-
-	templateCreateShardQuery = `INSERT INTO executions (` +
-		`shard_id, type, domain_id, workflow_id, run_id, visibility_ts, task_id, shard, range_id)` +
-		`VALUES(?, ?, ?, ?, ?, ?, ?, ` + templateShardType + `, ?) IF NOT EXISTS`
-
-	templateGetShardQuery = `SELECT shard, range_id ` +
-		`FROM executions ` +
-		`WHERE shard_id = ? ` +
-		`and type = ? ` +
-		`and domain_id = ? ` +
-		`and workflow_id = ? ` +
-		`and run_id = ? ` +
-		`and visibility_ts = ? ` +
-		`and task_id = ?`
-
-	templateUpdateShardQuery = `UPDATE executions ` +
-		`SET shard = ` + templateShardType + `, range_id = ? ` +
-		`WHERE shard_id = ? ` +
-		`and type = ? ` +
-		`and domain_id = ? ` +
-		`and workflow_id = ? ` +
-		`and run_id = ? ` +
-		`and visibility_ts = ? ` +
-		`and task_id = ? ` +
-		`IF range_id = ?`
-
-	templateUpdateRangeIDQuery = `UPDATE executions ` +
-		`SET range_id = ? ` +
-		`WHERE shard_id = ? ` +
-		`and type = ? ` +
-		`and domain_id = ? ` +
-		`and workflow_id = ? ` +
-		`and run_id = ? ` +
-		`and visibility_ts = ? ` +
-		`and task_id = ? ` +
-		`IF range_id = ?`
-)
-
 // InsertShard creates a new shard, return error is there is any.
 // Return ShardOperationConditionFailure if the condition doesn't meet
 func (db *cdb) InsertShard(ctx context.Context, row *nosqlplugin.ShardRow) error {
-	cqlNowTimestamp := persistence.UnixNanoToDBTimestamp(time.Now().UnixNano())
+	cqlNowTimestamp := persistence.UnixNanoToDBTimestamp(db.timeSrc.Now().UnixNano())
 	markerData, markerEncoding := persistence.FromDataBlob(row.PendingFailoverMarkers)
 	transferPQS, transferPQSEncoding := persistence.FromDataBlob(row.TransferProcessingQueueStates)
-	crossClusterPQS, crossClusterPQSEncoding := persistence.FromDataBlob(row.CrossClusterProcessingQueueStates)
 	timerPQS, timerPQSEncoding := persistence.FromDataBlob(row.TimerProcessingQueueStates)
 	query := db.session.Query(templateCreateShardQuery,
 		row.ShardID,
@@ -121,8 +58,6 @@ func (db *cdb) InsertShard(ctx context.Context, row *nosqlplugin.ShardRow) error
 		row.ClusterTimerAckLevel,
 		transferPQS,
 		transferPQSEncoding,
-		crossClusterPQS,
-		crossClusterPQSEncoding,
 		timerPQS,
 		timerPQSEncoding,
 		row.DomainNotificationVersion,
@@ -191,8 +126,6 @@ func convertToShardInfo(
 	var pendingFailoverMarkersEncoding string
 	var transferProcessingQueueStatesRawData []byte
 	var transferProcessingQueueStatesEncoding string
-	var crossClusterProcessingQueueStatesRawData []byte
-	var crossClusterProcessingQueueStatesEncoding string
 	var timerProcessingQueueStatesRawData []byte
 	var timerProcessingQueueStatesEncoding string
 	info := &persistence.InternalShardInfo{}
@@ -221,10 +154,6 @@ func convertToShardInfo(
 			transferProcessingQueueStatesRawData = v.([]byte)
 		case "transfer_processing_queue_states_encoding":
 			transferProcessingQueueStatesEncoding = v.(string)
-		case "cross_cluster_processing_queue_states":
-			crossClusterProcessingQueueStatesRawData = v.([]byte)
-		case "cross_cluster_processing_queue_states_encoding":
-			crossClusterProcessingQueueStatesEncoding = v.(string)
 		case "timer_processing_queue_states":
 			timerProcessingQueueStatesRawData = v.([]byte)
 		case "timer_processing_queue_states_encoding":
@@ -266,10 +195,6 @@ func convertToShardInfo(
 		transferProcessingQueueStatesRawData,
 		common.EncodingType(transferProcessingQueueStatesEncoding),
 	)
-	info.CrossClusterProcessingQueueStates = persistence.NewDataBlob(
-		crossClusterProcessingQueueStatesRawData,
-		common.EncodingType(crossClusterProcessingQueueStatesEncoding),
-	)
 	info.TimerProcessingQueueStates = persistence.NewDataBlob(
 		timerProcessingQueueStatesRawData,
 		common.EncodingType(timerProcessingQueueStatesEncoding),
@@ -309,10 +234,9 @@ func (db *cdb) UpdateRangeID(ctx context.Context, shardID int, rangeID int64, pr
 // UpdateShard updates a shard, return error is there is any.
 // Return ShardOperationConditionFailure if the condition doesn't meet
 func (db *cdb) UpdateShard(ctx context.Context, row *nosqlplugin.ShardRow, previousRangeID int64) error {
-	cqlNowTimestamp := persistence.UnixNanoToDBTimestamp(time.Now().UnixNano())
+	cqlNowTimestamp := persistence.UnixNanoToDBTimestamp(db.timeSrc.Now().UnixNano())
 	markerData, markerEncoding := persistence.FromDataBlob(row.PendingFailoverMarkers)
 	transferPQS, transferPQSEncoding := persistence.FromDataBlob(row.TransferProcessingQueueStates)
-	crossClusterPQS, crossClusterPQSEncoding := persistence.FromDataBlob(row.CrossClusterProcessingQueueStates)
 	timerPQS, timerPQSEncoding := persistence.FromDataBlob(row.TimerProcessingQueueStates)
 
 	query := db.session.Query(templateUpdateShardQuery,
@@ -328,8 +252,6 @@ func (db *cdb) UpdateShard(ctx context.Context, row *nosqlplugin.ShardRow, previ
 		row.ClusterTimerAckLevel,
 		transferPQS,
 		transferPQSEncoding,
-		crossClusterPQS,
-		crossClusterPQSEncoding,
 		timerPQS,
 		timerPQSEncoding,
 		row.DomainNotificationVersion,

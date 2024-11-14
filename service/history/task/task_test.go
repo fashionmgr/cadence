@@ -21,18 +21,21 @@
 package task
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/dynamicconfig"
+	cadence_errors "github.com/uber/cadence/common/errors"
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/persistence"
 	t "github.com/uber/cadence/common/task"
 	"github.com/uber/cadence/common/types"
@@ -68,6 +71,7 @@ func (s *taskSuite) SetupTest() {
 
 	s.controller = gomock.NewController(s.T())
 	s.mockShard = shard.NewTestContext(
+		s.T(),
 		s.controller,
 		&persistence.ShardInfo{
 			ShardID: 10,
@@ -82,7 +86,7 @@ func (s *taskSuite) SetupTest() {
 	s.mockTaskInfo.EXPECT().GetDomainID().Return(constants.TestDomainID).AnyTimes()
 	s.mockShard.Resource.DomainCache.EXPECT().GetDomainName(constants.TestDomainID).Return(constants.TestDomainName, nil).AnyTimes()
 
-	s.logger = loggerimpl.NewLoggerForTest(s.Suite)
+	s.logger = testlogger.New(s.Suite.T())
 	s.maxRetryCount = dynamicconfig.GetIntPropertyFn(10)
 }
 
@@ -137,8 +141,8 @@ func (s *taskSuite) TestHandleErr_ErrTaskRetry() {
 		return true, nil
 	}, nil)
 
-	err := ErrTaskRedispatch
-	s.Equal(ErrTaskRedispatch, taskBase.HandleErr(err))
+	err := &redispatchError{Reason: "random-reason"}
+	s.Equal(err, taskBase.HandleErr(err))
 }
 
 func (s *taskSuite) TestHandleErr_ErrTaskDiscarded() {
@@ -155,12 +159,12 @@ func (s *taskSuite) TestHandleErr_ErrTargetDomainNotActive() {
 		return true, nil
 	}, nil)
 
-	err := errTargetDomainNotActive
+	err := &types.DomainNotActiveError{}
 
 	// we should always return the target domain not active error
 	// no matter that the submit time is
-	taskBase.submitTime = time.Now().Add(-cache.DomainCacheRefreshInterval * time.Duration(2))
-	s.Equal(err, taskBase.HandleErr(err))
+	taskBase.submitTime = time.Now().Add(-cache.DomainCacheRefreshInterval*time.Duration(5) - time.Second)
+	s.Equal(nil, taskBase.HandleErr(err), "should drop errors after a reasonable time")
 
 	taskBase.submitTime = time.Now()
 	s.Equal(err, taskBase.HandleErr(err))
@@ -173,11 +177,52 @@ func (s *taskSuite) TestHandleErr_ErrDomainNotActive() {
 
 	err := &types.DomainNotActiveError{}
 
-	taskBase.submitTime = time.Now().Add(-cache.DomainCacheRefreshInterval * time.Duration(2))
+	taskBase.submitTime = time.Now().Add(-cache.DomainCacheRefreshInterval*time.Duration(5) - time.Second)
 	s.NoError(taskBase.HandleErr(err))
 
 	taskBase.submitTime = time.Now()
 	s.Equal(err, taskBase.HandleErr(err))
+}
+
+func (s *taskSuite) TestHandleErr_ErrWorkflowRateLimited() {
+	taskBase := s.newTestTask(func(task Info) (bool, error) {
+		return true, nil
+	}, nil)
+
+	taskBase.submitTime = time.Now()
+	s.Equal(errWorkflowRateLimited, taskBase.HandleErr(errWorkflowRateLimited))
+}
+
+func (s *taskSuite) TestHandleErr_ErrShardRecentlyClosed() {
+	taskBase := s.newTestTask(func(task Info) (bool, error) {
+		return true, nil
+	}, nil)
+
+	taskBase.submitTime = time.Now()
+
+	shardClosedError := &shard.ErrShardClosed{
+		Msg: "shard closed",
+		// The shard was closed within the TimeBeforeShardClosedIsError interval
+		ClosedAt: time.Now().Add(-shard.TimeBeforeShardClosedIsError / 2),
+	}
+
+	s.Equal(shardClosedError, taskBase.HandleErr(shardClosedError))
+}
+
+func (s *taskSuite) TestHandleErr_ErrTaskListNotOwnedByHost() {
+	taskBase := s.newTestTask(func(task Info) (bool, error) {
+		return true, nil
+	}, nil)
+
+	taskBase.submitTime = time.Now()
+
+	taskListNotOwnedByHost := &cadence_errors.TaskListNotOwnedByHostError{
+		OwnedByIdentity: "HostNameOwnedBy",
+		MyIdentity:      "HostNameMe",
+		TasklistName:    "TaskListName",
+	}
+
+	s.Equal(taskListNotOwnedByHost, taskBase.HandleErr(taskListNotOwnedByHost))
 }
 
 func (s *taskSuite) TestHandleErr_ErrCurrentWorkflowConditionFailed() {
@@ -193,6 +238,16 @@ func (s *taskSuite) TestHandleErr_UnknownErr() {
 	taskBase := s.newTestTask(func(task Info) (bool, error) {
 		return true, nil
 	}, nil)
+
+	// Need to mock a return value for function GetTaskType
+	// If don't do, there'll be an error when code goes into the defer function:
+	// Unexpected call: because: there are no expected calls of the method "GetTaskType" for that receiver
+	// But can't put it in the setup function since it may cause other errors
+	s.mockTaskInfo.EXPECT().GetTaskType().Return(123)
+
+	// make sure it will go into the defer function.
+	// in this case, make it 0 < attempt < stickyTaskMaxRetryCount
+	taskBase.attempt = 10
 
 	err := errors.New("some random error")
 	s.Equal(err, taskBase.HandleErr(err))
@@ -254,6 +309,32 @@ func (s *taskSuite) TestTaskNack_ResubmitFailed() {
 
 	task.Nack()
 	s.Equal(t.TaskStateNacked, task.State())
+}
+
+func (s *taskSuite) TestHandleErr_ErrMaxAttempts() {
+	taskBase := s.newTestTask(func(task Info) (bool, error) {
+		return true, nil
+	}, nil)
+
+	taskBase.criticalRetryCount = func(i ...dynamicconfig.FilterOption) int { return 0 }
+	s.mockTaskInfo.EXPECT().GetTaskType().Return(0)
+	assert.NotPanics(s.T(), func() {
+		taskBase.HandleErr(errors.New("err"))
+	})
+}
+
+func (s *taskSuite) TestRetryErr() {
+	taskBase := s.newTestTask(func(task Info) (bool, error) {
+		return true, nil
+	}, nil)
+
+	s.Equal(false, taskBase.RetryErr(&shard.ErrShardClosed{}))
+	s.Equal(false, taskBase.RetryErr(errWorkflowBusy))
+	s.Equal(false, taskBase.RetryErr(ErrTaskPendingActive))
+	s.Equal(false, taskBase.RetryErr(context.DeadlineExceeded))
+	s.Equal(false, taskBase.RetryErr(&redispatchError{Reason: "random-reason"}))
+	// rate limited errors are retried
+	s.Equal(true, taskBase.RetryErr(errWorkflowRateLimited))
 }
 
 func (s *taskSuite) newTestTask(

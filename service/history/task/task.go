@@ -22,6 +22,7 @@ package task
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/dynamicconfig"
+	cadence_errors "github.com/uber/cadence/common/errors"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
@@ -39,21 +41,24 @@ import (
 	"github.com/uber/cadence/service/history/shard"
 )
 
-const (
-	loadDomainEntryForTaskRetryDelay = 100 * time.Millisecond
+// redispatchError is the error indicating that the timer / transfer task should be redispatched and retried.
+type redispatchError struct {
+	Reason string
+}
 
-	activeTaskResubmitMaxAttempts = 10
+// Error explains why this task should be redispatched
+func (r *redispatchError) Error() string {
+	return fmt.Sprintf("Redispatch reason: %q", r.Reason)
+}
 
-	defaultTaskEventLoggerSize = 100
-
-	stickyTaskMaxRetryCount = 100
-)
+func isRedispatchErr(err error) bool {
+	var redispatchErr *redispatchError
+	return errors.As(err, &redispatchErr)
+}
 
 var (
 	// ErrTaskDiscarded is the error indicating that the timer / transfer task is pending for too long and discarded.
 	ErrTaskDiscarded = errors.New("passive task pending for too long")
-	// ErrTaskRedispatch is the error indicating that the timer / transfer task should be re0dispatched and retried.
-	ErrTaskRedispatch = errors.New("passive task should be redispatched due to condition in mutable state is not met")
 	// ErrTaskPendingActive is the error indicating that the task should be re-dispatched
 	ErrTaskPendingActive = errors.New("redispatch the task while the domain is pending-active")
 )
@@ -162,7 +167,7 @@ func newTask(
 		Info:               taskInfo,
 		shard:              shard,
 		state:              ctask.TaskStatePending,
-		priority:           ctask.NoPriority,
+		priority:           noPriority,
 		queueType:          queueType,
 		scopeIdx:           scopeIdx,
 		scope:              nil,
@@ -209,9 +214,7 @@ func (t *taskImpl) Execute() error {
 	return t.taskExecutor.Execute(t, t.shouldProcessTask)
 }
 
-func (t *taskImpl) HandleErr(
-	err error,
-) (retErr error) {
+func (t *taskImpl) HandleErr(err error) (retErr error) {
 	defer func() {
 		if retErr != nil {
 			logEvent(t.eventLogger, "Failed to handle error", retErr)
@@ -223,7 +226,11 @@ func (t *taskImpl) HandleErr(
 			if t.attempt > t.criticalRetryCount() {
 				t.scope.RecordTimer(metrics.TaskAttemptTimerPerDomain, time.Duration(t.attempt))
 				t.logger.Error("Critical error processing task, retrying.",
-					tag.Error(err), tag.OperationCritical, tag.TaskType(t.GetTaskType()))
+					tag.Error(err),
+					tag.OperationCritical,
+					tag.TaskType(t.GetTaskType()),
+					tag.AttemptCount(t.attempt),
+				)
 			}
 		}
 	}()
@@ -254,8 +261,27 @@ func (t *taskImpl) HandleErr(
 		return err
 	}
 
+	if err == errWorkflowRateLimited {
+		// metrics are emitted within the rate limiter
+		return err
+	}
+
+	// If the shard were recently closed we just return an error, so we retry in a bit.
+	var errShardClosed *shard.ErrShardClosed
+	if errors.As(err, &errShardClosed) && time.Since(errShardClosed.ClosedAt) < shard.TimeBeforeShardClosedIsError {
+		return err
+	}
+
+	// If the task list is not owned by the host we connected to we just return an error, so we retry in a bit
+	// with the new membership information.
+	var taskListNotOwnedByHostError *cadence_errors.TaskListNotOwnedByHostError
+	if errors.As(err, &taskListNotOwnedByHostError) {
+		t.scope.IncCounter(metrics.TaskListNotOwnedByHostCounterPerDomain)
+		return err
+	}
+
 	// this is a transient error
-	if err == ErrTaskRedispatch {
+	if isRedispatchErr(err) {
 		t.scope.IncCounter(metrics.TaskStandbyRetryCounterPerDomain)
 		return err
 	}
@@ -277,19 +303,14 @@ func (t *taskImpl) HandleErr(
 		err = nil
 	}
 
-	// target domain not active error, we should retry the task
-	// so that a cross-cluster task can be created.
-	if err == errTargetDomainNotActive {
-		t.scope.IncCounter(metrics.TaskTargetNotActiveCounterPerDomain)
-		return err
-	}
-
-	// this is a transient error, and means source domain not active
-	// TODO remove this error check special case
-	// since the new task life cycle will not give up until task processed / verified
-	if _, ok := err.(*types.DomainNotActiveError); ok {
-		if t.timeSource.Now().Sub(t.submitTime) > 2*cache.DomainCacheRefreshInterval {
+	// using a fairly long timeout here because domain updates is an async process
+	// which could take a fair while to be processed by the domain queue, the DB updated
+	// the domain cache refeshed and then updated here.
+	var e *types.DomainNotActiveError
+	if errors.As(err, &e) || errors.Is(err, types.DomainNotActiveError{}) {
+		if t.timeSource.Now().Sub(t.submitTime) > 5*cache.DomainCacheRefreshInterval {
 			t.scope.IncCounter(metrics.TaskNotActiveCounterPerDomain)
+			// If the domain is *still* not active, drop after a while.
 			return nil
 		}
 
@@ -314,10 +335,9 @@ func (t *taskImpl) HandleErr(
 	return err
 }
 
-func (t *taskImpl) RetryErr(
-	err error,
-) bool {
-	if err == errWorkflowBusy || err == ErrTaskRedispatch || err == ErrTaskPendingActive || common.IsContextTimeoutError(err) {
+func (t *taskImpl) RetryErr(err error) bool {
+	var errShardClosed *shard.ErrShardClosed
+	if errors.As(err, &errShardClosed) || err == errWorkflowBusy || isRedispatchErr(err) || err == ErrTaskPendingActive || common.IsContextTimeoutError(err) {
 		return false
 	}
 
@@ -335,6 +355,7 @@ func (t *taskImpl) Ack() {
 		t.scope.RecordTimer(metrics.TaskAttemptTimerPerDomain, time.Duration(t.attempt))
 		t.scope.RecordTimer(metrics.TaskLatencyPerDomain, time.Since(t.submitTime))
 		t.scope.RecordTimer(metrics.TaskQueueLatencyPerDomain, time.Since(t.GetVisibilityTimestamp()))
+
 	}
 
 	if t.eventLogger != nil && t.shouldProcessTask && t.attempt != 0 {
@@ -373,9 +394,7 @@ func (t *taskImpl) Priority() int {
 	return t.priority
 }
 
-func (t *taskImpl) SetPriority(
-	priority int,
-) {
+func (t *taskImpl) SetPriority(priority int) {
 	t.Lock()
 	defer t.Unlock()
 

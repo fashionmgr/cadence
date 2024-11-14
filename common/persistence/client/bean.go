@@ -26,11 +26,11 @@ import (
 	"sync"
 
 	"github.com/uber/cadence/common/config"
-	cconfig "github.com/uber/cadence/common/config"
 	es "github.com/uber/cadence/common/elasticsearch"
 	"github.com/uber/cadence/common/messaging"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/common/pinot"
 	"github.com/uber/cadence/common/service"
 )
 
@@ -86,6 +86,10 @@ type (
 		MessagingClient   messaging.Client
 		ESClient          es.GenericClient
 		ESConfig          *config.ElasticSearchConfig
+		PinotConfig       *config.PinotVisibilityConfig
+		PinotClient       pinot.GenericClient
+		OSClient          es.GenericClient
+		OSConfig          *config.ElasticSearchConfig
 	}
 )
 
@@ -94,7 +98,7 @@ func NewBeanFromFactory(
 	factory Factory,
 	params *Params,
 	serviceConfig *service.Config,
-) (*BeanImpl, error) {
+) (Bean, error) {
 
 	metadataMgr, err := factory.NewDomainManager()
 	if err != nil {
@@ -126,14 +130,9 @@ func NewBeanFromFactory(
 		return nil, err
 	}
 
-	var configStoreMgr persistence.ConfigStoreManager
-	if datastore, ok := params.PersistenceConfig.DataStores[params.PersistenceConfig.DefaultStore]; ok {
-		if datastore.NoSQL != nil && datastore.NoSQL.PluginName == cconfig.StoreTypeCassandra {
-			configStoreMgr, err = factory.NewConfigStoreManager()
-			if err != nil {
-				return nil, err
-			}
-		}
+	configStoreMgr, err := factory.NewConfigStoreManager()
+	if err != nil {
+		return nil, err
 	}
 
 	return NewBean(
@@ -371,6 +370,7 @@ func (s *BeanImpl) Close() {
 	s.shardManager.Close()
 	s.historyManager.Close()
 	s.executionManagerFactory.Close()
+	s.configStoreManager.Close()
 	for _, executionMgr := range s.shardIDToExecutionManager {
 		executionMgr.Close()
 	}

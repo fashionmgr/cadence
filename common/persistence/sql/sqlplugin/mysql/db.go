@@ -58,10 +58,7 @@ func (mdb *db) IsDupEntryError(err error) bool {
 }
 
 func (mdb *db) IsNotFoundError(err error) bool {
-	if err == sql.ErrNoRows {
-		return true
-	}
-	return false
+	return err == sql.ErrNoRows
 }
 
 func (mdb *db) IsTimeoutError(err error) bool {
@@ -116,7 +113,7 @@ func newDB(xdbs []*sqlx.DB, tx *sqlx.Tx, dbShardID int, numDBShards int) (*db, e
 }
 
 // BeginTx starts a new transaction and returns a reference to the Tx object
-func (mdb *db) BeginTx(dbShardID int, ctx context.Context) (sqlplugin.Tx, error) {
+func (mdb *db) BeginTx(ctx context.Context, dbShardID int) (sqlplugin.Tx, error) {
 	xtx, err := mdb.driver.BeginTxx(ctx, dbShardID, nil)
 	if err != nil {
 		return nil, err
@@ -152,4 +149,9 @@ func (mdb *db) SupportsTTL() bool {
 // MaxAllowedTTL returns the max allowed ttl MySQL supports
 func (mdb *db) MaxAllowedTTL() (*time.Duration, error) {
 	return nil, sqlplugin.ErrTTLNotSupported
+}
+
+// SupportsTTL returns weather MySQL supports Asynchronous transaction
+func (mdb *db) SupportsAsyncTransaction() bool {
+	return false
 }

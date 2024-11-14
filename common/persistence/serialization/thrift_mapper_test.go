@@ -76,6 +76,8 @@ func TestShardInfo(t *testing.T) {
 	assert.Contains(t, actual.ClusterTimerAckLevel, "key_2")
 	assert.Equal(t, expected.ClusterTimerAckLevel["key_1"].Sub(actual.ClusterTimerAckLevel["key_1"]), time.Duration(0))
 	assert.Equal(t, expected.ClusterTimerAckLevel["key_2"].Sub(actual.ClusterTimerAckLevel["key_2"]), time.Duration(0))
+	assert.Nil(t, shardInfoFromThrift(nil))
+	assert.Nil(t, shardInfoToThrift(nil))
 }
 
 func TestDomainInfo(t *testing.T) {
@@ -129,6 +131,27 @@ func TestDomainInfo(t *testing.T) {
 	assert.Equal(t, expected.FailoverEndTimestamp.Sub(*actual.FailoverEndTimestamp), time.Duration(0))
 	assert.Equal(t, expected.PreviousFailoverVersion, actual.PreviousFailoverVersion)
 	assert.Equal(t, expected.LastUpdatedTimestamp.Sub(actual.LastUpdatedTimestamp), time.Duration(0))
+	assert.Nil(t, domainInfoFromThrift(nil))
+	assert.Nil(t, domainInfoToThrift(nil))
+}
+
+func TestDomainInfoRoundtripPanictest(t *testing.T) {
+	tests := map[string]struct {
+		in *DomainInfo
+	}{
+		"empty roundtrip": {
+			in: &DomainInfo{},
+		},
+		"nil roundtrip": {
+			in: nil,
+		},
+	}
+
+	for name, td := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, td.in, domainInfoFromThrift(domainInfoToThrift(td.in)))
+		})
+	}
 }
 
 func TestHistoryTreeInfo(t *testing.T) {
@@ -136,14 +159,14 @@ func TestHistoryTreeInfo(t *testing.T) {
 		CreatedTimestamp: time.Now(),
 		Ancestors: []*types.HistoryBranchRange{
 			{
-				BranchID:    common.StringPtr("branch_id"),
-				BeginNodeID: common.Int64Ptr(int64(rand.Intn(1000))),
-				EndNodeID:   common.Int64Ptr(int64(rand.Intn(1000))),
+				BranchID:    "branch_id",
+				BeginNodeID: int64(rand.Intn(1000)),
+				EndNodeID:   int64(rand.Intn(1000)),
 			},
 			{
-				BranchID:    common.StringPtr("branch_id"),
-				BeginNodeID: common.Int64Ptr(int64(rand.Intn(1000))),
-				EndNodeID:   common.Int64Ptr(int64(rand.Intn(1000))),
+				BranchID:    "branch_id",
+				BeginNodeID: int64(rand.Intn(1000)),
+				EndNodeID:   int64(rand.Intn(1000)),
 			},
 		},
 		Info: "info",
@@ -152,6 +175,8 @@ func TestHistoryTreeInfo(t *testing.T) {
 	assert.Equal(t, expected.CreatedTimestamp.Sub(actual.CreatedTimestamp), time.Duration(0))
 	assert.Equal(t, expected.Ancestors, actual.Ancestors)
 	assert.Equal(t, expected.Info, actual.Info)
+	assert.Nil(t, historyTreeInfoFromThrift(nil))
+	assert.Nil(t, historyTreeInfoToThrift(nil))
 }
 
 func TestWorkflowExecutionInfo(t *testing.T) {
@@ -214,6 +239,10 @@ func TestWorkflowExecutionInfo(t *testing.T) {
 		Memo:                               map[string][]byte{"key_1": []byte("Memo")},
 		VersionHistories:                   []byte("VersionHistories"),
 		VersionHistoriesEncoding:           "VersionHistoriesEncoding",
+		FirstExecutionRunID:                UUID(uuid.New()),
+		PartitionConfig:                    map[string]string{"zone": "dca1"},
+		Checksum:                           []byte("Checksum"),
+		ChecksumEncoding:                   "ChecksumEncoding",
 	}
 	actual := workflowExecutionInfoFromThrift(workflowExecutionInfoToThrift(expected))
 	assert.Equal(t, expected.ParentDomainID, actual.ParentDomainID)
@@ -273,6 +302,12 @@ func TestWorkflowExecutionInfo(t *testing.T) {
 	assert.True(t, (expected.RetryInitialInterval-actual.RetryInitialInterval) < time.Second)
 	assert.True(t, (expected.RetryMaximumInterval-actual.RetryMaximumInterval) < time.Second)
 	assert.True(t, (expected.RetryExpiration-actual.RetryExpiration) < time.Second)
+	assert.Equal(t, expected.FirstExecutionRunID, actual.FirstExecutionRunID)
+	assert.Equal(t, expected.PartitionConfig, actual.PartitionConfig)
+	assert.Equal(t, expected.Checksum, actual.Checksum)
+	assert.Equal(t, expected.ChecksumEncoding, actual.ChecksumEncoding)
+	assert.Nil(t, workflowExecutionInfoFromThrift(nil))
+	assert.Nil(t, workflowExecutionInfoToThrift(nil))
 }
 
 func TestActivityInfo(t *testing.T) {
@@ -341,6 +376,8 @@ func TestActivityInfo(t *testing.T) {
 	assert.Equal(t, expected.ScheduledTimestamp.Sub(actual.ScheduledTimestamp), time.Duration(0))
 	assert.Equal(t, expected.StartedTimestamp.Sub(actual.StartedTimestamp), time.Duration(0))
 	assert.Equal(t, expected.RetryExpirationTimestamp.Sub(actual.RetryExpirationTimestamp), time.Duration(0))
+	assert.Nil(t, activityInfoFromThrift(nil))
+	assert.Nil(t, activityInfoToThrift(nil))
 }
 
 func TestChildExecutionInfo(t *testing.T) {
@@ -362,6 +399,8 @@ func TestChildExecutionInfo(t *testing.T) {
 	}
 	actual := childExecutionInfoFromThrift(childExecutionInfoToThrift(expected))
 	assert.Equal(t, expected, actual)
+	assert.Nil(t, childExecutionInfoFromThrift(nil))
+	assert.Nil(t, childExecutionInfoToThrift(nil))
 }
 
 func TestSignalInfo(t *testing.T) {
@@ -375,6 +414,8 @@ func TestSignalInfo(t *testing.T) {
 	}
 	actual := signalInfoFromThrift(signalInfoToThrift(expected))
 	assert.Equal(t, expected, actual)
+	assert.Nil(t, signalInfoFromThrift(nil))
+	assert.Nil(t, signalInfoToThrift(nil))
 }
 
 func TestRequestCancelInfo(t *testing.T) {
@@ -385,6 +426,8 @@ func TestRequestCancelInfo(t *testing.T) {
 	}
 	actual := requestCancelInfoFromThrift(requestCancelInfoToThrift(expected))
 	assert.Equal(t, expected, actual)
+	assert.Nil(t, requestCancelInfoFromThrift(nil))
+	assert.Nil(t, requestCancelInfoToThrift(nil))
 }
 
 func TestTimerInfo(t *testing.T) {
@@ -399,6 +442,8 @@ func TestTimerInfo(t *testing.T) {
 	assert.Equal(t, expected.StartedID, actual.StartedID)
 	assert.Equal(t, expected.TaskID, actual.TaskID)
 	assert.Equal(t, expected.ExpiryTimestamp.Sub(actual.ExpiryTimestamp), time.Duration(0))
+	assert.Nil(t, timerInfoFromThrift(nil))
+	assert.Nil(t, timerInfoToThrift(nil))
 }
 
 func TestTaskInfo(t *testing.T) {
@@ -408,6 +453,7 @@ func TestTaskInfo(t *testing.T) {
 		ScheduleID:       int64(rand.Intn(1000)),
 		ExpiryTimestamp:  time.Now(),
 		CreatedTimestamp: time.Now(),
+		PartitionConfig:  map[string]string{"zone": "dca1"},
 	}
 	actual := taskInfoFromThrift(taskInfoToThrift(expected))
 	assert.Equal(t, expected.WorkflowID, actual.WorkflowID)
@@ -415,6 +461,9 @@ func TestTaskInfo(t *testing.T) {
 	assert.Equal(t, expected.ScheduleID, actual.ScheduleID)
 	assert.Equal(t, expected.ExpiryTimestamp.Sub(actual.ExpiryTimestamp), time.Duration(0))
 	assert.Equal(t, expected.CreatedTimestamp.Sub(actual.CreatedTimestamp), time.Duration(0))
+	assert.Equal(t, expected.PartitionConfig, actual.PartitionConfig)
+	assert.Nil(t, taskInfoFromThrift(nil))
+	assert.Nil(t, taskInfoToThrift(nil))
 }
 
 func TestTaskListInfo(t *testing.T) {
@@ -423,12 +472,20 @@ func TestTaskListInfo(t *testing.T) {
 		AckLevel:        int64(rand.Intn(1000)),
 		ExpiryTimestamp: time.Now(),
 		LastUpdated:     time.Now(),
+		AdaptivePartitionConfig: &TaskListPartitionConfig{
+			Version:            0,
+			NumReadPartitions:  1,
+			NumWritePartitions: 2,
+		},
 	}
 	actual := taskListInfoFromThrift(taskListInfoToThrift(expected))
 	assert.Equal(t, expected.Kind, actual.Kind)
 	assert.Equal(t, expected.AckLevel, actual.AckLevel)
 	assert.Equal(t, expected.LastUpdated.Sub(actual.LastUpdated), time.Duration(0))
 	assert.Equal(t, expected.ExpiryTimestamp.Sub(actual.ExpiryTimestamp), time.Duration(0))
+	assert.Equal(t, expected.AdaptivePartitionConfig, actual.AdaptivePartitionConfig)
+	assert.Nil(t, taskListInfoFromThrift(nil))
+	assert.Nil(t, taskListInfoToThrift(nil))
 }
 
 func TestTransferTaskInfo(t *testing.T) {
@@ -448,6 +505,8 @@ func TestTransferTaskInfo(t *testing.T) {
 	}
 	actual := transferTaskInfoFromThrift(transferTaskInfoToThrift(expected))
 	assert.Equal(t, expected, actual)
+	assert.Nil(t, transferTaskInfoFromThrift(nil))
+	assert.Nil(t, transferTaskInfoToThrift(nil))
 }
 
 func TestTimerTaskInfo(t *testing.T) {
@@ -463,6 +522,8 @@ func TestTimerTaskInfo(t *testing.T) {
 	}
 	actual := timerTaskInfoFromThrift(timerTaskInfoToThrift(expected))
 	assert.Equal(t, expected, actual)
+	assert.Nil(t, timerTaskInfoFromThrift(nil))
+	assert.Nil(t, timerTaskInfoToThrift(nil))
 }
 
 func TestReplicationTaskInfo(t *testing.T) {
@@ -482,4 +543,6 @@ func TestReplicationTaskInfo(t *testing.T) {
 	}
 	actual := replicationTaskInfoFromThrift(replicationTaskInfoToThrift(expected))
 	assert.Equal(t, expected, actual)
+	assert.Nil(t, replicationTaskInfoFromThrift(nil))
+	assert.Nil(t, replicationTaskInfoToThrift(nil))
 }

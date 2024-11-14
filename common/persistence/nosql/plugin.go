@@ -22,9 +22,11 @@ package nosql
 
 import (
 	"fmt"
+	"testing"
 
 	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
+	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin"
 )
 
@@ -35,6 +37,12 @@ func RegisterPlugin(pluginName string, plugin nosqlplugin.Plugin) {
 	if _, ok := supportedPlugins[pluginName]; ok {
 		panic("plugin " + pluginName + " already registered")
 	}
+	supportedPlugins[pluginName] = plugin
+}
+
+// RegisterPluginForTest should be used only in tests to register the DB plugin and de-register at the end
+func RegisterPluginForTest(t *testing.T, pluginName string, plugin nosqlplugin.Plugin) {
+	t.Cleanup(func() { delete(supportedPlugins, pluginName) })
 	supportedPlugins[pluginName] = plugin
 }
 
@@ -64,23 +72,23 @@ func GetRegisteredPluginNames() []string {
 // underlying NoSQL database. The returned object is to tied to a single
 // NoSQL database and the object can be used to perform CRUD operations on
 // the tables in the database
-func NewNoSQLDB(cfg *config.NoSQL, logger log.Logger) (nosqlplugin.DB, error) {
+func NewNoSQLDB(cfg *config.NoSQL, logger log.Logger, dc *persistence.DynamicConfiguration) (nosqlplugin.DB, error) {
 	plugin, ok := supportedPlugins[cfg.PluginName]
 
 	if !ok {
 		return nil, fmt.Errorf("not supported plugin %v, only supported: %v", cfg.PluginName, supportedPlugins)
 	}
 
-	return plugin.CreateDB(cfg, logger)
+	return plugin.CreateDB(cfg, logger, dc)
 }
 
 // NewNoSQLAdminDB returns a AdminDB
-func NewNoSQLAdminDB(cfg *config.NoSQL, logger log.Logger) (nosqlplugin.AdminDB, error) {
+func NewNoSQLAdminDB(cfg *config.NoSQL, logger log.Logger, dc *persistence.DynamicConfiguration) (nosqlplugin.AdminDB, error) {
 	plugin, ok := supportedPlugins[cfg.PluginName]
 
 	if !ok {
 		return nil, fmt.Errorf("not supported plugin %v, only supported: %v", cfg.PluginName, supportedPlugins)
 	}
 
-	return plugin.CreateAdminDB(cfg, logger)
+	return plugin.CreateAdminDB(cfg, logger, dc)
 }

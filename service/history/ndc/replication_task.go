@@ -18,6 +18,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination replication_task_mock.go -self_package github.com/uber/cadence/service/history/ndc
+
 package ndc
 
 import (
@@ -49,7 +51,7 @@ type (
 		getLogger() log.Logger
 		getVersionHistory() *persistence.VersionHistory
 		isWorkflowReset() bool
-		getWorkflowResetMetadata() (string, string, int64)
+		getWorkflowResetMetadata() (string, string, int64, bool)
 
 		splitTask(taskStartTime time.Time) (replicationTask, replicationTask, error)
 	}
@@ -115,9 +117,12 @@ func newReplicationTask(
 
 	firstEvent := events[0]
 	lastEvent := events[len(events)-1]
-	version := firstEvent.GetVersion()
+	version := firstEvent.Version
 
-	sourceCluster := clusterMetadata.ClusterNameForFailoverVersion(version)
+	sourceCluster, err := clusterMetadata.ClusterNameForFailoverVersion(version)
+	if err != nil {
+		return nil, err
+	}
 
 	eventTime := int64(0)
 	for _, event := range events {
@@ -136,8 +141,8 @@ func newReplicationTask(
 		tag.WorkflowRunID(execution.GetRunID()),
 		tag.SourceCluster(sourceCluster),
 		tag.IncomingVersion(version),
-		tag.WorkflowFirstEventID(firstEvent.GetEventID()),
-		tag.WorkflowNextEventID(lastEvent.GetEventID()+1),
+		tag.WorkflowFirstEventID(firstEvent.ID),
+		tag.WorkflowNextEventID(lastEvent.ID+1),
 	)
 
 	return &replicationTaskImpl{
@@ -211,15 +216,16 @@ func (t *replicationTaskImpl) getVersionHistory() *persistence.VersionHistory {
 
 func (t *replicationTaskImpl) isWorkflowReset() bool {
 
-	baseRunID, newRunID, baseEventVersion := t.getWorkflowResetMetadata()
-	return len(baseRunID) > 0 && baseEventVersion != 0 && len(newRunID) > 0
+	baseRunID, newRunID, baseEventVersion, isReset := t.getWorkflowResetMetadata()
+	return len(baseRunID) > 0 && baseEventVersion != common.EmptyVersion && len(newRunID) > 0 && isReset
 }
 
-func (t *replicationTaskImpl) getWorkflowResetMetadata() (string, string, int64) {
+func (t *replicationTaskImpl) getWorkflowResetMetadata() (string, string, int64, bool) {
 
 	var baseRunID string
 	var newRunID string
 	var baseEventVersion = common.EmptyVersion
+	var isReset bool
 	switch t.getFirstEvent().GetEventType() {
 	case types.EventTypeDecisionTaskFailed:
 		decisionTaskFailedEvent := t.getFirstEvent()
@@ -227,6 +233,9 @@ func (t *replicationTaskImpl) getWorkflowResetMetadata() (string, string, int64)
 		baseRunID = attr.GetBaseRunID()
 		baseEventVersion = attr.GetForkEventVersion()
 		newRunID = attr.GetNewRunID()
+		if attr.GetCause() == types.DecisionTaskFailedCauseResetWorkflow {
+			isReset = true
+		}
 
 	case types.EventTypeDecisionTaskTimedOut:
 		decisionTaskTimedOutEvent := t.getFirstEvent()
@@ -235,8 +244,11 @@ func (t *replicationTaskImpl) getWorkflowResetMetadata() (string, string, int64)
 		baseRunID = attr.GetBaseRunID()
 		baseEventVersion = attr.GetForkEventVersion()
 		newRunID = attr.GetNewRunID()
+		if attr.GetCause() == types.DecisionTaskTimedOutCauseReset {
+			isReset = true
+		}
 	}
-	return baseRunID, newRunID, baseEventVersion
+	return baseRunID, newRunID, baseEventVersion, isReset
 }
 
 func (t *replicationTaskImpl) splitTask(
@@ -267,8 +279,8 @@ func (t *replicationTaskImpl) splitTask(
 	newVersionHistory := persistence.NewVersionHistoryFromInternalType(&types.VersionHistory{
 		BranchToken: nil,
 		Items: []*types.VersionHistoryItem{{
-			EventID: newLastEvent.GetEventID(),
-			Version: newLastEvent.GetVersion(),
+			EventID: newLastEvent.ID,
+			Version: newLastEvent.Version,
 		}},
 	})
 
@@ -277,8 +289,8 @@ func (t *replicationTaskImpl) splitTask(
 		tag.WorkflowRunID(newRunID),
 		tag.SourceCluster(t.sourceCluster),
 		tag.IncomingVersion(t.version),
-		tag.WorkflowFirstEventID(newFirstEvent.GetEventID()),
-		tag.WorkflowNextEventID(newLastEvent.GetEventID()+1),
+		tag.WorkflowFirstEventID(newFirstEvent.ID),
+		tag.WorkflowNextEventID(newLastEvent.ID+1),
 	)
 
 	newRunTask := &replicationTaskImpl{
@@ -354,23 +366,20 @@ func validateReplicateEventsRequest(
 }
 
 func validateUUID(input string) bool {
-	if uuid.Parse(input) == nil {
-		return false
-	}
-	return true
+	return uuid.Parse(input) != nil
 }
 
 func validateEvents(events []*types.HistoryEvent) (int64, error) {
 
 	firstEvent := events[0]
-	firstEventID := firstEvent.GetEventID()
-	version := firstEvent.GetVersion()
+	firstEventID := firstEvent.ID
+	version := firstEvent.Version
 
 	for index, event := range events {
-		if event.GetEventID() != firstEventID+int64(index) {
+		if event.ID != firstEventID+int64(index) {
 			return 0, ErrEventIDMismatch
 		}
-		if event.GetVersion() != version {
+		if event.Version != version {
 			return 0, ErrEventVersionMismatch
 		}
 	}

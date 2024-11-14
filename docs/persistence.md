@@ -127,7 +127,6 @@ persistence:
         Password: "password"
         keyspace: "cadence"           -- Name of the cassandra keyspace
         datacenter: "us-east-1a"      -- Cassandra datacenter filter to limit queries to a single dc (optional)
-        maxQPS: 1000                  -- MaxQPS to cassandra from a single cadence sub-system on one host (optional)
         maxConns: 2                   -- Number of tcp conns to cassandra server (single sub-system on one host) (optional)
 ```
 
@@ -152,7 +151,6 @@ persistence:
         maxConns: 20                   -- max number of connections to sql server from one host (optional)
         maxIdleConns: 20               -- max number of idle conns to sql server from one host (optional)
         maxConnLifetime: "1h"          -- max connection lifetime before it is discarded (optional)
-        maxQPS: 1000                   -- max qps to sql server from one host (optional)
         connectAttributes:             -- custom dsn attributes, map of key-value pairs
           tx_isolation: "READ-COMMITTED"   -- required only for mysql 5.6 and below, optional otherwise
 ```
@@ -211,7 +209,7 @@ This interface is tied to a specific schema i.e. the way data is laid out across
 names themselves are fixed. However, you get the flexibility wrt how you store the data within a table (i.e. column names and
 types are not fixed). The API interface can be found [here](https://github.com/uber/cadence/blob/master/common/persistence/sql/plugins/interfaces.go).
 It's basically a CRUD API for every table in the schema. A sample schema definition for mysql that uses this interface
-can be found [here](https://github.com/uber/cadence/blob/master/schema/mysql/v57/cadence/schema.sql)
+can be found [here](https://github.com/uber/cadence/blob/master/schema/mysql/v8/cadence/schema.sql)
 
 Any database that supports this interface can be plugged in with cadence server. 
 We have implemented Postgres within the repo, and also here is [**an example**](https://github.com/longquanzheng/cadence-extensions/tree/master/cadence-sqlite) to implement any database externally. 

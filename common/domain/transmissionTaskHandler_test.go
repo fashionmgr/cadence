@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/mocks"
 	p "github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/types"
@@ -58,7 +58,7 @@ func (s *transmissionTaskSuite) SetupTest() {
 	s.kafkaProducer = &mocks.KafkaProducer{}
 	s.domainReplicator = NewDomainReplicator(
 		s.kafkaProducer,
-		loggerimpl.NewLoggerForTest(s.Suite),
+		testlogger.New(s.Suite.T()),
 	).(*domainReplicatorImpl)
 }
 
@@ -111,6 +111,8 @@ func (s *transmissionTaskSuite) TestHandleTransmissionTask_RegisterDomainTask_Is
 		VisibilityArchivalStatus: visibilityArchivalStatus,
 		VisibilityArchivalURI:    visibilityArchivalURI,
 		BadBinaries:              types.BadBinaries{Binaries: map[string]*types.BadBinaryInfo{}},
+		IsolationGroups:          types.IsolationGroupConfiguration{},
+		AsyncWorkflowConfig:      types.AsyncWorkflowConfiguration{},
 	}
 	replicationConfig := &p.DomainReplicationConfig{
 		ActiveClusterName: clusterActive,
@@ -138,6 +140,8 @@ func (s *transmissionTaskSuite) TestHandleTransmissionTask_RegisterDomainTask_Is
 				VisibilityArchivalStatus:               visibilityArchivalStatus.Ptr(),
 				VisibilityArchivalURI:                  visibilityArchivalURI,
 				BadBinaries:                            &types.BadBinaries{Binaries: map[string]*types.BadBinaryInfo{}},
+				IsolationGroups:                        &types.IsolationGroupConfiguration{},
+				AsyncWorkflowConfig:                    &types.AsyncWorkflowConfiguration{},
 			},
 			ReplicationConfig: &types.DomainReplicationConfiguration{
 				ActiveClusterName: clusterActive,
@@ -272,6 +276,18 @@ func (s *transmissionTaskSuite) TestHandleTransmissionTask_UpdateDomainTask_IsGl
 		VisibilityArchivalStatus: visibilityArchivalStatus,
 		VisibilityArchivalURI:    visibilityArchivalURI,
 		BadBinaries:              types.BadBinaries{Binaries: map[string]*types.BadBinaryInfo{}},
+		IsolationGroups: types.IsolationGroupConfiguration{
+			"zone-1": {Name: "zone-1", State: types.IsolationGroupStateDrained},
+		},
+		AsyncWorkflowConfig: types.AsyncWorkflowConfiguration{
+			Enabled:             true,
+			PredefinedQueueName: "queue1",
+			QueueType:           "kafka",
+			QueueConfig: &types.DataBlob{
+				EncodingType: types.EncodingTypeJSON.Ptr(),
+				Data:         []byte(`{"cluster": "queue1"}`),
+			},
+		},
 	}
 	replicationConfig := &p.DomainReplicationConfig{
 		ActiveClusterName: clusterActive,
@@ -299,6 +315,18 @@ func (s *transmissionTaskSuite) TestHandleTransmissionTask_UpdateDomainTask_IsGl
 				VisibilityArchivalStatus:               visibilityArchivalStatus.Ptr(),
 				VisibilityArchivalURI:                  visibilityArchivalURI,
 				BadBinaries:                            &types.BadBinaries{Binaries: map[string]*types.BadBinaryInfo{}},
+				IsolationGroups: &types.IsolationGroupConfiguration{
+					"zone-1": {Name: "zone-1", State: types.IsolationGroupStateDrained},
+				},
+				AsyncWorkflowConfig: &types.AsyncWorkflowConfiguration{
+					Enabled:             true,
+					PredefinedQueueName: "queue1",
+					QueueType:           "kafka",
+					QueueConfig: &types.DataBlob{
+						EncodingType: types.EncodingTypeJSON.Ptr(),
+						Data:         []byte(`{"cluster": "queue1"}`),
+					},
+				},
 			},
 			ReplicationConfig: &types.DomainReplicationConfiguration{
 				ActiveClusterName: clusterActive,

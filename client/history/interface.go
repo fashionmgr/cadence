@@ -29,6 +29,12 @@ import (
 )
 
 //go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interface_mock.go -package history github.com/uber/cadence/client/history Client
+//go:generate gowrap gen -g -p . -i Client -t ../templates/retry.tmpl -o ../wrappers/retryable/history_generated.go -v client=History
+//go:generate gowrap gen -g -p . -i Client -t ../templates/metered.tmpl -o ../wrappers/metered/history_generated.go -v client=History
+//go:generate gowrap gen -g -p . -i Client -t ../templates/errorinjectors.tmpl -o ../wrappers/errorinjectors/history_generated.go -v client=History
+//go:generate gowrap gen -g -p . -i Client -t ../templates/grpc.tmpl -o ../wrappers/grpc/history_generated.go -v client=History -v package=historyv1 -v path=github.com/uber/cadence/.gen/proto/history/v1 -v prefix=History
+//go:generate gowrap gen -g -p . -i Client -t ../templates/thrift.tmpl -o ../wrappers/thrift/history_generated.go -v client=History -v prefix=History
+//go:generate gowrap gen -g -p . -i Client -t ../templates/timeout.tmpl -o ../wrappers/timeout/history_generated.go -v client=History -v exclude=GetReplicationMessages|GetDLQReplicationMessages|CountDLQMessages|ReadDLQMessages|PurgeDLQMessages|MergeDLQMessages|GetCrossClusterTasks|GetFailoverInfo
 
 // Client is the interface exposed by history service client
 type Client interface {
@@ -39,6 +45,7 @@ type Client interface {
 	DescribeWorkflowExecution(context.Context, *types.HistoryDescribeWorkflowExecutionRequest, ...yarpc.CallOption) (*types.DescribeWorkflowExecutionResponse, error)
 	GetCrossClusterTasks(context.Context, *types.GetCrossClusterTasksRequest, ...yarpc.CallOption) (*types.GetCrossClusterTasksResponse, error)
 	GetDLQReplicationMessages(context.Context, *types.GetDLQReplicationMessagesRequest, ...yarpc.CallOption) (*types.GetDLQReplicationMessagesResponse, error)
+	CountDLQMessages(context.Context, *types.CountDLQMessagesRequest, ...yarpc.CallOption) (*types.HistoryCountDLQMessagesResponse, error)
 	GetMutableState(context.Context, *types.GetMutableStateRequest, ...yarpc.CallOption) (*types.GetMutableStateResponse, error)
 	GetReplicationMessages(context.Context, *types.GetReplicationMessagesRequest, ...yarpc.CallOption) (*types.GetReplicationMessagesResponse, error)
 	MergeDLQMessages(context.Context, *types.MergeDLQMessagesRequest, ...yarpc.CallOption) (*types.MergeDLQMessagesResponse, error)
@@ -74,4 +81,12 @@ type Client interface {
 	SyncShardStatus(context.Context, *types.SyncShardStatusRequest, ...yarpc.CallOption) error
 	TerminateWorkflowExecution(context.Context, *types.HistoryTerminateWorkflowExecutionRequest, ...yarpc.CallOption) error
 	GetFailoverInfo(context.Context, *types.GetFailoverInfoRequest, ...yarpc.CallOption) (*types.GetFailoverInfoResponse, error)
+
+	// RatelimitUpdate pushes usage info for the passed ratelimit keys, and requests updated weight info from aggregating hosts.
+	// Exact semantics beyond this depend on the load-balanced ratelimit implementation.
+	//
+	// A peer (via yarpc.WithShardkey) MUST be determined before calling and passed in yarpc opts,
+	// and unlike most endpoints this will NOT be forwarded to a new peer if the ring membership changes.
+	// To correctly forward keys to the new hosts, they must be re-sharded to find their new hosts.
+	RatelimitUpdate(ctx context.Context, request *types.RatelimitUpdateRequest, opts ...yarpc.CallOption) (*types.RatelimitUpdateResponse, error)
 }

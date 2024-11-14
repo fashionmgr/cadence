@@ -47,12 +47,12 @@ type (
 		suite.Suite
 		*require.Assertions
 
-		controller          *gomock.Controller
-		coordinator         *MockCoordinator
-		mockShard           *shard.TestContext
-		mockDomainCache     *cache.MockDomainCache
-		mockClusterMetadata *cluster.MockMetadata
-		markerNotifier      *markerNotifierImpl
+		controller      *gomock.Controller
+		coordinator     *MockCoordinator
+		mockShard       *shard.TestContext
+		mockDomainCache *cache.MockDomainCache
+		clusterMetadata cluster.Metadata
+		markerNotifier  *markerNotifierImpl
 	}
 )
 
@@ -69,6 +69,7 @@ func (s *markerNotifierSuite) SetupTest() {
 	config.NotifyFailoverMarkerInterval = dynamicconfig.GetDurationPropertyFn(time.Millisecond)
 	s.coordinator = NewMockCoordinator(s.controller)
 	s.mockShard = shard.NewTestContext(
+		s.T(),
 		s.controller,
 		&persistence.ShardInfo{
 			ShardID:          10,
@@ -77,9 +78,7 @@ func (s *markerNotifierSuite) SetupTest() {
 		},
 		config,
 	)
-	s.mockClusterMetadata = s.mockShard.Resource.ClusterMetadata
-	s.mockClusterMetadata.EXPECT().GetCurrentClusterName().Return(cluster.TestCurrentClusterName).AnyTimes()
-	s.mockClusterMetadata.EXPECT().GetAllClusterInfo().Return(cluster.TestAllClusterInfo).AnyTimes()
+	s.clusterMetadata = s.mockShard.Resource.ClusterMetadata
 	mockShardManager := s.mockShard.Resource.ShardMgr
 	mockShardManager.On("UpdateShard", mock.Anything, mock.Anything).Return(nil)
 	s.mockDomainCache = s.mockShard.Resource.DomainCache
@@ -117,10 +116,10 @@ func (s *markerNotifierSuite) TestNotifyPendingFailoverMarker() {
 		EmitMetric: true,
 	}
 	replicationConfig := &persistence.DomainReplicationConfig{
-		ActiveClusterName: s.mockClusterMetadata.GetCurrentClusterName(),
+		ActiveClusterName: s.clusterMetadata.GetCurrentClusterName(),
 		Clusters: []*persistence.ClusterReplicationConfig{
 			{
-				ClusterName: s.mockClusterMetadata.GetCurrentClusterName(),
+				ClusterName: s.clusterMetadata.GetCurrentClusterName(),
 			},
 		},
 	}
@@ -132,7 +131,7 @@ func (s *markerNotifierSuite) TestNotifyPendingFailoverMarker() {
 		replicationConfig,
 		1,
 		endTime,
-		s.mockClusterMetadata,
+		0, 0, 0,
 	)
 	s.mockDomainCache.EXPECT().GetDomainByID(domainID).Return(domainEntry, nil).AnyTimes()
 	task := &types.FailoverMarkerAttributes{
@@ -161,7 +160,6 @@ func (s *markerNotifierSuite) TestNotifyPendingFailoverMarker() {
 			if count == 1 {
 				close(s.markerNotifier.shutdownCh)
 			}
-			return
 		},
 	)
 

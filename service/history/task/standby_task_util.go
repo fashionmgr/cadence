@@ -22,6 +22,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/uber/cadence/common"
@@ -43,7 +44,7 @@ func standbyTaskPostActionNoOp(
 	ctx context.Context,
 	taskInfo Info,
 	postActionInfo interface{},
-	logger log.Logger,
+	_ log.Logger,
 ) error {
 
 	if postActionInfo == nil {
@@ -51,7 +52,7 @@ func standbyTaskPostActionNoOp(
 	}
 
 	// return error so task processing logic will retry
-	return ErrTaskRedispatch
+	return &redispatchError{Reason: fmt.Sprintf("post action is %T", postActionInfo)}
 }
 
 func standbyTransferTaskPostActionTaskDiscarded(
@@ -105,10 +106,6 @@ func standbyTimerTaskPostActionTaskDiscarded(
 
 type (
 	historyResendInfo struct {
-		// used by 2DC, since 2DC only has one branch
-		// TODO deprecate this nextEventID
-		nextEventID *int64
-
 		// used by NDC
 		lastEventID      *int64
 		lastEventVersion *int64
@@ -116,41 +113,37 @@ type (
 
 	pushActivityToMatchingInfo struct {
 		activityScheduleToStartTimeout int32
+		partitionConfig                map[string]string
 	}
 
 	pushDecisionToMatchingInfo struct {
 		decisionScheduleToStartTimeout int32
 		tasklist                       types.TaskList
+		partitionConfig                map[string]string
 	}
 )
 
-func newHistoryResendInfo(
-	lastEventID int64,
-	lastEventVersion int64,
-) *historyResendInfo {
-	return &historyResendInfo{
-		lastEventID:      common.Int64Ptr(lastEventID),
-		lastEventVersion: common.Int64Ptr(lastEventVersion),
-	}
-}
-
 func newPushActivityToMatchingInfo(
 	activityScheduleToStartTimeout int32,
+	partitionConfig map[string]string,
 ) *pushActivityToMatchingInfo {
 
 	return &pushActivityToMatchingInfo{
 		activityScheduleToStartTimeout: activityScheduleToStartTimeout,
+		partitionConfig:                partitionConfig,
 	}
 }
 
 func newPushDecisionToMatchingInfo(
 	decisionScheduleToStartTimeout int32,
 	tasklist types.TaskList,
+	partitionConfig map[string]string,
 ) *pushDecisionToMatchingInfo {
 
 	return &pushDecisionToMatchingInfo{
 		decisionScheduleToStartTimeout: decisionScheduleToStartTimeout,
 		tasklist:                       tasklist,
+		partitionConfig:                partitionConfig,
 	}
 }
 
@@ -170,7 +163,10 @@ func getHistoryResendInfo(
 	if err != nil {
 		return nil, err
 	}
-	return newHistoryResendInfo(lastItem.GetEventID(), lastItem.GetVersion()), nil
+	return &historyResendInfo{
+		lastEventID:      common.Int64Ptr(lastItem.EventID),
+		lastEventVersion: common.Int64Ptr(lastItem.Version),
+	}, nil
 }
 
 func getStandbyPostActionFn(

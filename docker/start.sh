@@ -20,6 +20,9 @@ export DBNAME="${DBNAME:-cadence}"
 export VISIBILITY_DBNAME="${VISIBILITY_DBNAME:-cadence_visibility}"
 export DB_PORT=${DB_PORT:-3306}
 
+# elasticsearch env
+export VISIBILITY_NAME="${VISIBILITY_NAME:-cadence-visibility-dev}"
+
 setup_cassandra_schema() {
     SCHEMA_DIR=$CADENCE_HOME/schema/cassandra/cadence/versioned
     cadence-cassandra-tool --ep $CASSANDRA_SEEDS create -k $KEYSPACE --rf $RF
@@ -32,14 +35,14 @@ setup_cassandra_schema() {
 }
 
 setup_mysql_schema() {
-    SCHEMA_DIR=$CADENCE_HOME/schema/mysql/v57/cadence/versioned
+    SCHEMA_DIR=$CADENCE_HOME/schema/mysql/v8/cadence/versioned
     if [ "$MYSQL_TX_ISOLATION_COMPAT" == "true" ]; then
         CONNECT_ATTR='--connect-attributes tx_isolation=READ-COMMITTED'
     fi
     cadence-sql-tool --ep $MYSQL_SEEDS -u $MYSQL_USER --pw $MYSQL_PWD $CONNECT_ATTR create --db $DBNAME
     cadence-sql-tool --ep $MYSQL_SEEDS -u $MYSQL_USER --pw $MYSQL_PWD $CONNECT_ATTR --db $DBNAME setup-schema -v 0.0
     cadence-sql-tool --ep $MYSQL_SEEDS -u $MYSQL_USER --pw $MYSQL_PWD $CONNECT_ATTR --db $DBNAME update-schema -d $SCHEMA_DIR
-    VISIBILITY_SCHEMA_DIR=$CADENCE_HOME/schema/mysql/v57/visibility/versioned
+    VISIBILITY_SCHEMA_DIR=$CADENCE_HOME/schema/mysql/v8/visibility/versioned
     cadence-sql-tool --ep $MYSQL_SEEDS -u $MYSQL_USER --pw $MYSQL_PWD $CONNECT_ATTR create --db $VISIBILITY_DBNAME
     cadence-sql-tool --ep $MYSQL_SEEDS -u $MYSQL_USER --pw $MYSQL_PWD --db $VISIBILITY_DBNAME $CONNECT_ATTR setup-schema -v 0.0
     cadence-sql-tool --ep $MYSQL_SEEDS -u $MYSQL_USER --pw $MYSQL_PWD --db $VISIBILITY_DBNAME $CONNECT_ATTR update-schema -d $VISIBILITY_SCHEMA_DIR
@@ -62,7 +65,7 @@ setup_es_template() {
     server=`echo $ES_SEEDS | awk -F ',' '{print $1}'`
     URL="http://$server:$ES_PORT/_template/cadence-visibility-template"
     curl -X PUT $URL -H 'Content-Type: application/json' --data-binary "@$SCHEMA_FILE"
-    URL="http://$server:$ES_PORT/cadence-visibility-dev"
+    URL="http://$server:$ES_PORT/$VISIBILITY_NAME"
     curl -X PUT $URL
 }
 
@@ -85,7 +88,7 @@ setup_schema() {
 
 wait_for_cassandra() {
     server=`echo $CASSANDRA_SEEDS | awk -F ',' '{print $1}'`
-    until cqlsh -u $CASSANDRA_USER -p $CASSANDRA_PASSWORD --cqlversion=3.4.4 --protocol-version=$CASSANDRA_PROTO_VERSION $server < /dev/null; do
+    until cqlsh -u $CASSANDRA_USER -p $CASSANDRA_PASSWORD --cqlversion=3.4.6 --protocol-version=$CASSANDRA_PROTO_VERSION $server < /dev/null; do
         echo 'waiting for cassandra to start up'
         sleep 1
     done
@@ -127,11 +130,11 @@ wait_for_postgres() {
 wait_for_es() {
     server=`echo $ES_SEEDS | awk -F ',' '{print $1}'`
     URL="http://$server:$ES_PORT"
-    curl -s $URL 2>&1 > /dev/null
+    curl -s $URL > /dev/null 2>&1
     until [ $? -eq 0 ]; do
         echo 'waiting for elasticsearch to start up'
         sleep 1
-        curl -s $URL 2>&1 > /dev/null
+        curl -s $URL > /dev/null 2>&1
     done
     echo 'elasticsearch started'
 }
@@ -152,9 +155,37 @@ wait_for_db() {
     fi
 }
 
+wait_for_async_wf_queue_kafka() {
+    ready="false"
+    while [ "$ready" != "true" ]; do
+        brokers=$(echo dump | nc "$ZOOKEEPER_SEEDS" "$ZOOKEEPER_PORT" | grep brokers | wc -l)
+        if [ "$brokers" -gt 0 ]; then
+            ready="true"
+        else
+            echo 'waiting for kafka broker to show up in zookeeper'
+            sleep 3
+        fi
+    done
+
+    echo 'kafka broker started'
+}
+
+setup_async_wf_queue() {
+    if [ "$ASYNC_WF_KAFKA_QUEUE_ENABLED" != "true" ]; then
+        return
+    fi
+
+    wait_for_async_wf_queue_kafka
+
+    # For now we are using wurstmeister/kafka image which has a default topic auto creation via KAFKA_CREATE_TOPICS environment variable
+    # So no additional setup needed here.
+}
+
 wait_for_db
 if [ "$SKIP_SCHEMA_SETUP" != true ]; then
     setup_schema
 fi
+
+setup_async_wf_queue
 
 exec /start-cadence.sh

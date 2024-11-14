@@ -24,7 +24,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/ioutil"
 	"os"
 	"path"
 	"testing"
@@ -33,12 +32,11 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"go.uber.org/zap"
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/config"
-	"github.com/uber/cadence/common/log/loggerimpl"
+	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/util"
 )
@@ -65,22 +63,16 @@ func TestVisibilityArchiverSuite(t *testing.T) {
 
 func (s *visibilityArchiverSuite) SetupSuite() {
 	var err error
-	s.testQueryDirectory, err = ioutil.TempDir("", "TestQuery")
-	s.Require().NoError(err)
+	s.testQueryDirectory = s.T().TempDir()
 	s.setupVisibilityDirectory()
 	s.testArchivalURI, err = archiver.NewURI("file:///a/b/c")
 	s.Require().NoError(err)
 }
 
-func (s *visibilityArchiverSuite) TearDownSuite() {
-	os.RemoveAll(s.testQueryDirectory)
-}
-
 func (s *visibilityArchiverSuite) SetupTest() {
 	s.Assertions = require.New(s.T())
-	zapLogger := zap.NewNop()
 	s.container = &archiver.VisibilityBootstrapContainer{
-		Logger: loggerimpl.NewLogger(zapLogger),
+		Logger: testlogger.New(s.T()),
 	}
 	s.controller = gomock.NewController(s.T())
 }
@@ -155,9 +147,7 @@ func (s *visibilityArchiverSuite) TestArchive_Fail_NonRetriableErrorOption() {
 }
 
 func (s *visibilityArchiverSuite) TestArchive_Success() {
-	dir, err := ioutil.TempDir("", "TestVisibilityArchive")
-	s.NoError(err)
-	defer os.RemoveAll(dir)
+	dir := s.T().TempDir()
 
 	visibilityArchiver := s.newTestVisibilityArchiver()
 	closeTimestamp := time.Now()
@@ -454,9 +444,7 @@ func (s *visibilityArchiverSuite) TestQuery_Success_SmallPageSize() {
 }
 
 func (s *visibilityArchiverSuite) TestArchiveAndQuery() {
-	dir, err := ioutil.TempDir("", "TestArchiveAndQuery")
-	s.NoError(err)
-	defer os.RemoveAll(dir)
+	dir := s.T().TempDir()
 
 	visibilityArchiver := s.newTestVisibilityArchiver()
 	mockParser := NewMockQueryParser(s.controller)

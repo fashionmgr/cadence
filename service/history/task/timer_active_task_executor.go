@@ -25,14 +25,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
-	"github.com/uber/cadence/common/collection"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
-	persistenceutils "github.com/uber/cadence/common/persistence/persistence-utils"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/execution"
@@ -59,7 +58,7 @@ type (
 func NewTimerActiveTaskExecutor(
 	shard shard.Context,
 	archiverClient archiver.Client,
-	executionCache *execution.Cache,
+	executionCache execution.Cache,
 	logger log.Logger,
 	metricsClient metrics.Client,
 	config *config.Config,
@@ -89,24 +88,36 @@ func (t *timerActiveTaskExecutor) Execute(
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), taskDefaultTimeout)
-	defer cancel()
-
 	switch timerTask.TaskType {
 	case persistence.TaskTypeUserTimer:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeUserTimerTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeActivityTimeout:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeActivityTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeDecisionTimeout:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeDecisionTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeWorkflowTimeout:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeWorkflowTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeActivityRetryTimer:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeActivityRetryTimerTask(ctx, timerTask)
 	case persistence.TaskTypeWorkflowBackoffTimer:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeWorkflowBackoffTimerTask(ctx, timerTask)
 	case persistence.TaskTypeDeleteHistoryEvent:
-		return t.executeDeleteHistoryEventTask(ctx, timerTask)
+		// special timeout for delete history event
+		deleteHistoryEventContext, deleteHistoryEventCancel := context.WithTimeout(t.ctx, time.Duration(t.config.DeleteHistoryEventContextTimeout())*time.Second)
+		defer deleteHistoryEventCancel()
+		return t.executeDeleteHistoryEventTask(deleteHistoryEventContext, timerTask)
 	default:
 		return errUnknownTimerTask
 	}
@@ -116,7 +127,12 @@ func (t *timerActiveTaskExecutor) executeUserTimerTimeoutTask(
 	ctx context.Context,
 	task *persistence.TimerTaskInfo,
 ) (retError error) {
-
+	t.logger.Debug("Processing user timer",
+		tag.WorkflowDomainID(task.DomainID),
+		tag.WorkflowID(task.WorkflowID),
+		tag.WorkflowRunID(task.RunID),
+		tag.TaskID(task.TaskID),
+	)
 	wfContext, release, err := t.executionCache.GetOrCreateWorkflowExecutionWithTimeout(
 		task.DomainID,
 		getWorkflowExecution(task),
@@ -142,16 +158,28 @@ func (t *timerActiveTaskExecutor) executeUserTimerTimeoutTask(
 	referenceTime := t.shard.GetTimeSource().Now()
 	resurrectionCheckMinDelay := t.config.ResurrectionCheckMinDelay(mutableState.GetDomainEntry().GetInfo().Name)
 	updateMutableState := false
+	debugLog := t.logger.Debug
+	if t.config.EnableDebugMode && t.config.EnableTimerDebugLogByDomainID(task.DomainID) {
+		debugLog = t.logger.Info
+	}
 
 	// initialized when a timer with delay >= resurrectionCheckMinDelay
 	// is encountered, so that we don't need to scan history multiple times
 	// where there're multiple timers with high delay
 	var resurrectedTimer map[string]struct{}
-	scanWorkflowCtx, cancel := context.WithTimeout(context.Background(), scanWorkflowTimeout)
+	scanWorkflowCtx, cancel := context.WithTimeout(t.ctx, scanWorkflowTimeout)
 	defer cancel()
 
+	sortedUserTimers := timerSequence.LoadAndSortUserTimers()
+	debugLog("Sorted user timers",
+		tag.WorkflowDomainID(task.DomainID),
+		tag.WorkflowID(task.WorkflowID),
+		tag.WorkflowRunID(task.RunID),
+		tag.Counter(len(sortedUserTimers)),
+	)
+
 Loop:
-	for _, timerSequenceID := range timerSequence.LoadAndSortUserTimers() {
+	for _, timerSequenceID := range sortedUserTimers {
 		timerInfo, ok := mutableState.GetUserTimerInfoByEventID(timerSequenceID.EventID)
 		if !ok {
 			errString := fmt.Sprintf("failed to find in user timer event ID: %v", timerSequenceID.EventID)
@@ -160,6 +188,20 @@ Loop:
 		}
 
 		delay, expired := timerSequence.IsExpired(referenceTime, timerSequenceID)
+		debugLog("Processing user timer sequence id",
+			tag.WorkflowDomainID(task.DomainID),
+			tag.WorkflowID(task.WorkflowID),
+			tag.WorkflowRunID(task.RunID),
+			tag.TaskType(task.TaskType),
+			tag.TaskID(task.TaskID),
+			tag.WorkflowTimerID(timerInfo.TimerID),
+			tag.WorkflowScheduleID(timerInfo.StartedID),
+			tag.Dynamic("timer-sequence-id", timerSequenceID),
+			tag.Dynamic("timer-info", timerInfo),
+			tag.Dynamic("delay", delay),
+			tag.Dynamic("expired", expired),
+		)
+
 		if !expired {
 			// timer sequence IDs are sorted, once there is one timer
 			// sequence ID not expired, all after that wil not expired
@@ -171,7 +213,7 @@ Loop:
 				// overwrite the context here as scan history may take a long time to complete
 				// ctx will also be used by other operations like updateWorkflow
 				ctx = scanWorkflowCtx
-				resurrectedTimer, err = t.getResurrectedTimer(ctx, mutableState)
+				resurrectedTimer, err = execution.GetResurrectedTimers(ctx, t.shard, mutableState)
 				if err != nil {
 					t.logger.Error("Timer resurrection check failed", tag.Error(err))
 					return err
@@ -205,6 +247,18 @@ Loop:
 			return err
 		}
 		updateMutableState = true
+
+		debugLog("User timer fired",
+			tag.WorkflowDomainID(task.DomainID),
+			tag.WorkflowID(task.WorkflowID),
+			tag.WorkflowRunID(task.RunID),
+			tag.TaskType(task.TaskType),
+			tag.TaskID(task.TaskID),
+			tag.WorkflowTimerID(timerInfo.TimerID),
+			tag.WorkflowScheduleID(timerInfo.StartedID),
+			tag.WorkflowNextEventID(mutableState.GetNextEventID()),
+		)
+
 	}
 
 	if !updateMutableState {
@@ -232,12 +286,22 @@ func (t *timerActiveTaskExecutor) executeActivityTimeoutTask(
 	}
 	defer func() { release(retError) }()
 
+	domainName, err := t.shard.GetDomainCache().GetDomainName(task.DomainID)
+	if err != nil {
+		return fmt.Errorf("unable to find domainID: %v, err: %v", task.DomainID, err)
+	}
+
 	mutableState, err := loadMutableStateForTimerTask(ctx, wfContext, task, t.metricsClient, t.logger)
 	if err != nil {
 		return err
 	}
 	if mutableState == nil || !mutableState.IsWorkflowExecutionRunning() {
 		return nil
+	}
+
+	wfType := mutableState.GetWorkflowType()
+	if wfType == nil {
+		return fmt.Errorf("unable to find workflow type, task %s", task)
 	}
 
 	timerSequence := execution.NewTimerSequence(mutableState)
@@ -250,7 +314,7 @@ func (t *timerActiveTaskExecutor) executeActivityTimeoutTask(
 	// is encountered, so that we don't need to scan history multiple times
 	// where there're multiple timers with high delay
 	var resurrectedActivity map[int64]struct{}
-	scanWorkflowCtx, cancel := context.WithTimeout(context.Background(), scanWorkflowTimeout)
+	scanWorkflowCtx, cancel := context.WithTimeout(t.ctx, scanWorkflowTimeout)
 	defer cancel()
 
 	// need to clear activity heartbeat timer task mask for new activity timer task creation
@@ -294,7 +358,7 @@ Loop:
 				// overwrite the context here as scan history may take a long time to complete
 				// ctx will also be used by other operations like updateWorkflow
 				ctx = scanWorkflowCtx
-				resurrectedActivity, err = t.getResurrectedActivity(ctx, mutableState)
+				resurrectedActivity, err = execution.GetResurrectedActivities(ctx, t.shard, mutableState)
 				if err != nil {
 					t.logger.Error("Activity resurrection check failed", tag.Error(err))
 					return err
@@ -357,7 +421,19 @@ Loop:
 			mutableState.GetExecutionInfo().DomainID,
 			metrics.TimerActiveTaskActivityTimeoutScope,
 			timerSequenceID.TimerType,
+			metrics.WorkflowTypeTag(wfType.GetName()),
 		)
+
+		t.logger.Info("Activity timed out",
+			tag.WorkflowDomainName(domainName),
+			tag.WorkflowDomainID(task.GetDomainID()),
+			tag.WorkflowID(task.GetWorkflowID()),
+			tag.WorkflowRunID(task.GetRunID()),
+			tag.ScheduleAttempt(task.ScheduleAttempt),
+			tag.FailoverVersion(task.GetVersion()),
+			tag.ActivityTimeoutType(shared.TimeoutType(timerSequenceID.TimerType)),
+		)
+
 		if _, err := mutableState.AddActivityTaskTimedOutEvent(
 			activityInfo.ScheduleID,
 			activityInfo.StartedID,
@@ -394,12 +470,22 @@ func (t *timerActiveTaskExecutor) executeDecisionTimeoutTask(
 	}
 	defer func() { release(retError) }()
 
+	domainName, err := t.shard.GetDomainCache().GetDomainName(task.DomainID)
+	if err != nil {
+		return fmt.Errorf("unable to find domainID: %v, err: %v", task.DomainID, err)
+	}
+
 	mutableState, err := loadMutableStateForTimerTask(ctx, wfContext, task, t.metricsClient, t.logger)
 	if err != nil {
 		return err
 	}
 	if mutableState == nil || !mutableState.IsWorkflowExecutionRunning() {
 		return nil
+	}
+
+	wfType := mutableState.GetWorkflowType()
+	if wfType == nil {
+		return fmt.Errorf("unable to find workflow type, task %s", task)
 	}
 
 	scheduleID := task.EventID
@@ -423,13 +509,14 @@ func (t *timerActiveTaskExecutor) executeDecisionTimeoutTask(
 	if isStickyDecision {
 		decisionTypeTag = stickyDecisionTypeTag
 	}
+	tags := []metrics.Tag{metrics.WorkflowTypeTag(wfType.GetName()), decisionTypeTag}
 	switch execution.TimerTypeFromInternal(types.TimeoutType(task.TimeoutType)) {
 	case execution.TimerTypeStartToClose:
 		t.emitTimeoutMetricScopeWithDomainTag(
 			mutableState.GetExecutionInfo().DomainID,
 			metrics.TimerActiveTaskDecisionTimeoutScope,
 			execution.TimerTypeStartToClose,
-			decisionTypeTag,
+			tags...,
 		)
 		if _, err := mutableState.AddDecisionTaskTimedOutEvent(
 			decision.ScheduleID,
@@ -447,6 +534,7 @@ func (t *timerActiveTaskExecutor) executeDecisionTimeoutTask(
 
 		if !isStickyDecision {
 			t.logger.Warn("Potential lost normal decision task",
+				tag.WorkflowDomainName(domainName),
 				tag.WorkflowDomainID(task.GetDomainID()),
 				tag.WorkflowID(task.GetWorkflowID()),
 				tag.WorkflowRunID(task.GetRunID()),
@@ -460,7 +548,7 @@ func (t *timerActiveTaskExecutor) executeDecisionTimeoutTask(
 			mutableState.GetExecutionInfo().DomainID,
 			metrics.TimerActiveTaskDecisionTimeoutScope,
 			execution.TimerTypeScheduleToStart,
-			decisionTypeTag,
+			tags...,
 		)
 		_, err := mutableState.AddDecisionTaskScheduleToStartTimeoutEvent(scheduleID)
 		if err != nil {
@@ -593,14 +681,16 @@ func (t *timerActiveTaskExecutor) executeActivityRetryTimerTask(
 
 	release(nil) // release earlier as we don't need the lock anymore
 
-	return t.shard.GetService().GetMatchingClient().AddActivityTask(ctx, &types.AddActivityTaskRequest{
+	_, err = t.shard.GetService().GetMatchingClient().AddActivityTask(ctx, &types.AddActivityTaskRequest{
 		DomainUUID:                    targetDomainID,
 		SourceDomainUUID:              domainID,
 		Execution:                     &execution,
 		TaskList:                      taskList,
 		ScheduleID:                    scheduledID,
 		ScheduleToStartTimeoutSeconds: common.Int32Ptr(scheduleToStartTimeout),
+		PartitionConfig:               mutableState.GetExecutionInfo().PartitionConfig,
 	})
+	return err
 }
 
 func (t *timerActiveTaskExecutor) executeWorkflowTimeoutTask(
@@ -651,7 +741,9 @@ func (t *timerActiveTaskExecutor) executeWorkflowTimeoutTask(
 		}
 		continueAsNewInitiator = types.ContinueAsNewInitiatorCronSchedule
 	}
-	if backoffInterval == backoff.NoBackoff {
+	// ignore event id
+	isCanceled, _ := mutableState.IsCancelRequested()
+	if isCanceled || backoffInterval == backoff.NoBackoff {
 		if err := timeoutWorkflow(mutableState, eventBatchFirstEventID); err != nil {
 			return err
 		}
@@ -682,6 +774,7 @@ func (t *timerActiveTaskExecutor) executeWorkflowTimeoutTask(
 		Header:                              startAttributes.Header,
 		Memo:                                startAttributes.Memo,
 		SearchAttributes:                    startAttributes.SearchAttributes,
+		JitterStartSeconds:                  startAttributes.JitterStartSeconds,
 	}
 	newMutableState, err := retryWorkflow(
 		ctx,
@@ -710,142 +803,6 @@ func (t *timerActiveTaskExecutor) executeWorkflowTimeoutTask(
 		),
 		newMutableState,
 	)
-}
-
-func (t *timerActiveTaskExecutor) getResurrectedTimer(
-	ctx context.Context,
-	mutableState execution.MutableState,
-) (map[string]struct{}, error) {
-	// 1. find min timer startedID for all pending timers
-	pendingTimerInfos := mutableState.GetPendingTimerInfos()
-	minTimerStartedID := common.EndEventID
-	for _, timerInfo := range pendingTimerInfos {
-		minTimerStartedID = common.MinInt64(minTimerStartedID, timerInfo.StartedID)
-	}
-
-	// 2. scan history from minTimerStartedID and see if any
-	// TimerFiredEvent or TimerCancelledEvent matches pending timer
-	// NOTE: since we can't read from middle of an events batch,
-	// history returned by persistence layer won't actually start
-	// from minTimerStartedID, but start from the batch whose nodeID is
-	// larger than minTimerStartedID.
-	// This is ok since the event types we are interested in must in batches
-	// later than the timer started events.
-	resurrectedTimer := make(map[string]struct{})
-	branchToken, err := mutableState.GetCurrentBranchToken()
-	if err != nil {
-		return nil, err
-	}
-
-	iter := collection.NewPagingIterator(t.getHistoryPaginationFn(
-		ctx,
-		minTimerStartedID,
-		mutableState.GetNextEventID(),
-		branchToken,
-	))
-	for iter.HasNext() {
-		item, err := iter.Next()
-		if err != nil {
-			return nil, err
-		}
-		event := item.(*types.HistoryEvent)
-		var timerID string
-		switch event.GetEventType() {
-		case types.EventTypeTimerFired:
-			timerID = event.TimerFiredEventAttributes.TimerID
-		case types.EventTypeTimerCanceled:
-			timerID = event.TimerCanceledEventAttributes.TimerID
-		}
-		if _, ok := pendingTimerInfos[timerID]; ok && timerID != "" {
-			resurrectedTimer[timerID] = struct{}{}
-		}
-	}
-	return resurrectedTimer, nil
-}
-
-func (t *timerActiveTaskExecutor) getResurrectedActivity(
-	ctx context.Context,
-	mutableState execution.MutableState,
-) (map[int64]struct{}, error) {
-	// 1. find min activity scheduledID for all pending activities
-	pendingActivityInfos := mutableState.GetPendingActivityInfos()
-	minActivityScheduledID := common.EndEventID
-	for _, activityInfo := range pendingActivityInfos {
-		minActivityScheduledID = common.MinInt64(minActivityScheduledID, activityInfo.ScheduleID)
-	}
-
-	// 2. scan history from minActivityScheduledID and see if any
-	// activity termination events matches pending activity
-	// NOTE: since we can't read from middle of an events batch,
-	// history returned by persistence layer won't actually start
-	// from minActivityScheduledID, but start from the batch whose nodeID is
-	// larger than minActivityScheduledID.
-	// This is ok since the event types we are interested in must in batches
-	// later than the activity scheduled events.
-	resurrectedActivity := make(map[int64]struct{})
-	branchToken, err := mutableState.GetCurrentBranchToken()
-	if err != nil {
-		return nil, err
-	}
-
-	iter := collection.NewPagingIterator(t.getHistoryPaginationFn(
-		ctx,
-		minActivityScheduledID,
-		mutableState.GetNextEventID(),
-		branchToken,
-	))
-	for iter.HasNext() {
-		item, err := iter.Next()
-		if err != nil {
-			return nil, err
-		}
-		event := item.(*types.HistoryEvent)
-		var scheduledID int64
-		switch event.GetEventType() {
-		case types.EventTypeActivityTaskCompleted:
-			scheduledID = event.ActivityTaskCompletedEventAttributes.ScheduledEventID
-		case types.EventTypeActivityTaskFailed:
-			scheduledID = event.ActivityTaskFailedEventAttributes.ScheduledEventID
-		case types.EventTypeActivityTaskTimedOut:
-			scheduledID = event.ActivityTaskTimedOutEventAttributes.ScheduledEventID
-		case types.EventTypeActivityTaskCanceled:
-			scheduledID = event.ActivityTaskCanceledEventAttributes.ScheduledEventID
-		}
-		if _, ok := pendingActivityInfos[scheduledID]; ok && scheduledID != 0 {
-			resurrectedActivity[scheduledID] = struct{}{}
-		}
-	}
-	return resurrectedActivity, nil
-}
-
-func (t *timerActiveTaskExecutor) getHistoryPaginationFn(
-	ctx context.Context,
-	firstEventID int64,
-	nextEventID int64,
-	branchToken []byte,
-) collection.PaginationFn {
-	return func(token []byte) ([]interface{}, []byte, error) {
-		historyEvents, _, token, _, err := persistenceutils.PaginateHistory(
-			ctx,
-			t.shard.GetHistoryManager(),
-			false,
-			branchToken,
-			firstEventID,
-			nextEventID,
-			token,
-			execution.NDCDefaultPageSize,
-			common.IntPtr(t.shard.GetShardID()),
-		)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		var items []interface{}
-		for _, event := range historyEvents {
-			items = append(items, event)
-		}
-		return items, token, nil
-	}
 }
 
 func (t *timerActiveTaskExecutor) updateWorkflowExecution(

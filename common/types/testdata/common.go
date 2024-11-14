@@ -45,6 +45,7 @@ const (
 	SignalName           = "SignalName"
 	QueryType            = "QueryType"
 	HostName             = "HostName"
+	HostName2            = "HostName2"
 	Identity             = "Identity"
 	CronSchedule         = "CronSchedule"
 	Checksum             = "Checksum"
@@ -56,19 +57,21 @@ const (
 	ClientImpl           = "ClientImpl"
 	ClientLibraryVersion = "ClientLibraryVersion"
 	SupportedVersions    = "SupportedVersions"
+	FeatureFlag          = "FeatureFlag"
 
-	Attempt           = 2
-	PageSize          = 10
-	HistoryLength     = 20
-	BacklogCountHint  = 30
-	AckLevel          = 1001
-	ReadLevel         = 1002
-	RatePerSecond     = 3.14
-	TaskID            = 444
-	ShardID           = 12345
-	MessageID1        = 50001
-	MessageID2        = 50002
-	EventStoreVersion = 333
+	Attempt            = 2
+	PageSize           = 10
+	HistoryLength      = 20
+	BacklogCountHint   = 30
+	AckLevel           = 1001
+	ReadLevel          = 1002
+	RatePerSecond      = 3.14
+	TaskID             = 444
+	ShardID            = 12345
+	MessageID1         = 50001
+	MessageID2         = 50002
+	EventStoreVersion  = 333
+	HistorySizeInBytes = 77779
 
 	EventID1 = int64(1)
 	EventID2 = int64(2)
@@ -78,6 +81,8 @@ const (
 	Version1 = int64(11)
 	Version2 = int64(22)
 	Version3 = int64(33)
+
+	IsolationGroup = "dca1"
 )
 
 var (
@@ -108,6 +113,8 @@ var (
 	Payload3 = []byte{30, 0}
 )
 
+var Attempt2 = int64(2)
+
 var (
 	ExecutionContext = []byte{110, 0}
 	Control          = []byte{120, 0}
@@ -121,6 +128,10 @@ var (
 	FailureReason  = "FailureReason"
 	FailureDetails = []byte{190, 0}
 )
+
+var PartitionConfig = map[string]string{
+	"zone": IsolationGroup,
+}
 
 var (
 	HealthStatus = types.HealthStatus{
@@ -246,6 +257,16 @@ var (
 	IndexedValueTypeMap = map[string]types.IndexedValueType{
 		"IndexedValueType1": IndexedValueType,
 	}
+	IsolationGroupConfiguration = types.IsolationGroupConfiguration{
+		IsolationGroup: {
+			Name:  IsolationGroup,
+			State: types.IsolationGroupStateHealthy,
+		},
+		"zone 1": {
+			Name:  "zone 1",
+			State: types.IsolationGroupStateDrained,
+		},
+	}
 	ParentExecutionInfo = types.ParentExecutionInfo{
 		DomainUUID:  DomainID,
 		Domain:      DomainName,
@@ -334,6 +355,26 @@ var (
 		SearchAttributes:  &SearchAttributes,
 		AutoResetPoints:   &ResetPoints,
 		TaskList:          TaskListName,
+		PartitionConfig:   PartitionConfig,
+	}
+	CronWorkflowExecutionInfo = types.WorkflowExecutionInfo{
+		Execution:         &WorkflowExecution,
+		Type:              &WorkflowType,
+		StartTime:         &Timestamp1,
+		CloseTime:         &Timestamp2,
+		CloseStatus:       &WorkflowExecutionCloseStatus,
+		HistoryLength:     HistoryLength,
+		ParentDomainID:    common.StringPtr(DomainID),
+		ParentDomain:      common.StringPtr(DomainName),
+		ParentExecution:   &WorkflowExecution,
+		ParentInitiatedID: common.Int64Ptr(EventID1),
+		ExecutionTime:     &Timestamp3,
+		Memo:              &Memo,
+		SearchAttributes:  &SearchAttributes,
+		AutoResetPoints:   &ResetPoints,
+		TaskList:          TaskListName,
+		PartitionConfig:   PartitionConfig,
+		IsCron:            true,
 	}
 	WorkflowExecutionInfoArray = []*types.WorkflowExecutionInfo{&WorkflowExecutionInfo}
 
@@ -374,6 +415,7 @@ var (
 		LastFailureReason:      &FailureReason,
 		LastWorkerIdentity:     Identity,
 		LastFailureDetails:     FailureDetails,
+		StartedWorkerIdentity:  Identity,
 	}
 	PendingActivityInfoArray = []*types.PendingActivityInfo{
 		&PendingActivityInfo,

@@ -25,15 +25,16 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/persistence/nosql/nosqlplugin/mongodb"
 	persistencetests "github.com/uber/cadence/common/persistence/persistence-tests"
 	"github.com/uber/cadence/environment"
+	"github.com/uber/cadence/testflags"
 )
 
-func TestConfigStorePersistence(t *testing.T) {
+func TestMongoDBConfigStorePersistence(t *testing.T) {
+	testflags.RequireMongoDB(t)
 	s := new(persistencetests.ConfigStorePersistenceSuite)
-	s.TestBase = NewTestBaseWithMongo()
+	s.TestBase = NewTestBaseWithMongo(t)
 	s.TestBase.Setup()
 	suite.Run(t, s)
 }
@@ -63,7 +64,7 @@ func TestConfigStorePersistence(t *testing.T) {
 // }
 
 // TODO uncomment the test once MessageQueueCRUD is implemented
-// func TestQueuePersistence(t *testing.T) {
+// func TestMongoDBQueuePersistence(t *testing.T) {
 // 	s := new(persistencetests.QueuePersistenceSuite)
 // 	s.TestBase = NewTestBaseWithMongo()
 // 	s.TestBase.Setup()
@@ -71,7 +72,7 @@ func TestConfigStorePersistence(t *testing.T) {
 // }
 
 // TODO uncomment the test once ShardCRUD is implemented
-// func TestCassandraShardPersistence(t *testing.T) {
+// func TestMongoDBShardPersistence(t *testing.T) {
 // 	s := new(persistencetests.ShardPersistenceSuite)
 // 	s.TestBase = NewTestBaseWithMongo()
 // 	s.TestBase.Setup()
@@ -79,7 +80,7 @@ func TestConfigStorePersistence(t *testing.T) {
 // }
 
 // TODO uncomment the test once VisibilityCRUD is implemented
-// func TestCassandraVisibilityPersistence(t *testing.T) {
+// func TestMongoDBVisibilityPersistence(t *testing.T) {
 // 	s := new(persistencetests.DBVisibilityPersistenceSuite)
 // 	s.TestBase = NewTestBaseWithMongo()
 // 	s.TestBase.Setup()
@@ -87,7 +88,7 @@ func TestConfigStorePersistence(t *testing.T) {
 // }
 
 // TODO uncomment the test once WorkflowCRUD is implemented
-// func TestCassandraExecutionManager(t *testing.T) {
+// func TestMongoDBExecutionManager(t *testing.T) {
 // 	s := new(persistencetests.ExecutionManagerSuite)
 // 	s.TestBase = NewTestBaseWithMongo()
 // 	s.TestBase.Setup()
@@ -95,30 +96,25 @@ func TestConfigStorePersistence(t *testing.T) {
 // }
 
 // TODO uncomment the test once WorkflowCRUD is implemented
-// func TestCassandraExecutionManagerWithEventsV2(t *testing.T) {
+// func TestMongoDBExecutionManagerWithEventsV2(t *testing.T) {
 // 	s := new(persistencetests.ExecutionManagerSuiteForEventsV2)
 // 	s.TestBase = NewTestBaseWithMongo()
 // 	s.TestBase.Setup()
 // 	suite.Run(t, s)
 // }
 
-func NewTestBaseWithMongo() persistencetests.TestBase {
+func NewTestBaseWithMongo(t *testing.T) *persistencetests.TestBase {
+	port, err := environment.GetMongoPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	options := &persistencetests.TestBaseOptions{
 		DBPluginName: mongodb.PluginName,
-		DBHost:       getTestConfig().Hosts,
-		DBUsername:   getTestConfig().User,
-		DBPassword:   getTestConfig().Password,
-		DBPort:       getTestConfig().Port,
+		DBHost:       environment.GetMongoAddress(),
+		DBUsername:   "root",
+		DBPassword:   "cadence",
+		DBPort:       port,
 	}
-	return persistencetests.NewTestBaseWithNoSQL(options)
-}
-
-func getTestConfig() *config.NoSQL {
-	return &config.NoSQL{
-		PluginName: mongodb.PluginName,
-		User:       "root",
-		Password:   "cadence",
-		Hosts:      environment.GetMongoAddress(),
-		Port:       environment.GetMongoPort(),
-	}
+	return persistencetests.NewTestBaseWithNoSQL(t, options)
 }

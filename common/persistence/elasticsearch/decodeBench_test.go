@@ -26,11 +26,10 @@ import (
 	"testing"
 	"time"
 
-	es "github.com/uber/cadence/common/elasticsearch"
-
 	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/definition"
+	es "github.com/uber/cadence/common/elasticsearch"
 	p "github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/types/mapper/thrift"
 )
@@ -57,7 +56,7 @@ BenchmarkJSONDecodeToType-8       200000              9321 ns/op
 BenchmarkJSONDecodeToMap-8        100000             12878 ns/op
 */
 
-//nolint
+// nolint
 func BenchmarkJSONDecodeToType(b *testing.B) {
 	bytes := (*json.RawMessage)(&data)
 	for i := 0; i < b.N; i++ {
@@ -82,7 +81,7 @@ func BenchmarkJSONDecodeToType(b *testing.B) {
 	}
 }
 
-//nolint
+// nolint
 func BenchmarkJSONDecodeToMap(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var source map[string]interface{}

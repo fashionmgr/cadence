@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/uber/cadence/schema/cassandra"
+	"github.com/uber/cadence/testflags"
 	cassandra2 "github.com/uber/cadence/tools/cassandra"
 	"github.com/uber/cadence/tools/common/schema/test"
 )
@@ -37,6 +38,7 @@ type UpdateSchemaTestSuite struct {
 }
 
 func TestUpdateSchemaTestSuite(t *testing.T) {
+	testflags.RequireCassandra(t)
 	suite.Run(t, new(UpdateSchemaTestSuite))
 }
 
@@ -81,7 +83,7 @@ func (s *UpdateSchemaTestSuite) TestShortcut() {
 	defer client.Close()
 	dir := rootRelativePath + "schema/cassandra/cadence/versioned"
 
-	cqlshArgs := []string{"--cqlversion=3.4.4", "-e", "DESC KEYSPACE %s;"}
+	cqlshArgs := []string{"--cqlversion=3.4.6", "-e", "DESC KEYSPACE %s;"}
 	if cassandraHost := os.Getenv("CASSANDRA_HOST"); cassandraHost != "" {
 		cqlshArgs = append(cqlshArgs, cassandraHost)
 	}

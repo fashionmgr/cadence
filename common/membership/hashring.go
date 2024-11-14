@@ -22,16 +22,22 @@ package membership
 
 import (
 	"fmt"
+	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dgryski/go-farm"
 	"github.com/uber/ringpop-go/hashring"
+	"github.com/uber/ringpop-go/membership"
 
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 )
 
@@ -41,8 +47,8 @@ import (
 var ErrInsufficientHosts = &types.InternalServiceError{Message: "Not enough hosts to serve the request"}
 
 const (
-	minRefreshInternal     = time.Second * 4
-	defaultRefreshInterval = time.Second * 10
+	minRefreshInternal     = time.Second
+	defaultRefreshInterval = 2 * time.Second
 	replicaPoints          = 100
 )
 
@@ -53,22 +59,24 @@ type PeerProvider interface {
 	GetMembers(service string) ([]HostInfo, error)
 	WhoAmI() (HostInfo, error)
 	SelfEvict() error
-	Subscribe(name string, notifyChannel chan<- *ChangedEvent) error
+	Subscribe(name string, handler func(ChangedEvent)) error
 }
 
 type ring struct {
 	status       int32
 	service      string
 	peerProvider PeerProvider
-	refreshChan  chan *ChangedEvent
+	refreshChan  chan struct{}
 	shutdownCh   chan struct{}
 	shutdownWG   sync.WaitGroup
+	timeSource   clock.TimeSource
+	scope        metrics.Scope
 	logger       log.Logger
 
 	value atomic.Value // this stores the current hashring
 
 	members struct {
-		sync.Mutex
+		sync.RWMutex
 		refreshed time.Time
 		keys      map[string]HostInfo // for mapping ip:port to HostInfo
 	}
@@ -82,22 +90,26 @@ type ring struct {
 func newHashring(
 	service string,
 	provider PeerProvider,
+	timeSource clock.TimeSource,
 	logger log.Logger,
+	scope metrics.Scope,
 ) *ring {
-	hashring := &ring{
+	r := &ring{
 		status:       common.DaemonStatusInitialized,
 		service:      service,
 		peerProvider: provider,
 		shutdownCh:   make(chan struct{}),
+		refreshChan:  make(chan struct{}, 1),
+		timeSource:   timeSource,
 		logger:       logger,
-		refreshChan:  make(chan *ChangedEvent),
+		scope:        scope,
 	}
 
-	hashring.members.keys = make(map[string]HostInfo)
-	hashring.subscribers.keys = make(map[string]chan<- *ChangedEvent)
+	r.members.keys = make(map[string]HostInfo)
+	r.subscribers.keys = make(map[string]chan<- *ChangedEvent)
 
-	hashring.value.Store(emptyHashring())
-	return hashring
+	r.value.Store(emptyHashring())
+	return r
 }
 
 func emptyHashring() *hashring.HashRing {
@@ -113,7 +125,7 @@ func (r *ring) Start() {
 	) {
 		return
 	}
-	if err := r.peerProvider.Subscribe(r.service, r.refreshChan); err != nil {
+	if err := r.peerProvider.Subscribe(r.service, r.handleUpdates); err != nil {
 		r.logger.Fatal("subscribing to peer provider", tag.Error(err))
 	}
 
@@ -139,8 +151,8 @@ func (r *ring) Stop() {
 	r.value.Store(emptyHashring())
 
 	r.subscribers.Lock()
-	defer r.subscribers.Unlock()
 	r.subscribers.keys = make(map[string]chan<- *ChangedEvent)
+	r.subscribers.Unlock()
 	close(r.shutdownCh)
 
 	if success := common.AwaitWaitGroup(&r.shutdownWG, time.Minute); !success {
@@ -154,12 +166,12 @@ func (r *ring) Lookup(
 ) (HostInfo, error) {
 	addr, found := r.ring().Lookup(key)
 	if !found {
-		select {
-		case r.refreshChan <- &ChangedEvent{}:
-		default:
-		}
+		r.signalSelf()
 		return HostInfo{}, ErrInsufficientHosts
 	}
+
+	r.members.RLock()
+	defer r.members.RUnlock()
 	host, ok := r.members.keys[addr]
 	if !ok {
 		return HostInfo{}, fmt.Errorf("host not found in member keys, host: %q", addr)
@@ -167,28 +179,47 @@ func (r *ring) Lookup(
 	return host, nil
 }
 
-// Subscribe registers callback watcher.
-// All subscribers are notified about ring change.
-func (r *ring) Subscribe(
-	service string,
-	notifyChannel chan<- *ChangedEvent,
-) error {
+// Subscribe registers callback watcher. Services can use this to be informed about membership changes
+func (r *ring) Subscribe(watcher string, notifyChannel chan<- *ChangedEvent) error {
 	r.subscribers.Lock()
 	defer r.subscribers.Unlock()
 
-	_, ok := r.subscribers.keys[service]
+	_, ok := r.subscribers.keys[watcher]
 	if ok {
-		return fmt.Errorf("service %q already subscribed", service)
+		return fmt.Errorf("watcher %q is already subscribed", watcher)
 	}
 
-	r.subscribers.keys[service] = notifyChannel
+	r.subscribers.keys[watcher] = notifyChannel
 	return nil
 }
 
+func (r *ring) handleUpdates(event ChangedEvent) {
+	r.signalSelf()
+}
+
+func (r *ring) signalSelf() {
+	var event struct{}
+	select {
+	case r.refreshChan <- event:
+	default: // channel already has an event, don't block
+	}
+}
+
+func (r *ring) notifySubscribers(msg ChangedEvent) {
+	r.subscribers.Lock()
+	defer r.subscribers.Unlock()
+
+	for name, ch := range r.subscribers.keys {
+		select {
+		case ch <- &msg:
+		default:
+			r.logger.Warn("subscriber notification failed", tag.Name(name))
+		}
+	}
+}
+
 // Unsubscribe removes subscriber
-func (r *ring) Unsubscribe(
-	name string,
-) error {
+func (r *ring) Unsubscribe(name string) error {
 	r.subscribers.Lock()
 	defer r.subscribers.Unlock()
 	delete(r.subscribers.keys, name)
@@ -204,6 +235,8 @@ func (r *ring) Members() []HostInfo {
 	servers := r.ring().Servers()
 
 	var hosts = make([]HostInfo, 0, len(servers))
+	r.members.RLock()
+	defer r.members.RUnlock()
 	for _, s := range servers {
 		host, ok := r.members.keys[s]
 		if !ok {
@@ -217,11 +250,9 @@ func (r *ring) Members() []HostInfo {
 }
 
 func (r *ring) refresh() error {
-	r.members.Lock()
-	defer r.members.Unlock()
-
-	if r.members.refreshed.After(time.Now().Add(-minRefreshInternal)) {
+	if r.members.refreshed.After(r.timeSource.Now().Add(-minRefreshInternal)) {
 		// refreshed too frequently
+		r.logger.Debug("refresh skipped, refreshed too frequently")
 		return nil
 	}
 
@@ -230,41 +261,52 @@ func (r *ring) refresh() error {
 		return fmt.Errorf("getting members from peer provider: %w", err)
 	}
 
-	newMembersMap, changed := r.compareMembers(members)
-	if !changed {
+	newMembersMap := r.makeMembersMap(members)
+
+	diff := r.diffMembers(newMembersMap)
+	if diff.Empty() {
 		return nil
 	}
 
 	ring := emptyHashring()
-	for _, member := range members {
-		ring.AddMembers(member)
-	}
-
-	r.members.keys = newMembersMap
-	r.members.refreshed = time.Now()
+	ring.AddMembers(castToMembers(members)...)
 	r.value.Store(ring)
-	r.logger.Info("refreshed ring members", tag.Value(members))
+	// sort members for deterministic order in the logs
+	sort.Slice(members, func(i, j int) bool { return members[i].addr < members[j].addr })
+	r.logger.Info("refreshed ring members", tag.Value(members), tag.Counter(len(members)), tag.Service(r.service))
+
+	r.updateMembersMap(newMembersMap)
+
+	r.emitHashIdentifier()
+	r.notifySubscribers(diff)
 
 	return nil
+}
+
+func (r *ring) updateMembersMap(newMembers map[string]HostInfo) {
+	r.members.Lock()
+	defer r.members.Unlock()
+
+	r.members.keys = newMembers
+	r.members.refreshed = r.timeSource.Now()
 }
 
 func (r *ring) refreshRingWorker() {
 	defer r.shutdownWG.Done()
 
-	refreshTicker := time.NewTicker(defaultRefreshInterval)
+	refreshTicker := r.timeSource.NewTicker(defaultRefreshInterval)
 	defer refreshTicker.Stop()
+
 	for {
 		select {
 		case <-r.shutdownCh:
 			return
 		case <-r.refreshChan: // local signal or signal from provider
 			if err := r.refresh(); err != nil {
-				r.logger.Error("refreshing ring", tag.Error(err))
+				r.logger.Error("failed to refresh ring", tag.Error(err))
 			}
-		case <-refreshTicker.C: // periodically refresh membership
-			if err := r.refresh(); err != nil {
-				r.logger.Error("periodically refreshing ring", tag.Error(err))
-			}
+		case <-refreshTicker.Chan(): // periodically force refreshing membership
+			r.signalSelf()
 		}
 	}
 }
@@ -273,20 +315,82 @@ func (r *ring) ring() *hashring.HashRing {
 	return r.value.Load().(*hashring.HashRing)
 }
 
-func (r *ring) compareMembers(members []HostInfo) (map[string]HostInfo, bool) {
-	changed := false
-	newMembersMap := make(map[string]HostInfo, len(members))
-	for _, member := range members {
-		newMembersMap[member.GetAddress()] = member
-		if _, ok := r.members.keys[member.GetAddress()]; !ok {
-			changed = true
+func (r *ring) emitHashIdentifier() float64 {
+	members := r.Members()
+	self, err := r.peerProvider.WhoAmI()
+	if err != nil {
+		r.logger.Error("Observed a problem looking up self from the membership provider while emitting hash identifier metrics", tag.Error(err))
+		self = HostInfo{
+			identity: "unknown",
 		}
 	}
+
+	sort.Slice(members, func(i int, j int) bool {
+		return members[i].addr > members[j].addr
+	})
+	var sb strings.Builder
+	for i := range members {
+		sb.WriteString(members[i].addr)
+		sb.WriteString("\n")
+	}
+	hashedView := farm.Hash32([]byte(sb.String()))
+	// Trimming the metric because collisions are unlikely and I didn't want to use the full Float64
+	// in-case it overflowed something. The number itself is meaningless, so additional precision
+	// doesn't really give any advantage, besides reducing the risk of collision
+	trimmedForMetric := float64(hashedView % 1000)
+	r.logger.Debug("Hashring view",
+		tag.Dynamic("hashring-view", sb.String()),
+		tag.Dynamic("trimmed-hash-id", trimmedForMetric),
+		tag.Service(r.service),
+		tag.Dynamic("self-addr", self.addr),
+		tag.Dynamic("self-identity", self.identity),
+		tag.Dynamic("self-ip", self.ip),
+	)
+	r.scope.Tagged(
+		metrics.ServiceTag(r.service),
+		metrics.HostTag(self.identity),
+	).UpdateGauge(metrics.HashringViewIdentifier, trimmedForMetric)
+	return trimmedForMetric
+}
+
+func (r *ring) makeMembersMap(members []HostInfo) map[string]HostInfo {
+	membersMap := make(map[string]HostInfo, len(members))
+	for _, m := range members {
+		membersMap[m.GetAddress()] = m
+	}
+	return membersMap
+}
+
+func (r *ring) diffMembers(newMembers map[string]HostInfo) ChangedEvent {
+	r.members.RLock()
+	defer r.members.RUnlock()
+
+	var combinedChange ChangedEvent
+
+	// find newly added hosts
+	for addr := range newMembers {
+		if _, found := r.members.keys[addr]; !found {
+			combinedChange.HostsAdded = append(combinedChange.HostsAdded, addr)
+		}
+	}
+	// find removed hosts
 	for addr := range r.members.keys {
-		if _, ok := newMembersMap[addr]; !ok {
-			changed = true
-			break
+		if _, found := newMembers[addr]; !found {
+			combinedChange.HostsRemoved = append(combinedChange.HostsRemoved, addr)
 		}
 	}
-	return newMembersMap, changed
+
+	// order since it will most probably used in logs
+	slices.Sort(combinedChange.HostsAdded)
+	slices.Sort(combinedChange.HostsUpdated)
+	slices.Sort(combinedChange.HostsRemoved)
+	return combinedChange
+}
+
+func castToMembers[T membership.Member](members []T) []membership.Member {
+	result := make([]membership.Member, 0, len(members))
+	for _, h := range members {
+		result = append(result, h)
+	}
+	return result
 }

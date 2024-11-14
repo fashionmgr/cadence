@@ -23,14 +23,13 @@ package main
 import (
 	"os"
 
+	"github.com/uber/cadence/tools/common/commoncli"
+	"github.com/uber/cadence/tools/sql"
+
 	_ "github.com/uber/cadence/common/persistence/sql/sqlplugin/mysql"    // needed to load mysql plugin
 	_ "github.com/uber/cadence/common/persistence/sql/sqlplugin/postgres" // needed to load postgres plugin
-	"github.com/uber/cadence/tools/sql"
 )
 
 func main() {
-	err := sql.RunTool(os.Args)
-	if err != nil {
-		panic(err)
-	}
+	commoncli.ExitHandler(sql.RunTool(os.Args))
 }

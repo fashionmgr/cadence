@@ -23,7 +23,7 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"io/ioutil"
+	"os"
 )
 
 type (
@@ -34,7 +34,7 @@ type (
 		// For Postgres(https://www.postgresql.org/docs/9.1/libpq-ssl.html) and MySQL
 		// default to require if Enable is true.
 		// For MySQL: https://github.com/go-sql-driver/mysql , it also can be set in ConnectAttributes, default is tls-custom
-		SSLMode string `yaml:"sslmode" `
+		SSLMode string `yaml:"sslmode"`
 
 		// CertPath and KeyPath are optional depending on server
 		// config, but both fields must be omitted to avoid using a
@@ -42,7 +42,7 @@ type (
 		CertFile string `yaml:"certFile"`
 		KeyFile  string `yaml:"keyFile"`
 
-		CaFile  string   `yaml:"caFile"` //optional depending on server config
+		CaFile  string   `yaml:"caFile"` // optional depending on server config
 		CaFiles []string `yaml:"caFiles"`
 		// If you want to verify the hostname and server cert (like a wildcard for cass cluster) then you should turn this on
 		// This option is basically the inverse of InSecureSkipVerify
@@ -84,7 +84,7 @@ func (config TLS) ToTLSConfig() (*tls.Config, error) {
 	if len(caFiles) > 0 {
 		caCertPool := x509.NewCertPool()
 		for _, caFile := range caFiles {
-			caCert, err := ioutil.ReadFile(caFile)
+			caCert, err := os.ReadFile(caFile)
 			if err != nil {
 				return nil, err
 			}

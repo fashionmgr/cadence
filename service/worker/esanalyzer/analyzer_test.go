@@ -23,32 +23,35 @@ package esanalyzer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
-	"go.uber.org/yarpc"
-
 	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber-go/tally"
 	"go.uber.org/cadence/activity"
 	"go.uber.org/cadence/testsuite"
 	"go.uber.org/cadence/worker"
 	"go.uber.org/cadence/workflow"
-
-	"github.com/uber/cadence/common/dynamicconfig"
-	"github.com/uber/cadence/common/elasticsearch"
-	esMocks "github.com/uber/cadence/common/elasticsearch/mocks"
+	"go.uber.org/zap"
 
 	"github.com/uber/cadence/client"
 	"github.com/uber/cadence/client/admin"
+	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/cluster"
+	"github.com/uber/cadence/common/config"
+	"github.com/uber/cadence/common/dynamicconfig"
+	"github.com/uber/cadence/common/elasticsearch"
+	esMocks "github.com/uber/cadence/common/elasticsearch/mocks"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/metrics/mocks"
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/common/pinot"
 	"github.com/uber/cadence/service/history/resource"
 )
 
@@ -66,6 +69,7 @@ type esanalyzerWorkflowTestSuite struct {
 	mockMetricClient   *mocks.Client
 	scopedMetricClient *mocks.Scope
 	mockESClient       *esMocks.GenericClient
+	tallyScope         tally.Scope
 	analyzer           *Analyzer
 	workflow           *Workflow
 	config             Config
@@ -74,6 +78,7 @@ type esanalyzerWorkflowTestSuite struct {
 	WorkflowType       string
 	WorkflowID         string
 	RunID              string
+	WorkflowVersion    string
 }
 
 func TestESAnalyzerWorkflowTestSuite(t *testing.T) {
@@ -86,7 +91,8 @@ func (s *esanalyzerWorkflowTestSuite) SetupTest() {
 	s.WorkflowType = "test-workflow-type"
 	s.WorkflowID = "test-workflow_id"
 	s.RunID = "test-run_id"
-
+	s.WorkflowVersion = "test-workflow-version"
+	s.tallyScope = tally.NoopScope
 	activeDomainCache := cache.NewGlobalDomainCacheEntryForTest(
 		&persistence.DomainInfo{ID: s.DomainID, Name: s.DomainName},
 		&persistence.DomainConfig{Retention: 1},
@@ -98,7 +104,6 @@ func (s *esanalyzerWorkflowTestSuite) SetupTest() {
 			},
 		},
 		1234,
-		cluster.GetTestClusterMetadata(true, true),
 	)
 
 	s.config = Config{
@@ -118,7 +123,7 @@ func (s *esanalyzerWorkflowTestSuite) SetupTest() {
 	s.workflowEnv = s.NewTestWorkflowEnvironment()
 	s.controller = gomock.NewController(s.T())
 	s.mockDomainCache = cache.NewMockDomainCache(s.controller)
-	s.resource = resource.NewTest(s.controller, metrics.Worker)
+	s.resource = resource.NewTest(s.T(), s.controller, metrics.Worker)
 	s.mockAdminClient = admin.NewMockClient(s.controller)
 	s.clientBean = client.NewMockBean(s.controller)
 	s.logger = &log.MockLogger{}
@@ -126,22 +131,19 @@ func (s *esanalyzerWorkflowTestSuite) SetupTest() {
 	s.scopedMetricClient = &mocks.Scope{}
 	s.mockESClient = &esMocks.GenericClient{}
 
-	s.mockMetricClient.On("Scope", metrics.ESAnalyzerScope, mock.Anything).Return(s.scopedMetricClient).Once()
-	s.scopedMetricClient.On("Tagged", mock.Anything, mock.Anything).Return(s.scopedMetricClient).Once()
-
-	s.mockDomainCache.EXPECT().GetDomainByID(s.DomainID).Return(activeDomainCache, nil).AnyTimes()
+	//
+	// s.mockDomainCache.EXPECT().GetDomainByID(s.DomainID).Return(activeDomainCache, nil).AnyTimes()
 	s.mockDomainCache.EXPECT().GetDomain(s.DomainName).Return(activeDomainCache, nil).AnyTimes()
-	s.clientBean.EXPECT().GetRemoteAdminClient(cluster.TestCurrentClusterName).Return(s.mockAdminClient).AnyTimes()
 
 	// SET UP ANALYZER
 	s.analyzer = &Analyzer{
-		svcClient:          s.resource.GetSDKClient(),
-		clientBean:         s.clientBean,
-		domainCache:        s.mockDomainCache,
-		logger:             s.logger,
-		scopedMetricClient: getScopedMetricsClient(s.mockMetricClient),
-		esClient:           s.mockESClient,
-		config:             &s.config,
+		svcClient:   s.resource.GetSDKClient(),
+		clientBean:  s.clientBean,
+		domainCache: s.mockDomainCache,
+		logger:      s.logger,
+		esClient:    s.mockESClient,
+		config:      &s.config,
+		tallyScope:  s.tallyScope,
 	}
 	s.activityEnv.SetTestTimeout(time.Second * 5)
 	s.activityEnv.SetWorkerOptions(worker.Options{BackgroundActivityContext: context.Background()})
@@ -151,35 +153,21 @@ func (s *esanalyzerWorkflowTestSuite) SetupTest() {
 	s.workflowEnv.RegisterWorkflowWithOptions(
 		s.workflow.workflowFunc,
 		workflow.RegisterOptions{Name: esanalyzerWFTypeName})
-
 	s.workflowEnv.RegisterActivityWithOptions(
-		s.workflow.getWorkflowTypes,
-		activity.RegisterOptions{Name: getWorkflowTypesActivity})
-	s.workflowEnv.RegisterActivityWithOptions(
-		s.workflow.findStuckWorkflows,
-		activity.RegisterOptions{Name: findStuckWorkflowsActivity})
-	s.workflowEnv.RegisterActivityWithOptions(
-		s.workflow.refreshStuckWorkflowsFromSameWorkflowType,
-		activity.RegisterOptions{Name: refreshStuckWorkflowsActivity},
+		s.workflow.emitWorkflowVersionMetrics,
+		activity.RegisterOptions{Name: emitWorkflowVersionMetricsActivity},
 	)
-	s.workflowEnv.RegisterActivityWithOptions(
-		s.workflow.findLongRunningWorkflows,
-		activity.RegisterOptions{Name: findLongRunningWorkflowsActivity},
+	s.activityEnv.RegisterActivityWithOptions(
+		s.workflow.emitWorkflowVersionMetrics,
+		activity.RegisterOptions{Name: emitWorkflowVersionMetricsActivity},
 	)
 
+	s.workflowEnv.RegisterWorkflowWithOptions(
+		s.workflow.emitWorkflowTypeCount,
+		workflow.RegisterOptions{Name: domainWFTypeCountWorkflowTypeName})
 	s.activityEnv.RegisterActivityWithOptions(
-		s.workflow.getWorkflowTypes,
-		activity.RegisterOptions{Name: getWorkflowTypesActivity})
-	s.activityEnv.RegisterActivityWithOptions(
-		s.workflow.findStuckWorkflows,
-		activity.RegisterOptions{Name: findStuckWorkflowsActivity})
-	s.activityEnv.RegisterActivityWithOptions(
-		s.workflow.refreshStuckWorkflowsFromSameWorkflowType,
-		activity.RegisterOptions{Name: refreshStuckWorkflowsActivity},
-	)
-	s.activityEnv.RegisterActivityWithOptions(
-		s.workflow.findLongRunningWorkflows,
-		activity.RegisterOptions{Name: findLongRunningWorkflowsActivity},
+		s.workflow.emitWorkflowTypeCountMetrics,
+		activity.RegisterOptions{Name: emitDomainWorkflowTypeCountMetricsActivity},
 	)
 }
 
@@ -191,345 +179,597 @@ func (s *esanalyzerWorkflowTestSuite) TearDownTest() {
 }
 
 func (s *esanalyzerWorkflowTestSuite) TestExecuteWorkflow() {
-	workflowTypeInfos := []WorkflowTypeInfo{
-		{
-			Name:         s.WorkflowType,
-			NumWorkflows: 564,
-			Duration:     Duration{AvgExecTimeNanoseconds: float64(123 * time.Second)},
-		},
-	}
-	s.workflowEnv.OnActivity(getWorkflowTypesActivity, mock.Anything).
-		Return(workflowTypeInfos, nil).Times(1)
+	s.workflowEnv.OnActivity(emitWorkflowVersionMetricsActivity, mock.Anything).Return(nil).Times(1)
 
-	workflows := []WorkflowInfo{
-		{
-			DomainID:   s.DomainID,
-			WorkflowID: s.WorkflowID,
-			RunID:      s.RunID,
-		},
-	}
-	s.workflowEnv.OnActivity(findStuckWorkflowsActivity, mock.Anything, workflowTypeInfos[0]).
-		Return(workflows, nil).Times(1)
-	s.workflowEnv.OnActivity(findLongRunningWorkflowsActivity, mock.Anything).
-		Return(nil).Times(1)
-
-	s.workflowEnv.OnActivity(refreshStuckWorkflowsActivity, mock.Anything, workflows).Return(nil).Times(1)
-
-	s.workflowEnv.ExecuteWorkflow(esanalyzerWFTypeName)
+	s.workflowEnv.ExecuteWorkflow(esanalyzerWFTypeName, mock.Anything)
 	err := s.workflowEnv.GetWorkflowResult(nil)
 	s.NoError(err)
 }
 
-func (s *esanalyzerWorkflowTestSuite) TestExecuteWorkflowMultipleWorkflowTypes() {
-	workflowTypeInfos := []WorkflowTypeInfo{
-		{
-			Name:         s.WorkflowType,
-			NumWorkflows: 564,
-			Duration:     Duration{AvgExecTimeNanoseconds: float64(123 * time.Second)},
-		},
-		{
-			Name:         "another-workflow-type",
-			NumWorkflows: 778,
-			Duration:     Duration{AvgExecTimeNanoseconds: float64(332 * time.Second)},
-		},
-	}
-	s.workflowEnv.OnActivity(getWorkflowTypesActivity, mock.Anything).
-		Return(workflowTypeInfos, nil).Times(1)
+func (s *esanalyzerWorkflowTestSuite) TestEmitWorkflowVersionMetricsActivity() {
+	s.config.ESAnalyzerWorkflowVersionDomains = dynamicconfig.GetStringPropertyFn(
+		fmt.Sprintf(`["%s"]`, s.DomainName),
+	)
+	esRaw := `
+{
+  "took": 642,
+  "timed_out": false,
+  "_shards": {
+    "total": 20,
+    "successful": 20,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 4588,
+    "max_score": 0,
+    "hits": [
 
-	workflows1 := []WorkflowInfo{
-		{
-			DomainID:   s.DomainID,
-			WorkflowID: s.WorkflowID,
-			RunID:      s.RunID,
-		},
-	}
-	workflows2 := []WorkflowInfo{
-		{
-			DomainID:   s.DomainID,
-			WorkflowID: s.WorkflowID,
-			RunID:      s.RunID,
-		},
-	}
-	s.workflowEnv.OnActivity(findStuckWorkflowsActivity, mock.Anything, workflowTypeInfos[0]).
-		Return(workflows1, nil).Times(1)
-	s.workflowEnv.OnActivity(findStuckWorkflowsActivity, mock.Anything, workflowTypeInfos[1]).
-		Return(workflows2, nil).Times(1)
-	s.workflowEnv.OnActivity(findLongRunningWorkflowsActivity, mock.Anything).
-		Return(nil).Times(1)
+    ]
+  },
+  "aggregations": {
+    "wftypes": {
+      "doc_count_error_upper_bound": 0,
+      "sum_other_doc_count": 0,
+      "buckets": [
+        {
+          "key": "CourierUpdateWorkflow",
+          "doc_count": 4539,
+          "versions": {
+            "doc_count_error_upper_bound": 0,
+            "sum_other_doc_count": 0,
+            "buckets": [
 
-	s.workflowEnv.OnActivity(refreshStuckWorkflowsActivity, mock.Anything, workflows1).Return(nil).Times(1)
-	s.workflowEnv.OnActivity(refreshStuckWorkflowsActivity, mock.Anything, workflows2).Return(nil).Times(1)
+            ]
+          }
+        },
+        {
+          "key": "UpdateTipWorkflow",
+          "doc_count": 33,
+          "versions": {
+            "doc_count_error_upper_bound": 0,
+            "sum_other_doc_count": 0,
+            "buckets": [
+              {
+                "key": "update tip efp flow-1",
+                "doc_count": 3
+              }
+            ]
+          }
+        },
+        {
+          "key": "RoboCourierWorkflow",
+          "doc_count": 12,
+          "versions": {
+            "doc_count_error_upper_bound": 0,
+            "sum_other_doc_count": 0,
+            "buckets": [
 
-	s.workflowEnv.ExecuteWorkflow(esanalyzerWFTypeName)
-	err := s.workflowEnv.GetWorkflowResult(nil)
+            ]
+          }
+        },
+        {
+          "key": "ImproveDropoffPinWorkflow",
+          "doc_count": 2,
+          "versions": {
+            "doc_count_error_upper_bound": 0,
+            "sum_other_doc_count": 0,
+            "buckets": [
+
+            ]
+          }
+        },
+        {
+          "key": "OrderStateUpdatedWorkflow",
+          "doc_count": 2,
+          "versions": {
+            "doc_count_error_upper_bound": 0,
+            "sum_other_doc_count": 0,
+            "buckets": [
+
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
+	`
+	var rawEs elasticsearch.RawResponse
+	err := json.Unmarshal([]byte(esRaw), &rawEs)
 	s.NoError(err)
+	s.mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything).Return(
+		&rawEs, nil).Times(1)
+	_, err = s.activityEnv.ExecuteActivity(s.workflow.emitWorkflowVersionMetrics)
+	s.NoError(err)
+
 }
 
-func (s *esanalyzerWorkflowTestSuite) TestRefreshStuckWorkflowsFromSameWorkflowTypeSingleWorkflow() {
-	workflows := []WorkflowInfo{
-		{
-			DomainID:   s.DomainID,
-			WorkflowID: s.WorkflowID,
-			RunID:      s.RunID,
+func (s *esanalyzerWorkflowTestSuite) TestEmitWorkflowTypeCountMetricsActivity() {
+	s.config.ESAnalyzerWorkflowTypeDomains = dynamicconfig.GetStringPropertyFn(
+		fmt.Sprintf(`["%s"]`, s.DomainName),
+	)
+	esRaw := `
+{
+  "took": 642,
+  "timed_out": false,
+  "_shards": {
+    "total": 20,
+    "successful": 20,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 4588,
+    "max_score": 0,
+    "hits": [
+
+    ]
+  },
+  "aggregations": {
+    "wftypes": {
+      "doc_count_error_upper_bound": 0,
+      "sum_other_doc_count": 0,
+      "buckets": [
+        {
+          "key": "CourierUpdateWorkflow",
+          "doc_count": 4539
+        },
+        {
+          "key": "UpdateTipWorkflow",
+          "doc_count": 33
+        },
+        {
+          "key": "RoboCourierWorkflow",
+          "doc_count": 12
+        },
+        {
+          "key": "ImproveDropoffPinWorkflow",
+          "doc_count": 2
+        },
+        {
+          "key": "OrderStateUpdatedWorkflow",
+          "doc_count": 2
+        }
+      ]
+    }
+  }
+}
+	`
+	var rawEs elasticsearch.RawResponse
+	err := json.Unmarshal([]byte(esRaw), &rawEs)
+	s.NoError(err)
+	s.mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything).Return(
+		&rawEs, nil).Times(1)
+	_, err = s.activityEnv.ExecuteActivity(s.workflow.emitWorkflowTypeCountMetrics)
+	s.NoError(err)
+
+}
+
+func TestNewAnalyzer(t *testing.T) {
+	mockESConfig := &config.ElasticSearchConfig{
+		Indices: map[string]string{
+			common.VisibilityAppName: "test",
 		},
 	}
-
-	s.mockAdminClient.EXPECT().RefreshWorkflowTasks(gomock.Any(), &types.RefreshWorkflowTasksRequest{
-		Domain: s.DomainName,
-		Execution: &types.WorkflowExecution{
-			WorkflowID: s.WorkflowID,
-			RunID:      s.RunID,
-		},
-	}).Return(nil).Times(1)
-	s.logger.On("Info", "Refreshed stuck workflow", mock.Anything).Return().Once()
-	s.scopedMetricClient.On("IncCounter", metrics.ESAnalyzerNumStuckWorkflowsRefreshed).Return().Once()
-
-	_, err := s.activityEnv.ExecuteActivity(s.workflow.refreshStuckWorkflowsFromSameWorkflowType, workflows)
-	s.NoError(err)
-}
-
-func (s *esanalyzerWorkflowTestSuite) TestRefreshStuckWorkflowsFromSameWorkflowTypeMultipleWorkflows() {
-	anotherWorkflowID := "another-worklow-id"
-	anotherRunID := "another-run-id"
-
-	workflows := []WorkflowInfo{
-		{
-			DomainID:   s.DomainID,
-			WorkflowID: s.WorkflowID,
-			RunID:      s.RunID,
-		},
-		{
-			DomainID:   s.DomainID,
-			WorkflowID: anotherWorkflowID,
-			RunID:      anotherRunID,
-		},
+	mockPinotConfig := &config.PinotVisibilityConfig{
+		Table: "test",
 	}
 
-	expectedWorkflows := map[string]bool{s.WorkflowID: false, anotherWorkflowID: false}
-	expectedRunIDs := map[string]bool{s.RunID: false, anotherRunID: false}
-	s.mockAdminClient.EXPECT().RefreshWorkflowTasks(gomock.Any(), gomock.Any()).Return(nil).Do(func(
-		ctx context.Context,
-		request *types.RefreshWorkflowTasksRequest,
-		option ...yarpc.CallOption,
-	) {
-		expectedWorkflows[request.Execution.WorkflowID] = true
-		expectedRunIDs[request.Execution.RunID] = true
-	}).Times(2)
-	s.logger.On("Info", "Refreshed stuck workflow", mock.Anything).Return().Times(2)
-	s.scopedMetricClient.On("IncCounter", metrics.ESAnalyzerNumStuckWorkflowsRefreshed).Return().Times(2)
+	mockESClient := &esMocks.GenericClient{}
+	testAnalyzer1 := New(nil, nil, nil, mockESClient, nil, mockESConfig, mockPinotConfig, nil, nil, nil, nil, nil)
 
-	_, err := s.activityEnv.ExecuteActivity(s.workflow.refreshStuckWorkflowsFromSameWorkflowType, workflows)
-	s.NoError(err)
+	mockPinotClient := &pinot.MockGenericClient{}
+	testAnalyzer2 := New(nil, nil, nil, nil, mockPinotClient, mockESConfig, mockPinotConfig, nil, nil, nil, nil, nil)
 
-	s.Equal(2, len(expectedWorkflows))
-	s.True(expectedWorkflows[s.WorkflowID])
-	s.True(expectedWorkflows[anotherWorkflowID])
-
-	s.Equal(2, len(expectedRunIDs))
-	s.True(expectedRunIDs[s.RunID])
-	s.True(expectedRunIDs[anotherRunID])
+	assert.Equal(t, testAnalyzer1.readMode, ES)
+	assert.Equal(t, testAnalyzer2.readMode, Pinot)
 }
 
-func (s *esanalyzerWorkflowTestSuite) TestRefreshStuckWorkflowsFromSameWorkflowInconsistentDomain() {
-	anotherDomainID := "another-domain-id"
-	anotherWorkflowID := "another-worklow-id"
-	anotherRunID := "another-run-id"
-
-	workflows := []WorkflowInfo{
-		{
-			DomainID:   s.DomainID,
-			WorkflowID: s.WorkflowID,
-			RunID:      s.RunID,
-		},
-		{
-			DomainID:   anotherDomainID,
-			WorkflowID: anotherWorkflowID,
-			RunID:      anotherRunID,
+func TestEmitWorkflowTypeCountMetricsESErrorCases(t *testing.T) {
+	mockESConfig := &config.ElasticSearchConfig{
+		Indices: map[string]string{
+			common.VisibilityAppName: "test",
 		},
 	}
-
-	expectedWorkflows := map[string]bool{s.WorkflowID: false, anotherWorkflowID: false}
-	expectedRunIDs := map[string]bool{s.RunID: false, anotherRunID: false}
-	s.mockAdminClient.EXPECT().RefreshWorkflowTasks(gomock.Any(), gomock.Any()).Return(nil).Do(func(
-		ctx context.Context,
-		request *types.RefreshWorkflowTasksRequest,
-		option ...yarpc.CallOption,
-	) {
-		expectedWorkflows[request.Execution.WorkflowID] = true
-		expectedRunIDs[request.Execution.RunID] = true
-	}).Times(1)
-	s.logger.On("Info", "Refreshed stuck workflow", mock.Anything).Return().Times(2)
-	s.scopedMetricClient.On("IncCounter", metrics.ESAnalyzerNumStuckWorkflowsRefreshed).Return().Times(2)
-
-	_, err := s.activityEnv.ExecuteActivity(s.workflow.refreshStuckWorkflowsFromSameWorkflowType, workflows)
-	s.Error(err)
-	s.EqualError(err, "InternalServiceError{Message: Inconsistent worklow. Expected domainID: deadbeef-0123-4567-890a-bcdef0123460, actual: another-domain-id}")
-}
-
-func (s *esanalyzerWorkflowTestSuite) TestFindLongRunningWorkflows() {
-	s.mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
-		&elasticsearch.RawResponse{
-			TookInMillis: 12,
-			Hits: elasticsearch.SearchHits{
-				TotalHits: 1234,
-			},
-		},
-		nil).Times(1)
-
-	s.scopedMetricClient.On(
-		"AddCounter",
-		metrics.ESAnalyzerNumLongRunningWorkflows,
-		int64(1234),
-	).Return().Times(1)
-
-	s.config.ESAnalyzerWorkflowDurationWarnThresholds = dynamicconfig.GetStringPropertyFn(`{"test-domain/workflow1":"1m"}`)
-	_, err := s.activityEnv.ExecuteActivity(s.workflow.findLongRunningWorkflows)
-	s.NoError(err)
-}
-
-func (s *esanalyzerWorkflowTestSuite) TestFindStuckWorkflows() {
-	info := WorkflowTypeInfo{
-		DomainID:     s.DomainID,
-		Name:         s.WorkflowType,
-		NumWorkflows: 123113,
-		Duration:     Duration{AvgExecTimeNanoseconds: float64(100 * time.Minute)},
+	mockPinotConfig := &config.PinotVisibilityConfig{
+		Table: "test",
 	}
 
-	s.mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
-		&elasticsearch.RawResponse{
-			TookInMillis: 12,
-			Hits: elasticsearch.SearchHits{
-				TotalHits: 2,
-				Hits: []*persistence.InternalVisibilityWorkflowExecutionInfo{
-					{
-						DomainID:   s.DomainID,
-						WorkflowID: s.WorkflowID,
-						RunID:      s.RunID,
-					},
-					{
-						DomainID:   s.DomainID,
-						WorkflowID: "workflow2",
-						RunID:      "run2",
-					},
-				},
-			},
-		},
-		nil).Times(1)
-	s.scopedMetricClient.On(
-		"AddCounter",
-		metrics.ESAnalyzerNumStuckWorkflowsDiscovered,
-		int64(2),
-	).Return().Times(1)
+	ctrl := gomock.NewController(t)
+	mockESClient := &esMocks.GenericClient{}
+	mockDomainCache := cache.NewMockDomainCache(ctrl)
+	testAnalyzer := New(nil, nil, nil, mockESClient, nil, mockESConfig, mockPinotConfig, log.NewNoop(), tally.NoopScope, nil, mockDomainCache, nil)
+	testWorkflow := &Workflow{analyzer: testAnalyzer}
 
-	actFuture, err := s.activityEnv.ExecuteActivity(s.workflow.findStuckWorkflows, info)
-	s.NoError(err)
-	var results []WorkflowInfo
-	err = actFuture.Get(&results)
-	s.NoError(err)
-	s.Equal(2, len(results))
-	s.Equal(WorkflowInfo{DomainID: s.DomainID, WorkflowID: s.WorkflowID, RunID: s.RunID}, results[0])
-	s.Equal(WorkflowInfo{DomainID: s.DomainID, WorkflowID: "workflow2", RunID: "run2"}, results[1])
-}
-
-func (s *esanalyzerWorkflowTestSuite) TestFindStuckWorkflowsNotEnoughWorkflows() {
-	info := WorkflowTypeInfo{
-		DomainID:     s.DomainID,
-		Name:         s.WorkflowType,
-		NumWorkflows: int64(s.config.ESAnalyzerMinNumWorkflowsForAvg(s.DomainID, s.WorkflowType) - 1),
-		Duration:     Duration{AvgExecTimeNanoseconds: float64(100 * time.Minute)},
-	}
-
-	s.logger.On("Warn", mock.Anything, mock.Anything).Return().Times(1)
-
-	actFuture, err := s.activityEnv.ExecuteActivity(s.workflow.findStuckWorkflows, info)
-	s.NoError(err)
-	var results []WorkflowInfo
-	err = actFuture.Get(&results)
-	s.NoError(err)
-	s.Equal(0, len(results))
-}
-
-func (s *esanalyzerWorkflowTestSuite) TestFindStuckWorkflowsMinNumWorkflowValidationSkipped() {
-	info := WorkflowTypeInfo{
-		DomainID:     s.DomainID,
-		Name:         s.WorkflowType,
-		NumWorkflows: int64(s.config.ESAnalyzerMinNumWorkflowsForAvg(s.DomainID, s.WorkflowType) - 1),
-		Duration:     Duration{AvgExecTimeNanoseconds: float64(100 * time.Minute)},
-	}
-
-	s.config.ESAnalyzerLimitToTypes = dynamicconfig.GetStringPropertyFn(s.WorkflowType)
-	s.logger.On("Info", mock.Anything, mock.Anything).Return().Times(1)
-	s.mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&elasticsearch.RawResponse{}, nil).Times(1)
-
-	actFuture, err := s.activityEnv.ExecuteActivity(s.workflow.findStuckWorkflows, info)
-	s.NoError(err)
-	var results []WorkflowInfo
-	err = actFuture.Get(&results)
-	s.NoError(err)
-	s.Equal(0, len(results))
-}
-
-func (s *esanalyzerWorkflowTestSuite) TestGetWorkflowTypes() {
-	esResult := struct {
-		Buckets []DomainInfo `json:"buckets"`
+	tests := map[string]struct {
+		domainCacheAffordance func(mockDomainCache *cache.MockDomainCache)
+		ESClientAffordance    func(mockESClient *esMocks.GenericClient)
+		expectedErr           error
 	}{
-		Buckets: []DomainInfo{
-			{
-				DomainID: "aaa-bbb-ccc",
-				WFTypeContainer: WorkflowTypeInfoContainer{
-					WorkflowTypes: []WorkflowTypeInfo{
-						{
-							Name:         s.WorkflowType,
-							NumWorkflows: 564,
-							Duration:     Duration{AvgExecTimeNanoseconds: float64(123 * time.Second)},
-						},
-						{
-							Name:         "another-workflow-type",
-							NumWorkflows: 745,
-							Duration:     Duration{AvgExecTimeNanoseconds: float64(987 * time.Second)},
-						},
-					},
-				},
+		"Case1: error getting domain": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(nil, fmt.Errorf("error")).Times(1)
 			},
+			ESClientAffordance: func(mockESClient *esMocks.GenericClient) {},
+			expectedErr:        fmt.Errorf("error"),
+		},
+		"Case2: error ES searchRaw": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			ESClientAffordance: func(mockESClient *esMocks.GenericClient) {
+				mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything).Return(
+					nil, fmt.Errorf("error")).Times(1)
+			},
+			expectedErr: fmt.Errorf("error"),
+		},
+		"Case3: foundAggregation is false": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			ESClientAffordance: func(mockESClient *esMocks.GenericClient) {
+				mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything).Return(
+					&elasticsearch.RawResponse{
+						Aggregations: map[string]json.RawMessage{},
+					}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("aggregation failed for domain in ES: test-domain"),
+		},
+		"Case4: error unmarshalling aggregation": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			ESClientAffordance: func(mockESClient *esMocks.GenericClient) {
+				mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything).Return(
+					&elasticsearch.RawResponse{
+						Aggregations: map[string]json.RawMessage{
+							"wftypes": []byte("invalid"),
+						},
+					}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("invalid character 'i' looking for beginning of value"),
 		},
 	}
-	encoded, err := json.Marshal(esResult)
-	s.NoError(err)
 
-	s.mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
-		&elasticsearch.RawResponse{
-			TookInMillis: 12,
-			Aggregations: map[string]json.RawMessage{
-				"domains": json.RawMessage(encoded),
-			},
-		},
-		nil).Times(1)
-	s.logger.On("Info", mock.Anything, mock.Anything).Return().Once()
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Set up mocks
+			test.domainCacheAffordance(mockDomainCache)
+			test.ESClientAffordance(mockESClient)
 
-	actFuture, err := s.activityEnv.ExecuteActivity(s.workflow.getWorkflowTypes)
-	s.NoError(err)
-	var results []WorkflowTypeInfo
-	err = actFuture.Get(&results)
-	s.NoError(err)
-	s.Equal(2, len(results))
-	s.Equal(normalizeDomainInfos(esResult.Buckets), results)
+			err := testWorkflow.emitWorkflowTypeCountMetricsES(context.Background(), "test-domain", zap.NewNop())
+			if err == nil {
+				assert.Equal(t, test.expectedErr, err)
+			} else {
+				assert.Equal(t, test.expectedErr.Error(), err.Error())
+			}
+		})
+	}
 }
 
-func (s *esanalyzerWorkflowTestSuite) TestGetWorkflowTypesFromConfig() {
-	workflowTypes := []WorkflowTypeInfo{
-		{DomainID: s.DomainID, Name: "workflow1"},
-		{DomainID: s.DomainID, Name: "workflow2"},
+func TestEmitWorkflowVersionMetricsESErrorCases(t *testing.T) {
+	mockESConfig := &config.ElasticSearchConfig{
+		Indices: map[string]string{
+			common.VisibilityAppName: "test",
+		},
+	}
+	mockPinotConfig := &config.PinotVisibilityConfig{
+		Table: "test",
 	}
 
-	s.config.ESAnalyzerLimitToTypes = dynamicconfig.GetStringPropertyFn(`["test-domain/workflow1","test-domain/workflow2"]`)
-	s.logger.On("Info", mock.Anything, mock.Anything).Return().Once()
+	ctrl := gomock.NewController(t)
+	mockESClient := &esMocks.GenericClient{}
+	mockDomainCache := cache.NewMockDomainCache(ctrl)
+	testAnalyzer := New(nil, nil, nil, mockESClient, nil, mockESConfig, mockPinotConfig, log.NewNoop(), tally.NoopScope, nil, mockDomainCache, nil)
+	testWorkflow := &Workflow{analyzer: testAnalyzer}
 
-	actFuture, err := s.activityEnv.ExecuteActivity(s.workflow.getWorkflowTypes)
-	s.NoError(err)
-	var results []WorkflowTypeInfo
-	err = actFuture.Get(&results)
-	s.NoError(err)
-	s.Equal(2, len(results))
-	s.Equal(workflowTypes, results)
+	tests := map[string]struct {
+		domainCacheAffordance func(mockDomainCache *cache.MockDomainCache)
+		ESClientAffordance    func(mockESClient *esMocks.GenericClient)
+		expectedErr           error
+	}{
+		"Case1: error getting domain": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(nil, fmt.Errorf("error")).Times(1)
+			},
+			ESClientAffordance: func(mockESClient *esMocks.GenericClient) {},
+			expectedErr:        fmt.Errorf("error"),
+		},
+		"Case2: error ES searchRaw": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			ESClientAffordance: func(mockESClient *esMocks.GenericClient) {
+				mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything).Return(
+					nil, fmt.Errorf("error")).Times(1)
+			},
+			expectedErr: fmt.Errorf("error"),
+		},
+		"Case3: foundAggregation is false": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			ESClientAffordance: func(mockESClient *esMocks.GenericClient) {
+				mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything).Return(
+					&elasticsearch.RawResponse{
+						Aggregations: map[string]json.RawMessage{},
+					}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("aggregation failed for domain in ES: test-domain"),
+		},
+		"Case4: error unmarshalling aggregation": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			ESClientAffordance: func(mockESClient *esMocks.GenericClient) {
+				mockESClient.On("SearchRaw", mock.Anything, mock.Anything, mock.Anything).Return(
+					&elasticsearch.RawResponse{
+						Aggregations: map[string]json.RawMessage{
+							"wftypes": []byte("invalid"),
+						},
+					}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("invalid character 'i' looking for beginning of value"),
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Set up mocks
+			test.domainCacheAffordance(mockDomainCache)
+			test.ESClientAffordance(mockESClient)
+
+			err := testWorkflow.emitWorkflowVersionMetricsES(context.Background(), "test-domain", zap.NewNop())
+			if err == nil {
+				assert.Equal(t, test.expectedErr, err)
+			} else {
+				assert.Equal(t, test.expectedErr.Error(), err.Error())
+			}
+		})
+	}
+}
+
+func TestEmitWorkflowTypeCountMetricsPinot(t *testing.T) {
+	mockPinotConfig := &config.PinotVisibilityConfig{
+		Table: "test",
+	}
+	mockESConfig := &config.ElasticSearchConfig{
+		Indices: map[string]string{
+			common.VisibilityAppName: "test",
+		},
+	}
+
+	ctrl := gomock.NewController(t)
+
+	mockPinotClient := pinot.NewMockGenericClient(ctrl)
+	mockDomainCache := cache.NewMockDomainCache(ctrl)
+	testAnalyzer := New(nil, nil, nil, nil, mockPinotClient, mockESConfig, mockPinotConfig, log.NewNoop(), tally.NoopScope, nil, mockDomainCache, nil)
+	testWorkflow := &Workflow{analyzer: testAnalyzer}
+
+	tests := map[string]struct {
+		domainCacheAffordance func(mockDomainCache *cache.MockDomainCache)
+		PinotClientAffordance func(mockPinotClient *pinot.MockGenericClient)
+		expectedErr           error
+	}{
+		"Case0: success": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test0", float64(1)},
+					{"test1", float64(2)},
+				}, nil).Times(1)
+			},
+			expectedErr: nil,
+		},
+		"Case1: error getting domain": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(nil, fmt.Errorf("domain error")).Times(1)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {},
+			expectedErr:           fmt.Errorf("domain error"),
+		},
+		"Case2: error Pinot query": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return(nil, fmt.Errorf("pinot error")).Times(1)
+			},
+			expectedErr: fmt.Errorf("pinot error"),
+		},
+		"Case3: Aggregation is empty": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("aggregation failed for domain in Pinot: test-domain"),
+		},
+		"Case4: error parsing workflow count": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test", "invalid"},
+				}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("error parsing workflow count for workflow type test"),
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Set up mocks
+			test.domainCacheAffordance(mockDomainCache)
+			test.PinotClientAffordance(mockPinotClient)
+
+			err := testWorkflow.emitWorkflowTypeCountMetricsPinot("test-domain", zap.NewNop())
+			if err == nil {
+				assert.Equal(t, test.expectedErr, err)
+			} else {
+				assert.Equal(t, test.expectedErr.Error(), err.Error())
+			}
+		})
+	}
+}
+
+func TestEmitWorkflowVersionMetricsPinot(t *testing.T) {
+	mockPinotConfig := &config.PinotVisibilityConfig{
+		Table: "test",
+	}
+	mockESConfig := &config.ElasticSearchConfig{
+		Indices: map[string]string{
+			common.VisibilityAppName: "test",
+		},
+	}
+
+	ctrl := gomock.NewController(t)
+
+	mockPinotClient := pinot.NewMockGenericClient(ctrl)
+	mockDomainCache := cache.NewMockDomainCache(ctrl)
+	testAnalyzer := New(nil, nil, nil, nil, mockPinotClient, mockESConfig, mockPinotConfig, log.NewNoop(), tally.NoopScope, nil, mockDomainCache, nil)
+	testWorkflow := &Workflow{analyzer: testAnalyzer}
+
+	tests := map[string]struct {
+		domainCacheAffordance func(mockDomainCache *cache.MockDomainCache)
+		PinotClientAffordance func(mockPinotClient *pinot.MockGenericClient)
+		expectedErr           error
+	}{
+		"Case0: success": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil).Times(3)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test-wf-type0", float64(100)},
+					{"test-wf-type1", float64(200)},
+				}, nil).Times(1)
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test-wf-version0", float64(10)},
+					{"test-wf-version1", float64(20)},
+				}, nil).Times(1)
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test-wf-version3", float64(10)},
+					{"test-wf-version4", float64(2)},
+				}, nil).Times(1)
+			},
+			expectedErr: nil,
+		},
+		"Case1: error getting domain": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(nil, fmt.Errorf("domain error")).Times(1)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {},
+			expectedErr:           fmt.Errorf("domain error"),
+		},
+		"Case2: error Pinot query": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return(nil, fmt.Errorf("pinot error")).Times(1)
+			},
+			expectedErr: fmt.Errorf("failed to query Pinot to find workflow type count Info: test-domain, error: pinot error"),
+		},
+		"Case3: Aggregation is empty": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("aggregation failed for domain in Pinot: test-domain"),
+		},
+		"Case4: error parsing workflow count": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test", "invalid"},
+				}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("error parsing workflow count for workflow type test"),
+		},
+		"Case5-1: failure case in queryWorkflowVersionsWithType: getWorkflowVersionPinotQuery error": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil).Times(1)
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(nil, fmt.Errorf("domain error")).Times(1)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test-wf-type0", float64(100)},
+					{"test-wf-type1", float64(200)},
+				}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("error querying workflow versions for workflow type: test-wf-type0: error: domain error"),
+		},
+		"Case5-2: failure case in queryWorkflowVersionsWithType: SearchAggr error": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil).Times(2)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test-wf-type0", float64(100)},
+					{"test-wf-type1", float64(200)},
+				}, nil).Times(1)
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return(nil, fmt.Errorf("pinot error")).Times(1)
+			},
+			expectedErr: fmt.Errorf("error querying workflow versions for workflow type: test-wf-type0: error: pinot error"),
+		},
+		"Case5-3: failure case in queryWorkflowVersionsWithType: error parsing workflow count": {
+			domainCacheAffordance: func(mockDomainCache *cache.MockDomainCache) {
+				mockDomainCache.EXPECT().GetDomain(gomock.Any()).Return(cache.NewDomainCacheEntryForTest(
+					&persistence.DomainInfo{ID: "test-id"}, nil, false, nil, 0, nil, 0, 0, 0), nil).Times(2)
+			},
+			PinotClientAffordance: func(mockPinotClient *pinot.MockGenericClient) {
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test-wf-type0", float64(100)},
+					{"test-wf-type1", float64(200)},
+				}, nil).Times(1)
+				mockPinotClient.EXPECT().SearchAggr(gomock.Any()).Return([][]interface{}{
+					{"test-wf-version0", float64(3.14)},
+					{"test-wf-version1", 20},
+				}, nil).Times(1)
+			},
+			expectedErr: fmt.Errorf("error querying workflow versions for workflow type: " +
+				"test-wf-type0: error: error parsing workflow count for cadence version test-wf-version1"),
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Set up mocks
+			test.domainCacheAffordance(mockDomainCache)
+			test.PinotClientAffordance(mockPinotClient)
+
+			err := testWorkflow.emitWorkflowVersionMetricsPinot("test-domain", zap.NewNop())
+			if err == nil {
+				assert.Equal(t, test.expectedErr, err)
+			} else {
+				assert.Equal(t, test.expectedErr.Error(), err.Error())
+			}
+		})
+	}
 }

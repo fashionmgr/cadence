@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interfaces_mock.go -self_package github.com/uber/cadence/common/persistence/serialization
+
 package serialization
 
 import (
@@ -84,6 +86,10 @@ type (
 		FailoverEndTimestamp        *time.Time // TODO: There is logic checking if it's nil, should revisit this
 		PreviousFailoverVersion     int64
 		LastUpdatedTimestamp        time.Time
+		IsolationGroups             []byte
+		IsolationGroupsEncoding     string
+		AsyncWorkflowConfig         []byte
+		AsyncWorkflowConfigEncoding string
 	}
 
 	// HistoryBranchRange blob in a serialization agnostic format
@@ -161,6 +167,10 @@ type (
 		Memo                               map[string][]byte
 		VersionHistories                   []byte
 		VersionHistoriesEncoding           string
+		FirstExecutionRunID                UUID
+		PartitionConfig                    map[string]string
+		Checksum                           []byte
+		ChecksumEncoding                   string
 	}
 
 	// ActivityInfo blob in a serialization agnostic format
@@ -248,14 +258,21 @@ type (
 		ScheduleID       int64
 		ExpiryTimestamp  time.Time
 		CreatedTimestamp time.Time
+		PartitionConfig  map[string]string
 	}
 
+	TaskListPartitionConfig struct {
+		Version            int64
+		NumReadPartitions  int32
+		NumWritePartitions int32
+	}
 	// TaskListInfo blob in a serialization agnostic format
 	TaskListInfo struct {
-		Kind            int16
-		AckLevel        int64
-		ExpiryTimestamp time.Time
-		LastUpdated     time.Time
+		Kind                    int16
+		AckLevel                int64
+		ExpiryTimestamp         time.Time
+		LastUpdated             time.Time
+		AdaptivePartitionConfig *TaskListPartitionConfig
 	}
 
 	// TransferTaskInfo blob in a serialization agnostic format

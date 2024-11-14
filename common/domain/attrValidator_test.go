@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/uber/cadence/common/cluster"
-	"github.com/uber/cadence/common/mocks"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/types"
 )
@@ -35,9 +34,8 @@ type (
 	attrValidatorSuite struct {
 		suite.Suite
 
-		minRetentionDays    int
-		mockClusterMetadata *mocks.ClusterMetadata
-		validator           *AttrValidatorImpl
+		minRetentionDays int
+		validator        *AttrValidatorImpl
 	}
 )
 
@@ -54,11 +52,66 @@ func (s *attrValidatorSuite) TearDownSuite() {
 
 func (s *attrValidatorSuite) SetupTest() {
 	s.minRetentionDays = 1
-	s.mockClusterMetadata = &mocks.ClusterMetadata{}
-	s.validator = newAttrValidator(s.mockClusterMetadata, int32(s.minRetentionDays))
+	s.validator = newAttrValidator(cluster.TestActiveClusterMetadata, int32(s.minRetentionDays))
 }
 
 func (s *attrValidatorSuite) TearDownTest() {
+}
+
+func (s *attrValidatorSuite) TestValidateDomainConfig() {
+	testCases := []struct {
+		testDesc           string
+		retention          int32
+		historyArchival    types.ArchivalStatus
+		historyURI         string
+		visibilityArchival types.ArchivalStatus
+		visibilityURI      string
+		expectedErr        error
+	}{
+		{
+			testDesc:           "valid retention and archival settings",
+			retention:          int32(s.minRetentionDays + 1),
+			historyArchival:    types.ArchivalStatusEnabled,
+			historyURI:         "testScheme://history",
+			visibilityArchival: types.ArchivalStatusEnabled,
+			visibilityURI:      "testScheme://visibility",
+			expectedErr:        nil,
+		},
+		{
+			testDesc:    "invalid retention period",
+			retention:   int32(s.minRetentionDays - 1),
+			expectedErr: errInvalidRetentionPeriod,
+		},
+		{
+			testDesc:        "enabled history archival without URI",
+			retention:       int32(s.minRetentionDays + 1),
+			historyArchival: types.ArchivalStatusEnabled,
+			expectedErr:     errInvalidArchivalConfig,
+		},
+		{
+			testDesc:           "enabled visibility archival without URI",
+			retention:          int32(s.minRetentionDays + 1),
+			visibilityArchival: types.ArchivalStatusEnabled,
+			expectedErr:        errInvalidArchivalConfig,
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.testDesc, func() {
+			err := s.validator.validateDomainConfig(&persistence.DomainConfig{
+				Retention:                tc.retention,
+				HistoryArchivalStatus:    tc.historyArchival,
+				HistoryArchivalURI:       tc.historyURI,
+				VisibilityArchivalStatus: tc.visibilityArchival,
+				VisibilityArchivalURI:    tc.visibilityURI,
+			})
+			if tc.expectedErr != nil {
+				s.ErrorIs(err, tc.expectedErr)
+			} else {
+				s.NoError(err)
+			}
+		})
+	}
 }
 
 func (s *attrValidatorSuite) TestValidateConfigRetentionPeriod() {
@@ -88,10 +141,6 @@ func (s *attrValidatorSuite) TestValidateConfigRetentionPeriod() {
 }
 
 func (s *attrValidatorSuite) TestClusterName() {
-	s.mockClusterMetadata.On("GetAllClusterInfo").Return(
-		cluster.TestAllClusterInfo,
-	)
-
 	err := s.validator.validateClusterName("some random foo bar")
 	s.IsType(&types.BadRequestError{}, err)
 
@@ -103,13 +152,6 @@ func (s *attrValidatorSuite) TestClusterName() {
 }
 
 func (s *attrValidatorSuite) TestValidateDomainReplicationConfigForLocalDomain() {
-	s.mockClusterMetadata.On("GetCurrentClusterName").Return(
-		cluster.TestCurrentClusterName,
-	)
-	s.mockClusterMetadata.On("GetAllClusterInfo").Return(
-		cluster.TestAllClusterInfo,
-	)
-
 	err := s.validator.validateDomainReplicationConfigForLocalDomain(
 		&persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestAlternativeClusterName,
@@ -154,13 +196,6 @@ func (s *attrValidatorSuite) TestValidateDomainReplicationConfigForLocalDomain()
 }
 
 func (s *attrValidatorSuite) TestValidateDomainReplicationConfigForGlobalDomain() {
-	s.mockClusterMetadata.On("GetCurrentClusterName").Return(
-		cluster.TestCurrentClusterName,
-	)
-	s.mockClusterMetadata.On("GetAllClusterInfo").Return(
-		cluster.TestAllClusterInfo,
-	)
-
 	err := s.validator.validateDomainReplicationConfigForGlobalDomain(
 		&persistence.DomainReplicationConfig{
 			ActiveClusterName: cluster.TestCurrentClusterName,

@@ -29,10 +29,13 @@ import (
 	"github.com/uber/cadence/.gen/go/replicator"
 	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/checksum"
 	"github.com/uber/cadence/common/codec"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/mapper/thrift"
 )
+
+//go:generate mockgen -package $GOPACKAGE -destination serializer_mock.go -self_package github.com/uber/cadence/common/persistence github.com/uber/cadence/common/persistence PayloadSerializer
 
 type (
 	// PayloadSerializer is used by persistence to serialize/deserialize history event(s) and others
@@ -73,6 +76,18 @@ type (
 		// serialize/deserialize DynamicConfigBlob
 		SerializeDynamicConfigBlob(blob *types.DynamicConfigBlob, encodingType common.EncodingType) (*DataBlob, error)
 		DeserializeDynamicConfigBlob(data *DataBlob) (*types.DynamicConfigBlob, error)
+
+		// serialize/deserialize IsolationGroupConfiguration
+		SerializeIsolationGroups(event *types.IsolationGroupConfiguration, encodingType common.EncodingType) (*DataBlob, error)
+		DeserializeIsolationGroups(data *DataBlob) (*types.IsolationGroupConfiguration, error)
+
+		// serialize/deserialize async workflow configuration
+		SerializeAsyncWorkflowsConfig(config *types.AsyncWorkflowConfiguration, encodingType common.EncodingType) (*DataBlob, error)
+		DeserializeAsyncWorkflowsConfig(data *DataBlob) (*types.AsyncWorkflowConfiguration, error)
+
+		// serialize/deserialize checksum
+		SerializeChecksum(sum checksum.Checksum, encodingType common.EncodingType) (*DataBlob, error)
+		DeserializeChecksum(data *DataBlob) (checksum.Checksum, error)
 	}
 
 	// CadenceSerializationError is an error type for cadence serialization
@@ -188,21 +203,14 @@ func (t *serializerImpl) DeserializeVersionHistories(data *DataBlob) (*types.Ver
 	return &histories, err
 }
 
-func (t *serializerImpl) SerializePendingFailoverMarkers(
-	markers []*types.FailoverMarkerAttributes,
-	encodingType common.EncodingType,
-) (*DataBlob, error) {
-
+func (t *serializerImpl) SerializePendingFailoverMarkers(markers []*types.FailoverMarkerAttributes, encodingType common.EncodingType) (*DataBlob, error) {
 	if markers == nil {
 		return nil, nil
 	}
 	return t.serialize(markers, encodingType)
 }
 
-func (t *serializerImpl) DeserializePendingFailoverMarkers(
-	data *DataBlob,
-) ([]*types.FailoverMarkerAttributes, error) {
-
+func (t *serializerImpl) DeserializePendingFailoverMarkers(data *DataBlob) ([]*types.FailoverMarkerAttributes, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -214,19 +222,14 @@ func (t *serializerImpl) DeserializePendingFailoverMarkers(
 	return markers, err
 }
 
-func (t *serializerImpl) SerializeProcessingQueueStates(
-	states *types.ProcessingQueueStates,
-	encodingType common.EncodingType,
-) (*DataBlob, error) {
+func (t *serializerImpl) SerializeProcessingQueueStates(states *types.ProcessingQueueStates, encodingType common.EncodingType) (*DataBlob, error) {
 	if states == nil {
 		return nil, nil
 	}
 	return t.serialize(states, encodingType)
 }
 
-func (t *serializerImpl) DeserializeProcessingQueueStates(
-	data *DataBlob,
-) (*types.ProcessingQueueStates, error) {
+func (t *serializerImpl) DeserializeProcessingQueueStates(data *DataBlob) (*types.ProcessingQueueStates, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -260,6 +263,72 @@ func (t *serializerImpl) DeserializeDynamicConfigBlob(data *DataBlob) (*types.Dy
 	return &blob, err
 }
 
+func (t *serializerImpl) SerializeIsolationGroups(c *types.IsolationGroupConfiguration, encodingType common.EncodingType) (*DataBlob, error) {
+	if c == nil {
+		return nil, nil
+	}
+	return t.serialize(c, encodingType)
+}
+
+func (t *serializerImpl) DeserializeIsolationGroups(data *DataBlob) (*types.IsolationGroupConfiguration, error) {
+	if data == nil {
+		return nil, nil
+	}
+
+	var cfg types.IsolationGroupConfiguration
+	if len(data.Data) == 0 {
+		return &cfg, nil
+	}
+
+	err := t.deserialize(data, &cfg)
+	return &cfg, err
+}
+
+func (t *serializerImpl) SerializeAsyncWorkflowsConfig(c *types.AsyncWorkflowConfiguration, encodingType common.EncodingType) (*DataBlob, error) {
+	if c == nil {
+		return nil, nil
+	}
+	return t.serialize(c, encodingType)
+}
+
+func (t *serializerImpl) DeserializeAsyncWorkflowsConfig(data *DataBlob) (*types.AsyncWorkflowConfiguration, error) {
+	if data == nil {
+		return nil, nil
+	}
+
+	var cfg types.AsyncWorkflowConfiguration
+	if len(data.Data) == 0 {
+		return &cfg, nil
+	}
+
+	err := t.deserialize(data, &cfg)
+	return &cfg, err
+}
+
+func (t *serializerImpl) SerializeChecksum(sum checksum.Checksum, encodingType common.EncodingType) (*DataBlob, error) {
+	if len(sum.Value) == 0 {
+		return nil, nil
+	}
+	return t.serialize(sum, encodingType)
+}
+
+func (t *serializerImpl) DeserializeChecksum(data *DataBlob) (checksum.Checksum, error) {
+	if data == nil {
+		return checksum.Checksum{}, nil
+	}
+
+	var sum checksum.Checksum
+	if len(data.Data) == 0 {
+		return sum, nil
+	}
+
+	err := t.deserialize(data, &sum)
+	if err != nil {
+		return checksum.Checksum{}, err
+	}
+	return sum, err
+}
+
 func (t *serializerImpl) serialize(input interface{}, encodingType common.EncodingType) (*DataBlob, error) {
 	if input == nil {
 		return nil, nil
@@ -285,6 +354,7 @@ func (t *serializerImpl) serialize(input interface{}, encodingType common.Encodi
 }
 
 func (t *serializerImpl) thriftrwEncode(input interface{}) ([]byte, error) {
+
 	switch input := input.(type) {
 	case []*types.HistoryEvent:
 		return t.thriftrwEncoder.Encode(&workflow.History{Events: thrift.FromHistoryEventArray(input)})
@@ -304,6 +374,10 @@ func (t *serializerImpl) thriftrwEncode(input interface{}) ([]byte, error) {
 		return t.thriftrwEncoder.Encode(thrift.FromProcessingQueueStates(input))
 	case *types.DynamicConfigBlob:
 		return t.thriftrwEncoder.Encode(thrift.FromDynamicConfigBlob(input))
+	case *types.IsolationGroupConfiguration:
+		return t.thriftrwEncoder.Encode(thrift.FromIsolationGroupConfig(input))
+	case *types.AsyncWorkflowConfiguration:
+		return t.thriftrwEncoder.Encode(thrift.FromDomainAsyncWorkflowConfiguraton(input))
 	default:
 		return nil, nil
 	}
@@ -397,6 +471,20 @@ func (t *serializerImpl) thriftrwDecode(data []byte, target interface{}) error {
 			return err
 		}
 		*target = *thrift.ToDynamicConfigBlob(&thriftTarget)
+		return nil
+	case *types.IsolationGroupConfiguration:
+		thriftTarget := workflow.IsolationGroupConfiguration{}
+		if err := t.thriftrwEncoder.Decode(data, &thriftTarget); err != nil {
+			return err
+		}
+		*target = *thrift.ToIsolationGroupConfig(&thriftTarget)
+		return nil
+	case *types.AsyncWorkflowConfiguration:
+		thriftTarget := workflow.AsyncWorkflowConfiguration{}
+		if err := t.thriftrwEncoder.Decode(data, &thriftTarget); err != nil {
+			return err
+		}
+		*target = *thrift.ToDomainAsyncWorkflowConfiguraton(&thriftTarget)
 		return nil
 	default:
 		return nil

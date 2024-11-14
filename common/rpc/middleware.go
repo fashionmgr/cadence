@@ -22,14 +22,18 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"io"
-
-	"github.com/uber/cadence/common"
-	"github.com/uber/cadence/common/metrics"
 
 	"go.uber.org/cadence/worker"
 	"go.uber.org/yarpc"
 	"go.uber.org/yarpc/api/transport"
+
+	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/config"
+	"github.com/uber/cadence/common/metrics"
+	"github.com/uber/cadence/common/partition"
+	"github.com/uber/cadence/common/persistence"
 )
 
 type authOutboundMiddleware struct {
@@ -51,7 +55,9 @@ func (m *authOutboundMiddleware) Call(ctx context.Context, request *transport.Re
 	return out.Call(ctx, request)
 }
 
-const _responseInfoContextKey = "response-info"
+type contextKey string
+
+const _responseInfoContextKey = contextKey("response-info")
 
 // ContextWithResponseInfo will create a child context that has ResponseInfo set as value.
 // This value will get filled after the call is made and can be used later to retrieve some info of interest.
@@ -110,6 +116,28 @@ func (m *InboundMetricsMiddleware) Handle(ctx context.Context, req *transport.Re
 	return h.Handle(ctx, req, resw)
 }
 
+// ComparatorYarpcKey is the const for yarpc key
+const ComparatorYarpcKey = "cadence-visibility-override"
+
+// PinotComparatorMiddleware checks the header of a grpc request, and then override the context accordingly
+// note: for Pinot Migration only (Jan. 2024)
+type PinotComparatorMiddleware struct{}
+
+func (m *PinotComparatorMiddleware) Handle(ctx context.Context, req *transport.Request, resw transport.ResponseWriter, h transport.UnaryHandler) error {
+	yarpcKey, _ := req.Headers.Get(ComparatorYarpcKey)
+	if yarpcKey == persistence.VisibilityOverridePrimary {
+		ctx = contextWithVisibilityOverride(ctx, persistence.VisibilityOverridePrimary)
+	} else if yarpcKey == persistence.VisibilityOverrideSecondary {
+		ctx = contextWithVisibilityOverride(ctx, persistence.VisibilityOverrideSecondary)
+	}
+	return h.Handle(ctx, req, resw)
+}
+
+// ContextWithOverride adds a value in ctx
+func contextWithVisibilityOverride(ctx context.Context, value string) context.Context {
+	return context.WithValue(ctx, persistence.ContextKey, value)
+}
+
 type overrideCallerMiddleware struct {
 	caller string
 }
@@ -120,20 +148,116 @@ func (m *overrideCallerMiddleware) Call(ctx context.Context, request *transport.
 }
 
 // HeaderForwardingMiddleware forwards headers from current inbound RPC call that is being handled to new outbound calls being made.
-// If new value for the same header key is provided in the outbound request, keep it instead.
-type HeaderForwardingMiddleware struct{}
+// As this does NOT differentiate between transports or purposes, it generally assumes we are not acting as a true proxy,
+// so things like content lengths and encodings should not be forwarded - they will be provided by the outbound RPC library as needed.
+//
+// Duplicated headers retain the first value only, matching how browsers and Go (afaict) generally behave.
+//
+// This uses overly-simplified rules for choosing which headers are forwarded and which are not, intended to be lightly configurable.
+// For a more in-depth logic review if it becomes needed, check:
+//   - How Go's ReverseProxy deals with headers, e.g. per-protocol and a list of exclusions: https://cs.opensource.google/go/go/+/refs/tags/go1.20.1:src/net/http/httputil/reverseproxy.go;l=332
+//   - HTTP's spec for headers, namely how duplicates and Connection work: https://www.rfc-editor.org/rfc/rfc9110.html#name-header-fields
+//   - Many browsers prefer first-value-wins for unexpected duplicates: https://bugzilla.mozilla.org/show_bug.cgi?id=376756
+//   - But there are MANY map-like implementations that choose last-value wins, and this mismatch is a source of frequent security problems.
+//   - YARPC's `With` only retains the last call's value: https://github.com/yarpc/yarpc-go/blob/8ccd79a2ca696150213faac1d35011c5be52e5fb/api/transport/header.go#L69-L77
+//   - Go's MIMEHeader's Get (used by YARPC) only returns the first value, and does not join duplicates: https://pkg.go.dev/net/textproto#MIMEHeader.Get
+//
+// There is likely no correct choice, as it depends on the recipients' behavior.
+// If we need to support more complex logic, it's likely worth jumping to a fully-controllable thing.
+// Middle-grounds will probably just need to be changed again later.
+type HeaderForwardingMiddleware struct {
+	// Rules are applied in order to add or remove headers by regex.
+	//
+	// There are no default rules, so by default no headers are copied.
+	// To include headers by default, Add with a permissive regex and then remove specific ones.
+	Rules []config.HeaderRule
+}
 
 func (m *HeaderForwardingMiddleware) Call(ctx context.Context, request *transport.Request, out transport.UnaryOutbound) (*transport.Response, error) {
-	if inboundCall := yarpc.CallFromContext(ctx); inboundCall != nil && request != nil {
+	if inboundCall := yarpc.CallFromContext(ctx); inboundCall != nil {
 		outboundHeaders := request.Headers
-		for _, key := range inboundCall.HeaderNames() {
-			if _, exists := outboundHeaders.Get(key); !exists {
-				value := inboundCall.Header(key)
-				outboundHeaders = outboundHeaders.With(key, value)
+		pending := make(map[string][]string, len(inboundCall.HeaderNames()))
+		names := inboundCall.HeaderNames()
+		for _, rule := range m.Rules {
+			for _, key := range names {
+				if !rule.Match.MatchString(key) {
+					continue
+				}
+				if _, ok := outboundHeaders.Get(key); ok {
+					continue // do not overwrite existing headers
+				}
+				if rule.Add {
+					pending[key] = append(pending[key], inboundCall.Header(key))
+				} else {
+					delete(pending, key)
+				}
 			}
 		}
-		request.Headers = outboundHeaders
+		for k, vs := range pending {
+			// yarpc's Headers.With keeps the LAST value, but we (and browsers) prefer the FIRST,
+			// and we do not canonicalize duplicates.
+			request.Headers = request.Headers.With(k, vs[0])
+		}
 	}
 
 	return out.Call(ctx, request)
+}
+
+// ForwardPartitionConfigMiddleware forwards the partition config to remote cluster
+// The middleware should always be applied after any other middleware that inject partition config into the context
+// so that it can overwrites the partition config into the context
+// The purpose of this middleware is to make sure the partition config doesn't change when a request is forwarded from
+// passive cluster to the active cluster
+type ForwardPartitionConfigMiddleware struct{}
+
+func (m *ForwardPartitionConfigMiddleware) Handle(ctx context.Context, req *transport.Request, resw transport.ResponseWriter, h transport.UnaryHandler) error {
+	if _, ok := req.Headers.Get(common.AutoforwardingClusterHeaderName); ok {
+		var partitionConfig map[string]string
+		if blob, ok := req.Headers.Get(common.PartitionConfigHeaderName); ok && len(blob) > 0 {
+			if err := json.Unmarshal([]byte(blob), &partitionConfig); err != nil {
+				return err
+			}
+		}
+		ctx = partition.ContextWithConfig(ctx, partitionConfig)
+		isolationGroup, _ := req.Headers.Get(common.IsolationGroupHeaderName)
+		ctx = partition.ContextWithIsolationGroup(ctx, isolationGroup)
+	}
+	return h.Handle(ctx, req, resw)
+}
+
+func (m *ForwardPartitionConfigMiddleware) Call(ctx context.Context, request *transport.Request, out transport.UnaryOutbound) (*transport.Response, error) {
+	if _, ok := request.Headers.Get(common.AutoforwardingClusterHeaderName); ok {
+		partitionConfig := partition.ConfigFromContext(ctx)
+		if len(partitionConfig) > 0 {
+			blob, err := json.Marshal(partitionConfig)
+			if err != nil {
+				return nil, err
+			}
+			request.Headers = request.Headers.With(common.PartitionConfigHeaderName, string(blob))
+		} else {
+			request.Headers.Del(common.PartitionConfigHeaderName)
+		}
+		isolationGroup := partition.IsolationGroupFromContext(ctx)
+		if isolationGroup != "" {
+			request.Headers = request.Headers.With(common.IsolationGroupHeaderName, isolationGroup)
+		} else {
+			request.Headers.Del(common.IsolationGroupHeaderName)
+		}
+	}
+	return out.Call(ctx, request)
+}
+
+// ClientPartitionConfigMiddleware stores the partition config and isolation group of the request into the context
+// It reads a header from client request and uses it as the isolation group
+type ClientPartitionConfigMiddleware struct{}
+
+func (m *ClientPartitionConfigMiddleware) Handle(ctx context.Context, req *transport.Request, resw transport.ResponseWriter, h transport.UnaryHandler) error {
+	zone, _ := req.Headers.Get(common.ClientIsolationGroupHeaderName)
+	if zone != "" {
+		ctx = partition.ContextWithConfig(ctx, map[string]string{
+			partition.IsolationGroupKey: zone,
+		})
+		ctx = partition.ContextWithIsolationGroup(ctx, zone)
+	}
+	return h.Handle(ctx, req, resw)
 }

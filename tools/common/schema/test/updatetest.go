@@ -36,11 +36,11 @@ import (
 	"github.com/otiai10/copy"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v2"
 
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/log/testlogger"
 )
 
 // UpdateSchemaTestBase is the base test suite for all tests
@@ -58,8 +58,7 @@ type UpdateSchemaTestBase struct {
 func (tb *UpdateSchemaTestBase) SetupSuiteBase(db DB) {
 	tb.Assertions = require.New(tb.T()) // Have to define our overridden assertions in the test setup. If we did it earlier, tb.T() will return nil
 	var err error
-	tb.Log, err = loggerimpl.NewDevelopment()
-	tb.Require().NoError(err)
+	tb.Log = testlogger.New(tb.T())
 	tb.rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	tb.DBName = fmt.Sprintf("update_test_%v", tb.rand.Int63())
 	err = db.CreateDatabase(tb.DBName)

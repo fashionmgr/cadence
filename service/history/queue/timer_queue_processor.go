@@ -22,12 +22,11 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/pborman/uuid"
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/log"
@@ -37,6 +36,7 @@ import (
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/reconciliation/invariant"
 	"github.com/uber/cadence/common/types"
+	hcommon "github.com/uber/cadence/service/history/common"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/engine"
 	"github.com/uber/cadence/service/history/execution"
@@ -45,38 +45,37 @@ import (
 	"github.com/uber/cadence/service/worker/archiver"
 )
 
-type (
-	timerQueueProcessor struct {
-		shard         shard.Context
-		historyEngine engine.Engine
-		taskProcessor task.Processor
+type timerQueueProcessor struct {
+	shard         shard.Context
+	historyEngine engine.Engine
+	taskProcessor task.Processor
 
-		config                *config.Config
-		isGlobalDomainEnabled bool
-		currentClusterName    string
+	config             *config.Config
+	currentClusterName string
 
-		metricsClient metrics.Client
-		logger        log.Logger
+	metricsClient metrics.Client
+	logger        log.Logger
 
-		status       int32
-		shutdownChan chan struct{}
-		shutdownWG   sync.WaitGroup
+	status       int32
+	shutdownChan chan struct{}
+	shutdownWG   sync.WaitGroup
 
-		ackLevel               time.Time
-		taskAllocator          TaskAllocator
-		activeTaskExecutor     task.Executor
-		activeQueueProcessor   *timerQueueProcessorBase
-		standbyQueueProcessors map[string]*timerQueueProcessorBase
-		standbyQueueTimerGates map[string]RemoteTimerGate
-	}
-)
+	ackLevel                time.Time
+	taskAllocator           TaskAllocator
+	activeTaskExecutor      task.Executor
+	activeQueueProcessor    *timerQueueProcessorBase
+	standbyQueueProcessors  map[string]*timerQueueProcessorBase
+	standbyTaskExecutors    []task.Executor
+	standbyQueueTimerGates  map[string]RemoteTimerGate
+	failoverQueueProcessors []*timerQueueProcessorBase
+}
 
 // NewTimerQueueProcessor creates a new timer QueueProcessor
 func NewTimerQueueProcessor(
 	shard shard.Context,
 	historyEngine engine.Engine,
 	taskProcessor task.Processor,
-	executionCache *execution.Cache,
+	executionCache execution.Cache,
 	archivalClient archiver.Client,
 	executionCheck invariant.Invariant,
 ) Processor {
@@ -104,23 +103,19 @@ func NewTimerQueueProcessor(
 		logger,
 	)
 
+	standbyTaskExecutors := make([]task.Executor, 0, len(shard.GetClusterMetadata().GetRemoteClusterInfo()))
 	standbyQueueProcessors := make(map[string]*timerQueueProcessorBase)
 	standbyQueueTimerGates := make(map[string]RemoteTimerGate)
-	for clusterName, info := range shard.GetClusterMetadata().GetAllClusterInfo() {
-		if !info.Enabled || clusterName == currentClusterName {
-			continue
-		}
-
+	for clusterName := range shard.GetClusterMetadata().GetRemoteClusterInfo() {
 		historyResender := ndc.NewHistoryResender(
 			shard.GetDomainCache(),
 			shard.GetService().GetClientBean().GetRemoteAdminClient(clusterName),
 			func(ctx context.Context, request *types.ReplicateEventsV2Request) error {
 				return historyEngine.ReplicateEventsV2(ctx, request)
 			},
-			shard.GetService().GetPayloadSerializer(),
 			config.StandbyTaskReReplicationContextTimeout,
 			executionCheck,
-			shard.GetLogger().WithTags(tag.ComponentHistoryResender),
+			shard.GetLogger(),
 		)
 		standbyTaskExecutor := task.NewTimerStandbyTaskExecutor(
 			shard,
@@ -132,6 +127,7 @@ func NewTimerQueueProcessor(
 			clusterName,
 			config,
 		)
+		standbyTaskExecutors = append(standbyTaskExecutors, standbyTaskExecutor)
 		standbyQueueProcessors[clusterName], standbyQueueTimerGates[clusterName] = newTimerQueueStandbyProcessor(
 			clusterName,
 			shard,
@@ -148,9 +144,8 @@ func NewTimerQueueProcessor(
 		historyEngine: historyEngine,
 		taskProcessor: taskProcessor,
 
-		config:                config,
-		isGlobalDomainEnabled: shard.GetClusterMetadata().IsGlobalDomainEnabled(),
-		currentClusterName:    currentClusterName,
+		config:             config,
+		currentClusterName: currentClusterName,
 
 		metricsClient: shard.GetMetricsClient(),
 		logger:        logger,
@@ -164,6 +159,7 @@ func NewTimerQueueProcessor(
 		activeQueueProcessor:   activeQueueProcessor,
 		standbyQueueProcessors: standbyQueueProcessors,
 		standbyQueueTimerGates: standbyQueueTimerGates,
+		standbyTaskExecutors:   standbyTaskExecutors,
 	}
 }
 
@@ -173,10 +169,8 @@ func (t *timerQueueProcessor) Start() {
 	}
 
 	t.activeQueueProcessor.Start()
-	if t.isGlobalDomainEnabled {
-		for _, standbyQueueProcessor := range t.standbyQueueProcessors {
-			standbyQueueProcessor.Start()
-		}
+	for _, standbyQueueProcessor := range t.standbyQueueProcessors {
+		standbyQueueProcessor.Start()
 	}
 
 	t.shutdownWG.Add(1)
@@ -188,44 +182,74 @@ func (t *timerQueueProcessor) Stop() {
 		return
 	}
 
-	t.activeQueueProcessor.Stop()
-	if t.isGlobalDomainEnabled {
+	if !t.shard.GetConfig().QueueProcessorEnableGracefulSyncShutdown() {
+		t.activeQueueProcessor.Stop()
+		// stop active executor after queue processor
+		t.activeTaskExecutor.Stop()
 		for _, standbyQueueProcessor := range t.standbyQueueProcessors {
 			standbyQueueProcessor.Stop()
 		}
+
+		// stop standby executors after queue processors
+		for _, standbyTaskExecutor := range t.standbyTaskExecutors {
+			standbyTaskExecutor.Stop()
+		}
+
+		close(t.shutdownChan)
+		common.AwaitWaitGroup(&t.shutdownWG, time.Minute)
+		return
 	}
 
+	// close the shutdown channel first so processor pumps drains tasks
+	// and then stop the processors
 	close(t.shutdownChan)
-	common.AwaitWaitGroup(&t.shutdownWG, time.Minute)
+	if !common.AwaitWaitGroup(&t.shutdownWG, gracefulShutdownTimeout) {
+		t.logger.Warn("transferQueueProcessor timed out on shut down", tag.LifeCycleStopTimedout)
+	}
+	t.activeQueueProcessor.Stop()
+
+	for _, standbyQueueProcessor := range t.standbyQueueProcessors {
+		standbyQueueProcessor.Stop()
+	}
+
+	// stop standby executors after queue processors
+	for _, standbyTaskExecutor := range t.standbyTaskExecutors {
+		standbyTaskExecutor.Stop()
+	}
+
+	if len(t.failoverQueueProcessors) > 0 {
+		t.logger.Info("Shutting down failover timer queues", tag.Counter(len(t.failoverQueueProcessors)))
+		for _, failoverQueueProcessor := range t.failoverQueueProcessors {
+			failoverQueueProcessor.Stop()
+		}
+	}
+
+	t.activeTaskExecutor.Stop()
 }
 
-func (t *timerQueueProcessor) NotifyNewTask(
-	clusterName string,
-	_ *persistence.WorkflowExecutionInfo,
-	timerTasks []persistence.Task,
-) {
+func (t *timerQueueProcessor) NotifyNewTask(clusterName string, info *hcommon.NotifyTaskInfo) {
 	if clusterName == t.currentClusterName {
-		t.activeQueueProcessor.notifyNewTimers(timerTasks)
+		t.activeQueueProcessor.notifyNewTimers(info.Tasks)
 		return
 	}
 
 	standbyQueueProcessor, ok := t.standbyQueueProcessors[clusterName]
 	if !ok {
-		panic(fmt.Sprintf("Cannot find timer processor for %s.", clusterName))
+		panic(fmt.Sprintf("Cannot find standby timer processor for %s.", clusterName))
 	}
 
 	standbyQueueTimerGate, ok := t.standbyQueueTimerGates[clusterName]
 	if !ok {
-		panic(fmt.Sprintf("Cannot find timer gate for %s.", clusterName))
+		panic(fmt.Sprintf("Cannot find standby timer gate for %s.", clusterName))
 	}
 
-	standbyQueueTimerGate.SetCurrentTime(t.shard.GetCurrentTime(clusterName))
-	standbyQueueProcessor.notifyNewTimers(timerTasks)
+	curTime := t.shard.GetCurrentTime(clusterName)
+	standbyQueueTimerGate.SetCurrentTime(curTime)
+	t.logger.Debug("Current time for standby queue timergate is updated", tag.ClusterName(clusterName), tag.Timestamp(curTime))
+	standbyQueueProcessor.notifyNewTimers(info.Tasks)
 }
 
-func (t *timerQueueProcessor) FailoverDomain(
-	domainIDs map[string]struct{},
-) {
+func (t *timerQueueProcessor) FailoverDomain(domainIDs map[string]struct{}) {
 	// Failover queue is used to scan all inflight tasks, if queue processor is not
 	// started, there's no inflight task and we don't need to create a failover processor.
 	// Also the HandleAction will be blocked if queue processor processing loop is not running.
@@ -235,11 +259,7 @@ func (t *timerQueueProcessor) FailoverDomain(
 
 	minLevel := t.shard.GetTimerClusterAckLevel(t.currentClusterName)
 	standbyClusterName := t.currentClusterName
-	for clusterName, info := range t.shard.GetClusterMetadata().GetAllClusterInfo() {
-		if !info.Enabled {
-			continue
-		}
-
+	for clusterName := range t.shard.GetClusterMetadata().GetEnabledClusterInfo() {
 		ackLevel := t.shard.GetTimerClusterAckLevel(clusterName)
 		if ackLevel.Before(minLevel) {
 			minLevel = ackLevel
@@ -247,10 +267,16 @@ func (t *timerQueueProcessor) FailoverDomain(
 		}
 	}
 
+	if standbyClusterName != t.currentClusterName {
+		t.logger.Debugf("Timer queue failover will use minLevel: %v from standbyClusterName: %s", minLevel, standbyClusterName)
+	} else {
+		t.logger.Debugf("Timer queue failover will use minLevel: %v from current cluster: %s", minLevel, t.currentClusterName)
+	}
+
 	maxReadLevel := time.Time{}
 	actionResult, err := t.HandleAction(context.Background(), t.currentClusterName, NewGetStateAction())
 	if err != nil {
-		t.logger.Error("Timer Failover Failed", tag.WorkflowDomainIDs(domainIDs), tag.Error(err))
+		t.logger.Error("Timer failover failed while getting queue states", tag.WorkflowDomainIDs(domainIDs), tag.Error(err))
 		if err == errProcessorShutdown {
 			// processor/shard already shutdown, we don't need to create failover queue processor
 			return
@@ -258,12 +284,21 @@ func (t *timerQueueProcessor) FailoverDomain(
 		// other errors should never be returned for GetStateAction
 		panic(fmt.Sprintf("unknown error for GetStateAction: %v", err))
 	}
+
+	var maxReadLevelQueueLevel int
 	for _, queueState := range actionResult.GetStateActionResult.States {
 		queueReadLevel := queueState.ReadLevel().(timerTaskKey).visibilityTimestamp
 		if maxReadLevel.Before(queueReadLevel) {
 			maxReadLevel = queueReadLevel
+			maxReadLevelQueueLevel = queueState.Level()
 		}
 	}
+
+	if !maxReadLevel.IsZero() {
+		t.logger.Debugf("Timer queue failover will use maxReadLevel: %v from queue at level: %v", maxReadLevel, maxReadLevelQueueLevel)
+	}
+
+	// TODO: Below Add call has no effect, understand the underlying intent and fix it.
 	maxReadLevel.Add(1 * time.Millisecond)
 
 	t.logger.Info("Timer Failover Triggered",
@@ -275,7 +310,6 @@ func (t *timerQueueProcessor) FailoverDomain(
 	updateClusterAckLevelFn, failoverQueueProcessor := newTimerQueueFailoverProcessor(
 		standbyClusterName,
 		t.shard,
-		t.historyEngine,
 		t.taskProcessor,
 		t.taskAllocator,
 		t.activeTaskExecutor,
@@ -291,14 +325,16 @@ func (t *timerQueueProcessor) FailoverDomain(
 	if err != nil {
 		t.logger.Error("Error update shard ack level", tag.Error(err))
 	}
+
+	// Failover queue processors are started on the fly when domains are failed over.
+	// Failover queue processors will be stopped when the timer queue instance is stopped (due to restart or shard movement).
+	// This means the failover queue processor might not finish its job.
+	// There is no mechanism to re-start ongoing failover queue processors in the new shard owner.
+	t.failoverQueueProcessors = append(t.failoverQueueProcessors, failoverQueueProcessor)
 	failoverQueueProcessor.Start()
 }
 
-func (t *timerQueueProcessor) HandleAction(
-	ctx context.Context,
-	clusterName string,
-	action *Action,
-) (*ActionResult, error) {
+func (t *timerQueueProcessor) HandleAction(ctx context.Context, clusterName string, action *Action) (*ActionResult, error) {
 	var resultNotificationCh chan actionResultNotification
 	var added bool
 	if clusterName == t.currentClusterName {
@@ -343,39 +379,69 @@ func (t *timerQueueProcessor) UnlockTaskProcessing() {
 	t.taskAllocator.Unlock()
 }
 
+func (t *timerQueueProcessor) drain() {
+	if !t.shard.GetConfig().QueueProcessorEnableGracefulSyncShutdown() {
+		if err := t.completeTimer(context.Background()); err != nil {
+			t.logger.Error("Failed to complete timer task during drain", tag.Error(err))
+		}
+		return
+	}
+
+	// when graceful shutdown is enabled for queue processor, use a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
+	defer cancel()
+	if err := t.completeTimer(ctx); err != nil {
+		t.logger.Error("Failed to complete timer task during drain", tag.Error(err))
+	}
+}
+
 func (t *timerQueueProcessor) completeTimerLoop() {
 	defer t.shutdownWG.Done()
 
 	completeTimer := time.NewTimer(t.config.TimerProcessorCompleteTimerInterval())
 	defer completeTimer.Stop()
 
+	// Create a retryTimer once, and reset it as needed
+	retryTimer := time.NewTimer(0)
+	defer retryTimer.Stop()
+	// Stop it immediately because we don't want it to fire initially
+	if !retryTimer.Stop() {
+		<-retryTimer.C
+	}
 	for {
 		select {
 		case <-t.shutdownChan:
-			if err := t.completeTimer(); err != nil {
-				t.logger.Error("Error complete timer task", tag.Error(err))
-			}
+			t.drain()
 			return
 		case <-completeTimer.C:
 			for attempt := 0; attempt < t.config.TimerProcessorCompleteTimerFailureRetryCount(); attempt++ {
-				err := t.completeTimer()
+				err := t.completeTimer(context.Background())
 				if err == nil {
 					break
 				}
 
-				t.logger.Error("Error complete timer task", tag.Error(err))
-				if err == shard.ErrShardClosed {
-					go t.Stop()
+				t.logger.Error("Failed to complete timer task", tag.Error(err))
+				var errShardClosed *shard.ErrShardClosed
+				if errors.As(err, &errShardClosed) {
+					if !t.shard.GetConfig().QueueProcessorEnableGracefulSyncShutdown() {
+						go t.Stop()
+						return
+					}
+
+					t.Stop()
 					return
 				}
-				backoff := time.Duration(attempt * 100)
-				time.Sleep(backoff * time.Millisecond)
 
+				// Reset the retryTimer for the delay between attempts
+				// TODO: the first retry has 0 backoff, revisit it to see if it's expected
+				retryDuration := time.Duration(attempt*100) * time.Millisecond
+				retryTimer.Reset(retryDuration)
 				select {
 				case <-t.shutdownChan:
-					// break the retry loop if shutdown chan is closed
-					break
-				default:
+					t.drain()
+					return
+				case <-retryTimer.C:
+					// do nothing. retry loop will continue
 				}
 			}
 
@@ -384,9 +450,9 @@ func (t *timerQueueProcessor) completeTimerLoop() {
 	}
 }
 
-func (t *timerQueueProcessor) completeTimer() error {
+func (t *timerQueueProcessor) completeTimer(ctx context.Context) error {
 	newAckLevel := maximumTimerTaskKey
-	actionResult, err := t.HandleAction(context.Background(), t.currentClusterName, NewGetStateAction())
+	actionResult, err := t.HandleAction(ctx, t.currentClusterName, NewGetStateAction())
 	if err != nil {
 		return err
 	}
@@ -394,21 +460,19 @@ func (t *timerQueueProcessor) completeTimer() error {
 		newAckLevel = minTaskKey(newAckLevel, queueState.AckLevel())
 	}
 
-	if t.isGlobalDomainEnabled {
-		for standbyClusterName := range t.standbyQueueProcessors {
-			actionResult, err := t.HandleAction(context.Background(), standbyClusterName, NewGetStateAction())
-			if err != nil {
-				return err
-			}
-			for _, queueState := range actionResult.GetStateActionResult.States {
-				newAckLevel = minTaskKey(newAckLevel, queueState.AckLevel())
-			}
+	for standbyClusterName := range t.standbyQueueProcessors {
+		actionResult, err := t.HandleAction(ctx, standbyClusterName, NewGetStateAction())
+		if err != nil {
+			return err
 		}
+		for _, queueState := range actionResult.GetStateActionResult.States {
+			newAckLevel = minTaskKey(newAckLevel, queueState.AckLevel())
+		}
+	}
 
-		for _, failoverInfo := range t.shard.GetAllTimerFailoverLevels() {
-			failoverLevel := newTimerTaskKey(failoverInfo.MinLevel, 0)
-			newAckLevel = minTaskKey(newAckLevel, failoverLevel)
-		}
+	for _, failoverInfo := range t.shard.GetAllTimerFailoverLevels() {
+		failoverLevel := newTimerTaskKey(failoverInfo.MinLevel, 0)
+		newAckLevel = minTaskKey(newAckLevel, failoverLevel)
 	}
 
 	if newAckLevel == maximumTimerTaskKey {
@@ -416,16 +480,20 @@ func (t *timerQueueProcessor) completeTimer() error {
 	}
 
 	newAckLevelTimestamp := newAckLevel.(timerTaskKey).visibilityTimestamp
-	t.logger.Debug(fmt.Sprintf("Start completing timer task from: %v, to %v", t.ackLevel, newAckLevelTimestamp))
 	if !t.ackLevel.Before(newAckLevelTimestamp) {
+		t.logger.Debugf("Skipping timer task completion because new ack level %v is not before ack level %v", newAckLevelTimestamp, t.ackLevel)
 		return nil
 	}
 
-	t.metricsClient.IncCounter(metrics.TimerQueueProcessorScope, metrics.TaskBatchCompleteCounter)
+	t.logger.Debugf("Start completing timer task from: %v, to %v", t.ackLevel, newAckLevelTimestamp)
+	t.metricsClient.Scope(metrics.TimerQueueProcessorScope).
+		Tagged(metrics.ShardIDTag(t.shard.GetShardID())).
+		IncCounter(metrics.TaskBatchCompleteCounter)
 
+	totalDeleted := 0
 	for {
 		pageSize := t.config.TimerTaskDeleteBatchSize()
-		resp, err := t.shard.GetExecutionManager().RangeCompleteTimerTask(context.Background(), &persistence.RangeCompleteTimerTaskRequest{
+		resp, err := t.shard.GetExecutionManager().RangeCompleteTimerTask(ctx, &persistence.RangeCompleteTimerTaskRequest{
 			InclusiveBeginTimestamp: t.ackLevel,
 			ExclusiveEndTimestamp:   newAckLevelTimestamp,
 			PageSize:                pageSize, // pageSize may or may not be honored
@@ -433,6 +501,9 @@ func (t *timerQueueProcessor) completeTimer() error {
 		if err != nil {
 			return err
 		}
+
+		totalDeleted += resp.TasksCompleted
+		t.logger.Debug("Timer task batch deletion", tag.Dynamic("page-size", pageSize), tag.Dynamic("total-deleted", totalDeleted))
 		if !persistence.HasMoreRowsToDelete(resp.TasksCompleted, pageSize) {
 			break
 		}
@@ -441,222 +512,6 @@ func (t *timerQueueProcessor) completeTimer() error {
 	t.ackLevel = newAckLevelTimestamp
 
 	return t.shard.UpdateTimerAckLevel(t.ackLevel)
-}
-
-func newTimerQueueActiveProcessor(
-	clusterName string,
-	shard shard.Context,
-	historyEngine engine.Engine,
-	taskProcessor task.Processor,
-	taskAllocator TaskAllocator,
-	taskExecutor task.Executor,
-	logger log.Logger,
-) *timerQueueProcessorBase {
-	config := shard.GetConfig()
-	options := newTimerQueueProcessorOptions(config, true, false)
-
-	logger = logger.WithTags(tag.ClusterName(clusterName))
-
-	taskFilter := func(taskInfo task.Info) (bool, error) {
-		timer, ok := taskInfo.(*persistence.TimerTaskInfo)
-		if !ok {
-			return false, errUnexpectedQueueTask
-		}
-		return taskAllocator.VerifyActiveTask(timer.DomainID, timer)
-	}
-
-	updateMaxReadLevel := func() task.Key {
-		return newTimerTaskKey(shard.UpdateTimerMaxReadLevel(clusterName), 0)
-	}
-
-	updateClusterAckLevel := func(ackLevel task.Key) error {
-		return shard.UpdateTimerClusterAckLevel(clusterName, ackLevel.(timerTaskKey).visibilityTimestamp)
-	}
-
-	updateProcessingQueueStates := func(states []ProcessingQueueState) error {
-		pStates := convertToPersistenceTimerProcessingQueueStates(states)
-		return shard.UpdateTimerProcessingQueueStates(clusterName, pStates)
-	}
-
-	queueShutdown := func() error {
-		return nil
-	}
-
-	return newTimerQueueProcessorBase(
-		clusterName,
-		shard,
-		loadTimerProcessingQueueStates(clusterName, shard, options, logger),
-		taskProcessor,
-		NewLocalTimerGate(shard.GetTimeSource()),
-		options,
-		updateMaxReadLevel,
-		updateClusterAckLevel,
-		updateProcessingQueueStates,
-		queueShutdown,
-		taskFilter,
-		taskExecutor,
-		logger,
-		shard.GetMetricsClient(),
-	)
-}
-
-func newTimerQueueStandbyProcessor(
-	clusterName string,
-	shard shard.Context,
-	historyEngine engine.Engine,
-	taskProcessor task.Processor,
-	taskAllocator TaskAllocator,
-	taskExecutor task.Executor,
-	logger log.Logger,
-) (*timerQueueProcessorBase, RemoteTimerGate) {
-	config := shard.GetConfig()
-	options := newTimerQueueProcessorOptions(config, false, false)
-
-	logger = logger.WithTags(tag.ClusterName(clusterName))
-
-	taskFilter := func(taskInfo task.Info) (bool, error) {
-		timer, ok := taskInfo.(*persistence.TimerTaskInfo)
-		if !ok {
-			return false, errUnexpectedQueueTask
-		}
-		if timer.TaskType == persistence.TaskTypeWorkflowTimeout ||
-			timer.TaskType == persistence.TaskTypeDeleteHistoryEvent {
-			domainEntry, err := shard.GetDomainCache().GetDomainByID(timer.DomainID)
-			if err == nil {
-				if domainEntry.HasReplicationCluster(clusterName) {
-					// guarantee the processing of workflow execution history deletion
-					return true, nil
-				}
-			} else {
-				if _, ok := err.(*types.EntityNotExistsError); !ok {
-					// retry the task if failed to find the domain
-					logger.Warn("Cannot find domain", tag.WorkflowDomainID(timer.DomainID))
-					return false, err
-				} else {
-					logger.Warn("Cannot find domain, default to not process task.", tag.WorkflowDomainID(timer.DomainID), tag.Value(timer))
-					return false, nil
-				}
-			}
-		}
-		return taskAllocator.VerifyStandbyTask(clusterName, timer.DomainID, timer)
-	}
-
-	updateMaxReadLevel := func() task.Key {
-		return newTimerTaskKey(shard.UpdateTimerMaxReadLevel(clusterName), 0)
-	}
-
-	updateClusterAckLevel := func(ackLevel task.Key) error {
-		return shard.UpdateTimerClusterAckLevel(clusterName, ackLevel.(timerTaskKey).visibilityTimestamp)
-	}
-
-	updateProcessingQueueStates := func(states []ProcessingQueueState) error {
-		pStates := convertToPersistenceTimerProcessingQueueStates(states)
-		return shard.UpdateTimerProcessingQueueStates(clusterName, pStates)
-	}
-
-	queueShutdown := func() error {
-		return nil
-	}
-
-	remoteTimerGate := NewRemoteTimerGate()
-	remoteTimerGate.SetCurrentTime(shard.GetCurrentTime(clusterName))
-
-	return newTimerQueueProcessorBase(
-		clusterName,
-		shard,
-		loadTimerProcessingQueueStates(clusterName, shard, options, logger),
-		taskProcessor,
-		remoteTimerGate,
-		options,
-		updateMaxReadLevel,
-		updateClusterAckLevel,
-		updateProcessingQueueStates,
-		queueShutdown,
-		taskFilter,
-		taskExecutor,
-		logger,
-		shard.GetMetricsClient(),
-	), remoteTimerGate
-}
-
-func newTimerQueueFailoverProcessor(
-	standbyClusterName string,
-	shardContext shard.Context,
-	historyEngine engine.Engine,
-	taskProcessor task.Processor,
-	taskAllocator TaskAllocator,
-	taskExecutor task.Executor,
-	logger log.Logger,
-	minLevel, maxLevel time.Time,
-	domainIDs map[string]struct{},
-) (updateClusterAckLevelFn, *timerQueueProcessorBase) {
-	config := shardContext.GetConfig()
-	options := newTimerQueueProcessorOptions(config, true, true)
-
-	currentClusterName := shardContext.GetService().GetClusterMetadata().GetCurrentClusterName()
-	failoverStartTime := shardContext.GetTimeSource().Now()
-	failoverUUID := uuid.New()
-	logger = logger.WithTags(
-		tag.ClusterName(currentClusterName),
-		tag.WorkflowDomainIDs(domainIDs),
-		tag.FailoverMsg("from: "+standbyClusterName),
-	)
-
-	taskFilter := func(taskInfo task.Info) (bool, error) {
-		timer, ok := taskInfo.(*persistence.TimerTaskInfo)
-		if !ok {
-			return false, errUnexpectedQueueTask
-		}
-		return taskAllocator.VerifyFailoverActiveTask(domainIDs, timer.DomainID, timer)
-	}
-
-	maxReadLevelTaskKey := newTimerTaskKey(maxLevel, 0)
-	updateMaxReadLevel := func() task.Key {
-		return maxReadLevelTaskKey // this is a const
-	}
-
-	updateClusterAckLevel := func(ackLevel task.Key) error {
-		return shardContext.UpdateTimerFailoverLevel(
-			failoverUUID,
-			shard.TimerFailoverLevel{
-				StartTime:    failoverStartTime,
-				MinLevel:     minLevel,
-				CurrentLevel: ackLevel.(timerTaskKey).visibilityTimestamp,
-				MaxLevel:     maxLevel,
-				DomainIDs:    domainIDs,
-			},
-		)
-	}
-
-	queueShutdown := func() error {
-		return shardContext.DeleteTimerFailoverLevel(failoverUUID)
-	}
-
-	processingQueueStates := []ProcessingQueueState{
-		NewProcessingQueueState(
-			defaultProcessingQueueLevel,
-			newTimerTaskKey(minLevel, 0),
-			maxReadLevelTaskKey,
-			NewDomainFilter(domainIDs, false),
-		),
-	}
-
-	return updateClusterAckLevel, newTimerQueueProcessorBase(
-		currentClusterName, // should use current cluster's time when doing domain failover
-		shardContext,
-		processingQueueStates,
-		taskProcessor,
-		NewLocalTimerGate(shardContext.GetTimeSource()),
-		options,
-		updateMaxReadLevel,
-		updateClusterAckLevel,
-		nil,
-		queueShutdown,
-		taskFilter,
-		taskExecutor,
-		logger,
-		shardContext.GetMetricsClient(),
-	)
 }
 
 func loadTimerProcessingQueueStates(

@@ -56,7 +56,7 @@ type (
 func NewTimerStandbyTaskExecutor(
 	shard shard.Context,
 	archiverClient archiver.Client,
-	executionCache *execution.Cache,
+	executionCache execution.Cache,
 	historyResender ndc.HistoryResender,
 	logger log.Logger,
 	metricsClient metrics.Client,
@@ -91,26 +91,36 @@ func (t *timerStandbyTaskExecutor) Execute(
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), taskDefaultTimeout)
-	defer cancel()
-
 	switch timerTask.TaskType {
 	case persistence.TaskTypeUserTimer:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeUserTimerTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeActivityTimeout:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeActivityTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeDecisionTimeout:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeDecisionTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeWorkflowTimeout:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeWorkflowTimeoutTask(ctx, timerTask)
 	case persistence.TaskTypeActivityRetryTimer:
 		// retry backoff timer should not get created on passive cluster
 		// TODO: add error logs
 		return nil
 	case persistence.TaskTypeWorkflowBackoffTimer:
+		ctx, cancel := context.WithTimeout(t.ctx, taskDefaultTimeout)
+		defer cancel()
 		return t.executeWorkflowBackoffTimerTask(ctx, timerTask)
 	case persistence.TaskTypeDeleteHistoryEvent:
-		return t.executeDeleteHistoryEventTask(ctx, timerTask)
+		// special timeout for delete history event
+		deleteHistoryEventContext, deleteHistoryEventCancel := context.WithTimeout(t.ctx, time.Duration(t.config.DeleteHistoryEventContextTimeout())*time.Second)
+		defer deleteHistoryEventCancel()
+		return t.executeDeleteHistoryEventTask(deleteHistoryEventContext, timerTask)
 	default:
 		return errUnknownTimerTask
 	}
@@ -272,7 +282,7 @@ func (t *timerStandbyTaskExecutor) executeDecisionTimeoutTask(
 	timerTask *persistence.TimerTaskInfo,
 ) error {
 
-	// decision schedule to start timer won't be generate for sticky decision,
+	// decision schedule to start timer won't be generated for sticky decision,
 	// since sticky is cleared when applying events on passive.
 	// for normal decision, we don't know if a schedule to start timeout timer
 	// is generated or not since it's based on a dynamicconfig. On passive cluster,
@@ -418,7 +428,7 @@ func (t *timerStandbyTaskExecutor) processTimer(
 		return err
 	}
 	defer func() {
-		if retError == ErrTaskRedispatch {
+		if isRedispatchErr(retError) {
 			release(nil)
 		} else {
 			release(retError)
@@ -451,14 +461,14 @@ func (t *timerStandbyTaskExecutor) fetchHistoryFromRemote(
 	_ context.Context,
 	taskInfo Info,
 	postActionInfo interface{},
-	log log.Logger,
+	_ log.Logger,
 ) error {
 
 	if postActionInfo == nil {
 		return nil
 	}
 
-	timerTask := taskInfo.(*persistence.TimerTaskInfo)
+	task := taskInfo.(*persistence.TimerTaskInfo)
 	resendInfo := postActionInfo.(*historyResendInfo)
 
 	t.metricsClient.IncCounter(metrics.HistoryRereplicationByTimerTaskScope, metrics.CadenceClientRequests)
@@ -470,9 +480,9 @@ func (t *timerStandbyTaskExecutor) fetchHistoryFromRemote(
 		// note history resender doesn't take in a context parameter, there's a separate dynamicconfig for
 		// controlling the timeout for resending history.
 		err = t.historyResender.SendSingleWorkflowHistory(
-			timerTask.DomainID,
-			timerTask.WorkflowID,
-			timerTask.RunID,
+			task.DomainID,
+			task.WorkflowID,
+			task.RunID,
 			resendInfo.lastEventID,
 			resendInfo.lastEventVersion,
 			nil,
@@ -480,21 +490,23 @@ func (t *timerStandbyTaskExecutor) fetchHistoryFromRemote(
 		)
 	} else {
 		err = &types.InternalServiceError{
-			Message: "timerQueueStandbyProcessor encounter empty historyResendInfo",
+			Message: fmt.Sprintf("incomplete historyResendInfo: %v", resendInfo),
 		}
 	}
 
 	if err != nil {
 		t.logger.Error("Error re-replicating history from remote.",
 			tag.ShardID(t.shard.GetShardID()),
-			tag.WorkflowDomainID(timerTask.DomainID),
-			tag.WorkflowID(timerTask.WorkflowID),
-			tag.WorkflowRunID(timerTask.RunID),
-			tag.ClusterName(t.clusterName))
+			tag.WorkflowDomainID(task.DomainID),
+			tag.WorkflowID(task.WorkflowID),
+			tag.WorkflowRunID(task.RunID),
+			tag.SourceCluster(t.clusterName),
+			tag.Error(err),
+		)
 	}
 
 	// return error so task processing logic will retry
-	return ErrTaskRedispatch
+	return &redispatchError{Reason: "fetchHistoryFromRemote"}
 }
 
 func (t *timerStandbyTaskExecutor) getCurrentTime() time.Time {

@@ -84,6 +84,7 @@ cadence:
   service: "cadence-frontend" # frontend service name
   address: "127.0.0.1:7833" # frontend address
   #host: "127.0.0.1:7933" # replace address with host if using Thrift for compatibility
+  #tlsCaFile: "path/to/file" # give file path to TLS CA file if TLS is enabled on the Cadence server
   #metrics: ... # optional detailed client side metrics like workflow latency. But for monitoring, simply use server side metrics `workflow_success` is enough.
 ```
 - **Metrics**: metrics configuration. Similar to server metric emitter, only M3/Statsd/Prometheus is supported. 
@@ -265,3 +266,21 @@ To manually start one run of this test case:
 ```
 cadence --do <> workflow start --tl canary-task-queue --et 10 --wt workflow.batch -i 0
 ```
+
+### Cross Cluster 
+
+Executes the 'cross-cluster' feature which allows child workflows to be launched in different clusters and different domains.  The test itself will launch a workflow in a domain equivalent to the current canary domain suffixed with `-cross-cluster` (and self-register it as necessary).
+
+This test case is launched by the 'sanity' cron workflow if enabled.
+
+To enable this feature, its necessary to enable it in config with the
+`crossClusterTestMode` config key set to `test-all`. Eg:
+
+```yaml
+canary:
+  domains: ["cadence-canary"]
+  crossClusterTestMode: "test-all"
+  canaryDomainClusters: ["cluster0", "cluster1", "cluster2"]
+```
+
+The canary test will fail the target domain over to a different cluster and back again with some small probability each iteration. This ensures that both the cross-domain and the cross-cluster parts are excercised.

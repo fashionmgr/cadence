@@ -20,11 +20,7 @@
 
 package esql
 
-import (
-	"fmt"
-
-	"github.com/xwb1989/sqlparser"
-)
+import "github.com/xwb1989/sqlparser"
 
 // used for invert operator when NOT is specified
 var oppositeOperator = map[string]string{
@@ -85,11 +81,3 @@ const (
 	TieBreakerOrder      = "desc"
 	StartTimeOrder       = "desc"
 )
-
-// DEBUG usage
-//nolint
-func print(v interface{}) {
-	fmt.Println("==============")
-	fmt.Println(v)
-	fmt.Println("==============")
-}
